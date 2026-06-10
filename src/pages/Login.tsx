@@ -20,6 +20,10 @@ export default function Login() {
 
   const handleLogin = async () => {
     if (!email || !password || loading) return
+    if (!email.includes('@')) {
+      setError('请输入有效邮箱')
+      return
+    }
     setLoading(true)
     setError('')
     try {
@@ -34,6 +38,14 @@ export default function Login() {
 
   const handleRegister = async () => {
     if (!email || !password || loading) return
+    if (!email.includes('@')) {
+      setError('请输入有效邮箱，不能只填用户名')
+      return
+    }
+    if (password.length < 6) {
+      setError('密码至少需要 6 位')
+      return
+    }
     setLoading(true)
     setError('')
     try {

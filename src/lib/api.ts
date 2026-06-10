@@ -23,7 +23,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error(`${path} 请求超时，请确认后端正在运行`)
+      throw new Error(`${path} request timed out. Refresh and try again.`)
+    }
+    if (error instanceof TypeError) {
+      throw new Error('Cannot connect to the online service. Refresh and try again.')
     }
     throw error
   } finally {
@@ -31,12 +34,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: '请求失败' }))
+    const error = await res.json().catch(() => ({ error: 'Request failed' }))
     if (res.status === 401) {
       localStorage.removeItem('access_token')
       localStorage.removeItem('auth_user')
     }
-    throw new Error(`${path} ${res.status}: ${error.error ?? '请求失败'}`)
+    throw new Error(`${path} ${res.status}: ${error.error ?? 'Request failed'}`)
   }
 
   return res.json()
