@@ -571,8 +571,8 @@ export async function syncRemoteData(): Promise<void> {
   write(KEYS.REFERENCES, mergeById(localRefsBeforeSync, projectPayloads.flatMap(item => item.refs)))
 
   const activeId = read<string>(KEYS.ACTIVE_PROJECT)
-  if (!activeId || !remoteProjects.some(project => project.id === activeId)) {
-    write(KEYS.ACTIVE_PROJECT, remoteProjects[0].id)
+  if (!activeId || !mergedProjects.some(project => project.id === activeId)) {
+    write(KEYS.ACTIVE_PROJECT, mergedProjects[0].id)
   }
 
   for (const project of remoteProjects) {
@@ -933,6 +933,14 @@ export const projectStore = {
     remoteTask(() => projectsAPI.create(toApiProject(next)))
     projectStore.setActiveId(next.id)
     return next
+  },
+  resetWorkspace: (projectId: string) => {
+    write(KEYS.SECTIONS, sectionStore.getAll().filter(section => section.projectId !== projectId))
+    write(KEYS.OUTLINE, outlineStore.getAll().filter(outline => outline.projectId !== projectId))
+    write(KEYS.CHAT, chatStore.getAll().filter(message => message.projectId !== projectId))
+    write(KEYS.VERSIONS, versionStore.getAll().filter(snapshot => snapshot.projectId !== projectId))
+    write(KEYS.REFERENCES, referenceStore.getAll().filter(selection => selection.projectId !== projectId))
+    projectStore.update(projectId, { context: createEmptyProjectContext(), currentStage: 'stage1' })
   },
   update: (id: string, patch: Partial<Project>) => {
     const nextProjects = projectStore.getAll().map(project =>
