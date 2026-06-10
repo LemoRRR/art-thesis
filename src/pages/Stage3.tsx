@@ -877,8 +877,12 @@ export default function Stage3() {
   const exportWord = async () => {
     const exportSections = buildCompleteSections()
     if (exportSections.length === 0) return
-    const { exportSectionsToDocx } = await import('../lib/docxExport')
-    await exportSectionsToDocx(projectTitle, exportSections)
+    try {
+      const { exportSectionsToDocx } = await import('../lib/docxExport')
+      await exportSectionsToDocx(projectTitle, exportSections)
+    } catch (error) {
+      alert(`Word 导出失败：${error instanceof Error ? error.message : '请刷新后重试'}`)
+    }
   }
 
   const updateProjectTitle = (title: string) => {

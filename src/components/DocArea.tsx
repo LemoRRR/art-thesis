@@ -34,6 +34,7 @@ const A4_MIN_HEIGHT = 1123
 const PAGE_HORIZONTAL_PADDING = 86
 const PAGE_VERTICAL_PADDING = 76
 const PAGE_CONTENT_HEIGHT = A4_MIN_HEIGHT - PAGE_VERTICAL_PADDING * 2 - 44
+const TITLE_AREA_HEIGHT = 92
 const PREVIEW_CHARS_PER_LINE = 46
 const PARAGRAPH_LINE_HEIGHT = 31
 
@@ -195,10 +196,10 @@ function buildFlowBlocks(sections: DocSection[]): FlowBlock[] {
   })
 }
 
-function paginateBlocks(blocks: FlowBlock[]): FlowBlock[][] {
+function paginateBlocks(blocks: FlowBlock[], firstPageReservedHeight = 0): FlowBlock[][] {
   const pages: FlowBlock[][] = []
   let page: FlowBlock[] = []
-  let usedHeight = 0
+  let usedHeight = firstPageReservedHeight
   const queue = [...blocks]
 
   while (queue.length > 0) {
@@ -518,8 +519,8 @@ export default function DocArea({
     )
   }
 
-  const pages = paginateBlocks(buildFlowBlocks(sections))
-  const totalPages = 1 + pages.length
+  const pages = paginateBlocks(buildFlowBlocks(sections), TITLE_AREA_HEIGHT)
+  const totalPages = pages.length
 
   return (
     <div style={{ flex: 1, position: 'relative', overflow: 'hidden', display: 'flex' }}>
@@ -553,63 +554,9 @@ export default function DocArea({
           background: '#E7E3DD',
         }}
       >
-        <div
-          style={{
-            width: A4_WIDTH,
-            height: A4_MIN_HEIGHT,
-            minHeight: A4_MIN_HEIGHT,
-            flexShrink: 0,
-            boxSizing: 'border-box',
-            border: '1px solid #D8D2C8',
-            background: '#fff',
-            boxShadow: '0 16px 38px rgba(38, 32, 24, 0.16)',
-            padding: `${PAGE_VERTICAL_PADDING}px ${PAGE_HORIZONTAL_PADDING}px`,
-            textAlign: 'center',
-            position: 'relative',
-          }}
-        >
-          <input
-            value={paperTitle}
-            onChange={event => onPaperTitleChange(event.target.value)}
-            placeholder="请输入论文标题"
-            style={{
-              width: '100%',
-              border: 'none',
-              outline: 'none',
-              background: 'transparent',
-              textAlign: 'center',
-              color: 'var(--color-ink)',
-              fontFamily: 'var(--font-serif)',
-              fontSize: 24,
-              fontWeight: 700,
-              lineHeight: 1.5,
-            }}
-          />
-          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--color-ink-3)' }}>
-            A4 页面预览 · 论文标题会同步到 Word 导出
-          </div>
-          <div
-            style={{
-              position: 'absolute',
-              left: PAGE_HORIZONTAL_PADDING,
-              right: PAGE_HORIZONTAL_PADDING,
-              bottom: 34,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              fontSize: 11,
-              color: '#A59B8D',
-              borderTop: '1px solid #E7E0D6',
-              paddingTop: 10,
-            }}
-          >
-            <span>A4 · 210 × 297 mm</span>
-            <span>1 / {totalPages}</span>
-          </div>
-        </div>
-
         {pages.map((pageBlocks, pageIndex) => {
-          const pageNo = pageIndex + 2
+          const pageNo = pageIndex + 1
+          const isFirstPage = pageIndex === 0
           const activeOnPage = pageBlocks.some(block => block.sectionId === activeSectionId)
           const pageFootnotes = pageBlocks.flatMap(block => {
             if (block.blockIndex === undefined) return [] as SectionFootnote[]
@@ -654,6 +601,39 @@ export default function DocArea({
                 第 {pageNo} 页 / 共 {totalPages} 页
               </div>
 
+              {isFirstPage && (
+                <div
+                  contentEditable={false}
+                  style={{
+                    height: TITLE_AREA_HEIGHT,
+                    textAlign: 'center',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    justifyContent: 'center',
+                    flexDirection: 'column',
+                    gap: 4,
+                  }}
+                >
+                  <input
+                    value={paperTitle}
+                    onChange={event => onPaperTitleChange(event.target.value)}
+                    placeholder="请输入论文标题"
+                    style={{
+                      width: '100%',
+                      border: 'none',
+                      outline: 'none',
+                      background: 'transparent',
+                      textAlign: 'center',
+                      color: 'var(--color-ink)',
+                      fontFamily: 'var(--font-serif)',
+                      fontSize: 24,
+                      fontWeight: 700,
+                      lineHeight: 1.45,
+                    }}
+                  />
+                </div>
+              )}
+
               <div
                 contentEditable
                 suppressContentEditableWarning
@@ -663,7 +643,7 @@ export default function DocArea({
                 onBlur={event => handlePageBlur(pageBlocks, event.currentTarget)}
                 style={{
                   outline: 'none',
-                  minHeight: PAGE_CONTENT_HEIGHT - 120,
+                  minHeight: PAGE_CONTENT_HEIGHT - (isFirstPage ? TITLE_AREA_HEIGHT : 0) - 120,
                   cursor: 'text',
                   userSelect: 'text',
                 }}

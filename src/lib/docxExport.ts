@@ -169,6 +169,12 @@ export async function exportSectionsToDocx(title: string, sections: DocSection[]
   const link = document.createElement('a')
   link.href = url
   link.download = `${safeTitle}.docx`
-  link.click()
-  URL.revokeObjectURL(url)
+  link.rel = 'noopener'
+  link.style.display = 'none'
+  document.body.appendChild(link)
+  link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url)
+    link.remove()
+  }, 30_000)
 }
