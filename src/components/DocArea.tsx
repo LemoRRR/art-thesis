@@ -35,7 +35,7 @@ const PAGE_HORIZONTAL_PADDING = 86
 const PAGE_VERTICAL_PADDING = 76
 const PAGE_CONTENT_HEIGHT = A4_MIN_HEIGHT - PAGE_VERTICAL_PADDING * 2 - 44
 const TITLE_AREA_HEIGHT = 92
-const PREVIEW_CHARS_PER_LINE = 46
+const PREVIEW_UNITS_PER_LINE = 72
 const PARAGRAPH_LINE_HEIGHT = 31
 
 interface FlowBlock {
@@ -57,18 +57,39 @@ function estimateBlockHeight(text: string, type: FlowBlock['type']): number {
   if (type === 'generating' || type === 'placeholder') return 48
   if (type === 'heading2') return 44
   if (type === 'heading3') return 38
-  const lines = Math.max(1, Math.ceil(text.length / PREVIEW_CHARS_PER_LINE))
+  const lines = Math.max(1, Math.ceil(measureTextUnits(text) / PREVIEW_UNITS_PER_LINE))
   return lines * PARAGRAPH_LINE_HEIGHT + 10
 }
 
+function measureTextUnits(text: string): number {
+  return Array.from(text).reduce((total, char) => {
+    if (/[\u3400-\u9fff\uf900-\ufaff]/.test(char)) return total + 2
+    if (/\s/.test(char)) return total + 0.5
+    return total + 1
+  }, 0)
+}
+
+function sliceByTextUnits(text: string, maxUnits: number): string {
+  let used = 0
+  let result = ''
+  for (const char of Array.from(text)) {
+    const weight = /[\u3400-\u9fff\uf900-\ufaff]/.test(char) ? 2 : /\s/.test(char) ? 0.5 : 1
+    if (used + weight > maxUnits) break
+    result += char
+    used += weight
+  }
+  return result
+}
+
 function splitParagraphForPreview(text: string): string[] {
-  if (text.length <= 360) return [text]
+  const maxUnits = PREVIEW_UNITS_PER_LINE * 7
+  if (measureTextUnits(text) <= maxUnits) return [text]
 
   const chunks: string[] = []
   let remaining = text.trim()
 
-  while (remaining.length > 360) {
-    const windowText = remaining.slice(0, 360)
+  while (measureTextUnits(remaining) > maxUnits) {
+    const windowText = sliceByTextUnits(remaining, maxUnits)
     const breakAt = Math.max(
       windowText.lastIndexOf('。'),
       windowText.lastIndexOf('；'),
@@ -77,7 +98,7 @@ function splitParagraphForPreview(text: string): string[] {
       windowText.lastIndexOf('; '),
       windowText.lastIndexOf(', ')
     )
-    const safeBreak = breakAt > 180 ? breakAt + 1 : 360
+    const safeBreak = breakAt > windowText.length * 0.45 ? breakAt + 1 : windowText.length
     chunks.push(remaining.slice(0, safeBreak).trim())
     remaining = remaining.slice(safeBreak).trim()
   }
@@ -90,10 +111,9 @@ function splitTextToFit(text: string, availableHeight: number): [string, string]
   const availableLines = Math.floor((availableHeight - 10) / PARAGRAPH_LINE_HEIGHT)
   if (availableLines < 3) return null
 
-  const maxChars = Math.min(text.length - 80, availableLines * PREVIEW_CHARS_PER_LINE)
-  if (maxChars < 100) return null
+  const windowText = sliceByTextUnits(text, availableLines * PREVIEW_UNITS_PER_LINE)
+  if (windowText.length < 80 || windowText.length >= text.length) return null
 
-  const windowText = text.slice(0, maxChars)
   const breakAt = Math.max(
     windowText.lastIndexOf('。'),
     windowText.lastIndexOf('；'),
@@ -102,7 +122,7 @@ function splitTextToFit(text: string, availableHeight: number): [string, string]
     windowText.lastIndexOf('; '),
     windowText.lastIndexOf(', ')
   )
-  const safeBreak = breakAt > 80 ? breakAt + 1 : maxChars
+  const safeBreak = breakAt > 80 ? breakAt + 1 : windowText.length
   const head = text.slice(0, safeBreak).trim()
   const tail = text.slice(safeBreak).trim()
   return head && tail ? [head, tail] : null
