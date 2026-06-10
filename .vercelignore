@@ -1,0 +1,7 @@
+.env
+.env.*
+*.log
+dist
+node_modules
+sample_journal_zhang.*
+supabase/.temp/
