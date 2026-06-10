@@ -216,15 +216,7 @@ export default function DocArea({
         .doc-page-continuous {
           height: auto;
           overflow: hidden;
-          background:
-            linear-gradient(#fff, #fff) padding-box,
-            repeating-linear-gradient(
-              to bottom,
-              transparent 0,
-              transparent ${A4_MIN_HEIGHT - 1}px,
-              rgba(192, 177, 156, 0.55) ${A4_MIN_HEIGHT - 1}px,
-              rgba(192, 177, 156, 0.55) ${A4_MIN_HEIGHT}px
-            );
+          background: #fff;
         }
 
         .paper-continuous-content {
@@ -247,14 +239,15 @@ export default function DocArea({
           left: 0;
           right: 0;
           height: ${A4_MIN_HEIGHT}px;
-          border-bottom: 1px dashed rgba(174, 158, 135, 0.5);
-          box-shadow: inset 0 -16px 26px -28px rgba(38, 32, 24, 0.45);
         }
 
         .paper-page-guide span {
           position: absolute;
-          top: 32px;
-          right: ${PAGE_HORIZONTAL_PADDING}px;
+          top: 30px;
+          right: 22px;
+          padding: 2px 6px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.82);
           font-size: 11px;
           color: #A59B8D;
           font-family: var(--font-sans);
@@ -292,9 +285,6 @@ export default function DocArea({
 
         .paper-editor-section {
           padding: 8px 0 18px;
-          border-radius: 4px;
-          outline: 1px solid transparent;
-          transition: outline-color 0.16s ease;
         }
 
         .paper-section-heading {

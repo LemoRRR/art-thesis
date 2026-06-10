@@ -334,7 +334,7 @@ export default function PaperEditor({
       className="paper-editor-section"
       data-section-id={section.id}
       onClick={onActivate}
-      style={{ outlineColor: active ? 'rgba(45, 90, 61, 0.25)' : 'transparent' }}
+      data-active={active ? 'true' : 'false'}
     >
       <div className="paper-section-heading">
         <h2>{section.title}</h2>
