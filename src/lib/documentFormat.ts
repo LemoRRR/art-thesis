@@ -37,6 +37,23 @@ export function cleanTitle(title: string): string {
   return cleanMarkdownText(title).replace(/\n/g, ' ').trim()
 }
 
+function normalizeComparableTitle(text: string): string {
+  return cleanTitle(text)
+    .replace(/^第[一二三四五六七八九十百千万0-9]+[章节篇部分]\s*/u, '')
+    .replace(/^[（(]?[一二三四五六七八九十百千万]+[）)、.．]?\s*/u, '')
+    .replace(/^\d+(?:\.\d+)*[、.．]?\s*/u, '')
+    .replace(/[\s:：,，.。;；、()[\]（）【】《》"']/g, '')
+    .toLowerCase()
+}
+
+export function isDuplicateSectionTitle(blockText: string, sectionTitle: string): boolean {
+  const blockTitle = cleanTitle(blockText)
+  const expectedTitle = cleanTitle(sectionTitle)
+  if (!blockTitle || !expectedTitle) return false
+  if (blockTitle === expectedTitle) return true
+  return normalizeComparableTitle(blockTitle) === normalizeComparableTitle(expectedTitle)
+}
+
 function inferBlockType(line: string): PaperBlockType {
   if (/^\d+\.\d+\.\d+\s+/.test(line)) return 'heading3'
   if (/^\d+\.\d+\s+/.test(line)) return 'heading2'
@@ -61,6 +78,15 @@ export function parsePaperBlocks(content: string): PaperBlock[] {
   return blocks
 }
 
+export function stripDuplicateSectionTitleContent(content: string, sectionTitle: string): string {
+  const blocks = parsePaperBlocks(content)
+  const firstBlock = blocks[0]
+  const visibleBlocks = firstBlock && isDuplicateSectionTitle(firstBlock.text, sectionTitle)
+    ? blocks.slice(1)
+    : blocks
+  return visibleBlocks.map(block => block.text).join('\n\n')
+}
+
 export function formatSectionContent(content: string): string {
   return parsePaperBlocks(content).map(block => block.text).join('\n\n')
 }
@@ -69,7 +95,7 @@ export function formatSectionsForPaper(sections: DocSection[]): DocSection[] {
   return sections.map(section => ({
     ...section,
     title: cleanTitle(section.title),
-    content: formatSectionContent(section.content),
+    content: stripDuplicateSectionTitleContent(section.content, section.title),
   }))
 }
 

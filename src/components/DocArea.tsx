@@ -4,7 +4,7 @@ import { Sparkles } from 'lucide-react'
 import SelectionToolbar from './SelectionToolbar'
 import FootnoteText from './FootnoteText'
 import FootnoteEditor from './FootnoteEditor'
-import { formatSectionContent, parsePaperBlocks, type PaperBlockType } from '../lib/documentFormat'
+import { formatSectionContent, isDuplicateSectionTitle, parsePaperBlocks, type PaperBlockType } from '../lib/documentFormat'
 import { getFootnotesForBlock } from '../lib/footnotes'
 import { sectionStore, versionStore, type DocSection, type SectionFootnote } from '../lib/storage'
 
@@ -177,6 +177,9 @@ function buildFlowBlocks(sections: DocSection[]): FlowBlock[] {
     }
 
     const contentBlocks = parsePaperBlocks(section.content)
+      .map((block, originalIndex) => ({ block, originalIndex }))
+      .filter(({ block }, index) => index > 0 || !isDuplicateSectionTitle(block.text, section.title))
+
     if (contentBlocks.length === 0) {
       blocks.push({
         id: `${section.id}-empty`,
@@ -190,7 +193,7 @@ function buildFlowBlocks(sections: DocSection[]): FlowBlock[] {
       return blocks
     }
 
-    contentBlocks.forEach((block, index) => {
+    contentBlocks.forEach(({ block, originalIndex }) => {
       const previewChunks = block.type === 'paragraph'
         ? splitParagraphForPreview(block.text)
         : [block.text]
@@ -198,13 +201,13 @@ function buildFlowBlocks(sections: DocSection[]): FlowBlock[] {
       previewChunks.forEach((chunk, chunkIndex) => {
         const textStart = previewChunks.slice(0, chunkIndex).reduce((sum, item) => sum + item.length, 0)
         blocks.push({
-          id: `${section.id}-${index}-${chunkIndex}`,
+          id: `${section.id}-${originalIndex}-${chunkIndex}`,
           sectionId: section.id,
           sectionTitle: section.title,
           type: block.type,
           text: chunk,
           previousText: chunk,
-          blockIndex: index,
+          blockIndex: originalIndex,
           textStart,
           textEnd: textStart + chunk.length,
           height: estimateBlockHeight(chunk, block.type),

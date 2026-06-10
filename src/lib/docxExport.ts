@@ -7,7 +7,7 @@ import {
   Paragraph,
   TextRun,
 } from 'docx'
-import { cleanTitle, parsePaperBlocks } from './documentFormat'
+import { cleanTitle, isDuplicateSectionTitle, parsePaperBlocks } from './documentFormat'
 import { getFootnotesForBlock, splitTextWithFootnotes } from './footnotes'
 import type { DocSection } from './storage'
 
@@ -115,15 +115,18 @@ function buildDocChildren(title: string, sections: DocSection[]) {
 
   sections.forEach(section => {
     children.push(createSectionHeading(section.title))
-    parsePaperBlocks(section.content).forEach((block, blockIndex) => {
-      if (block.type === 'heading2') {
-        children.push(createSubHeading(block.text, 2))
-      } else if (block.type === 'heading3') {
-        children.push(createSubHeading(block.text, 3))
-      } else {
-        children.push(createBodyParagraphFromBlock(block.text, section, blockIndex))
-      }
-    })
+    parsePaperBlocks(section.content)
+      .map((block, blockIndex) => ({ block, blockIndex }))
+      .filter(({ block }, index) => index > 0 || !isDuplicateSectionTitle(block.text, section.title))
+      .forEach(({ block, blockIndex }) => {
+        if (block.type === 'heading2') {
+          children.push(createSubHeading(block.text, 2))
+        } else if (block.type === 'heading3') {
+          children.push(createSubHeading(block.text, 3))
+        } else {
+          children.push(createBodyParagraphFromBlock(block.text, section, blockIndex))
+        }
+      })
   })
 
   return children
