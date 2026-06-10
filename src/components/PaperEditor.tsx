@@ -90,7 +90,7 @@ function nodeText(node: JSONContent | undefined): string {
 function sectionTitleFromDoc(doc: PaperEditorDoc, fallbackTitle: string): string {
   const firstNode = doc.content?.[0]
   if (firstNode?.type !== 'heading') return fallbackTitle
-  return nodeText(firstNode as JSONContent).trim() || fallbackTitle
+  return nodeText(firstNode as JSONContent).trim()
 }
 
 function sectionContentFromDoc(doc: PaperEditorDoc): string {
@@ -103,7 +103,12 @@ function sectionContentFromDoc(doc: PaperEditorDoc): string {
 function sectionEditorDoc(sectionTitle: string, content: string, editorDoc?: unknown): PaperEditorDoc {
   const doc = ensurePaperEditorDoc(content, editorDoc)
   const firstNode = doc.content?.[0]
-  if (firstNode?.type === 'heading' && nodeText(firstNode as JSONContent).trim() === sectionTitle.trim()) return doc
+  if (
+    firstNode?.type === 'heading' &&
+    (firstNode.attrs?.sectionTitle === true || nodeText(firstNode as JSONContent).trim() === sectionTitle.trim())
+  ) {
+    return doc
+  }
 
   return {
     ...doc,

@@ -1399,7 +1399,7 @@ export default function Stage3() {
                     section.id === id
                       ? {
                           ...section,
-                          title: title?.trim() || section.title,
+                          title: title === undefined ? section.title : title.trim(),
                           content,
                           editorDoc: editorDoc ?? section.editorDoc,
                           footnotes: footnotes ?? section.footnotes,
