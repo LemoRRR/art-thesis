@@ -27,15 +27,23 @@ export function getAIConfig(provider: 'gpt' | 'doubao'): AIConfig {
   }
 }
 
-export async function callAIStream(
-  provider: 'gpt' | 'doubao',
-  messages: Message[]
-) {
-  const config = getAIConfig(provider)
-  if (!config.baseURL || !config.apiKey || !config.model) {
-    throw new Error(`${provider} AI 环境变量未配置完整`)
+function isConfigReady(config: AIConfig) {
+  return Boolean(config.baseURL && config.apiKey && config.model)
+}
+
+function fallbackConfig(provider: 'gpt' | 'doubao') {
+  const primary = getAIConfig(provider)
+  if (isConfigReady(primary)) return { provider, config: primary }
+
+  if (provider === 'doubao') {
+    const gpt = getAIConfig('gpt')
+    if (isConfigReady(gpt)) return { provider: 'gpt' as const, config: gpt }
   }
 
+  throw new Error(`${provider} AI 环境变量未配置完整`)
+}
+
+async function requestChatCompletions(config: AIConfig, messages: Message[], stream: boolean, maxTokens: number, temperature: number) {
   return fetch(`${config.baseURL}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -45,36 +53,34 @@ export async function callAIStream(
     body: JSON.stringify({
       model: config.model,
       messages,
-      stream: true,
-      max_tokens: 4000,
-      temperature: 0.7,
+      stream,
+      max_tokens: maxTokens,
+      temperature,
     }),
   })
+}
+
+export async function callAIStream(
+  provider: 'gpt' | 'doubao',
+  messages: Message[]
+) {
+  const resolved = fallbackConfig(provider)
+  const response = await requestChatCompletions(resolved.config, messages, true, 4000, 0.7)
+  if (response.ok || provider !== 'doubao' || resolved.provider === 'gpt') {
+    return response
+  }
+
+  const gpt = getAIConfig('gpt')
+  if (!isConfigReady(gpt)) return response
+  return requestChatCompletions(gpt, messages, true, 4000, 0.7)
 }
 
 export async function callAIOnce(
   messages: Message[],
   provider: 'gpt' | 'doubao' = 'gpt'
 ): Promise<string> {
-  const config = getAIConfig(provider)
-  if (!config.baseURL || !config.apiKey || !config.model) {
-    throw new Error(`${provider} AI 环境变量未配置完整`)
-  }
-
-  const response = await fetch(`${config.baseURL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages,
-      stream: false,
-      max_tokens: 2200,
-      temperature: 0.3,
-    }),
-  })
+  const { config } = fallbackConfig(provider)
+  const response = await requestChatCompletions(config, messages, false, 2200, 0.3)
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '')

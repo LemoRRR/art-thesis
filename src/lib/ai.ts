@@ -36,8 +36,11 @@ function streamViaServer(
       if (res.status === 401) {
         localStorage.removeItem('access_token')
         localStorage.removeItem('auth_user')
+        callbacks.onError(new Error('登录已过期，请重新登录后再试。'))
+        return
       }
-      callbacks.onError(new Error('AI 调用失败，请确认已登录且后端环境变量已配置。'))
+      const detail = await res.text().catch(() => '')
+      callbacks.onError(new Error(detail || 'AI 调用失败，请稍后再试。'))
       return
     }
 

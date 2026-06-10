@@ -104,6 +104,7 @@ export default function SelectionToolbar({
   const [customInput, setCustomInput] = useState('')
   const [footnoteInput, setFootnoteInput] = useState('')
   const [done,        setDone]        = useState(false)
+  const [error,       setError]       = useState('')
   const [pendingRevision, setPendingRevision] = useState<PendingRevision | null>(null)
 
   const savedRangeRef    = useRef<Range | null>(null)
@@ -122,6 +123,7 @@ export default function SelectionToolbar({
     setShowFootnoteInput(false)
     setPendingRevision(null)
     setDone(false)
+    setError('')
     setCustomInput('')
     setFootnoteInput('')
   }, [])
@@ -203,6 +205,7 @@ export default function SelectionToolbar({
         })
         setVisible(true)
         setDone(false)
+        setError('')
         setShowInput(false)
         setShowFootnoteInput(false)
         setCustomInput('')
@@ -274,6 +277,7 @@ export default function SelectionToolbar({
 
     setIsLoading(true)
     setShowInput(false)
+    setError('')
     setPendingRevision(null)
 
     let result = ''
@@ -286,16 +290,22 @@ export default function SelectionToolbar({
         onChunk: (chunk) => { result += chunk },
         onDone: () => {
           setIsLoading(false)
+          const afterText = formatSectionContent(result)
+          if (!afterText.trim()) {
+            setError('AI 没有返回可用改写内容，请重新选中文本后再试。')
+            return
+          }
           setPendingRevision({
             sectionId: savedSectionId.current!,
             beforeText: savedSelectedText.current,
-            afterText: formatSectionContent(result),
+            afterText,
             instruction,
             type,
           })
         },
         onError: (err) => {
           setIsLoading(false)
+          setError(err.message || 'AI 调用失败，请稍后再试。')
           console.error('SelectionToolbar error:', err)
         },
       },
@@ -556,6 +566,21 @@ export default function SelectionToolbar({
                 ))}
               </div>
               <span>AI 正在生成修改建议，完成后会显示删除/新增对比…</span>
+            </div>
+          )}
+
+          {error && (
+            <div
+              style={{
+                borderTop: '1px solid var(--color-border)',
+                padding: '9px 12px',
+                background: '#FFF1EF',
+                color: '#A8443F',
+                fontSize: 12,
+                lineHeight: 1.6,
+              }}
+            >
+              {error}
             </div>
           )}
 
