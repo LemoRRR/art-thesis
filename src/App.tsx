@@ -18,7 +18,8 @@ function DefaultConversationRedirect() {
 function AuthGuard({ children }: { children: ReactNode }) {
   const location = useLocation()
   if (auth.isAuthRequired() && !auth.isLoggedIn() && location.pathname !== '/login') {
-    return <Navigate to="/login" replace />
+    const redirect = `${location.pathname}${location.search}${location.hash}`
+    return <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />
   }
   return <>{children}</>
 }

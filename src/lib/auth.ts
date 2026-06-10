@@ -10,7 +10,7 @@ export interface AuthUser {
   }
 }
 
-const AUTH_REQUIRED = import.meta.env.VITE_AUTH_REQUIRED === 'true'
+const AUTH_REQUIRED = import.meta.env.PROD || import.meta.env.VITE_AUTH_REQUIRED === 'true'
 
 export const auth = {
   isAuthRequired: () => AUTH_REQUIRED,
