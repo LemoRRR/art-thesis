@@ -147,6 +147,55 @@ function BibliographyCard({
   )
 }
 
+function extractFinishPart(result: string, heading: string) {
+  const match = result.match(new RegExp(`【${heading}】([\\s\\S]*?)(?=\\n?【|$)`))
+  return match?.[1]?.trim() ?? ''
+}
+
+function buildFinishSections(result: string, projectId: string): DocSection[] {
+  const abstractParts = [
+    extractFinishPart(result, '摘要') ? `【摘要】\n${extractFinishPart(result, '摘要')}` : '',
+    extractFinishPart(result, '关键词') ? `【关键词】\n${extractFinishPart(result, '关键词')}` : '',
+    extractFinishPart(result, 'Abstract') ? `【Abstract】\n${extractFinishPart(result, 'Abstract')}` : '',
+    extractFinishPart(result, 'Keywords') ? `【Keywords】\n${extractFinishPart(result, 'Keywords')}` : '',
+  ].filter(Boolean).join('\n\n')
+  const introduction = extractFinishPart(result, '引言')
+  const conclusion = extractFinishPart(result, '结语')
+  const now = Date.now()
+
+  const finishSections: Array<DocSection | null> = [
+    abstractParts ? {
+      id: 'finish-abstract-export',
+      projectId,
+      title: '摘要与 Abstract',
+      content: formatSectionContent(abstractParts),
+      status: 'done' as const,
+      lastModified: now,
+      order: -2,
+    } : null,
+    introduction ? {
+      id: 'finish-introduction-export',
+      projectId,
+      title: '引言',
+      content: formatSectionContent(introduction),
+      status: 'done' as const,
+      lastModified: now,
+      order: -1,
+    } : null,
+    conclusion ? {
+      id: 'finish-conclusion-export',
+      projectId,
+      title: '结语',
+      content: formatSectionContent(conclusion),
+      status: 'done' as const,
+      lastModified: now,
+      order: Number.MAX_SAFE_INTEGER - 1,
+    } : null,
+  ]
+
+  return finishSections.filter((section): section is DocSection => section !== null)
+}
+
 export default function Stage3() {
   const navigate = useNavigate()
   const params = useParams()
@@ -809,19 +858,10 @@ export default function Stage3() {
   }
 
   const buildCompleteSections = () => {
-    const baseSections = [...sections]
-    const finishContent = formatSectionContent(finishResult)
-    if (finishContent) {
-      baseSections.push({
-        id: 'finish-result-export',
-        projectId: project.id,
-        title: '摘要、引言与结语',
-        content: finishContent,
-        status: 'done' as const,
-        lastModified: Date.now(),
-        order: baseSections.length,
-      })
-    }
+    const finishSections = finishResult ? buildFinishSections(finishResult, project.id) : []
+    const frontSections = finishSections.filter(section => section.title !== '结语')
+    const backSections = finishSections.filter(section => section.title === '结语')
+    const baseSections = [...frontSections, ...sections, ...backSections]
 
     const bibliographySection = buildBibliographySection(sections, project.id)
     if (bibliographySection) baseSections.push(bibliographySection)
@@ -1071,7 +1111,7 @@ export default function Stage3() {
             ) : (
               <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.7 }}>
-                  基于完整正文，生成摘要、关键词、引言和结语。
+                  基于完整正文，生成中文摘要、英文 Abstract、关键词、引言和结语。
                 </div>
                 <button
                   onClick={runFinish}
@@ -1079,7 +1119,7 @@ export default function Stage3() {
                   style={{ width: '100%', border: 'none', borderRadius: 'var(--radius-sm)', background: allGenerated && !finishLoading ? 'var(--color-accent)' : 'var(--color-border)', color: '#fff', padding: '9px 0', fontSize: 12, fontWeight: 500, cursor: allGenerated && !finishLoading ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
                 >
                   <Sparkles size={13} />
-                  {finishLoading ? '生成中…' : '生成摘要 / 引言 / 结语'}
+                  {finishLoading ? '生成中…' : '生成摘要 / Abstract / 引言 / 结语'}
                 </button>
 
                 {finishResult && (
@@ -1104,7 +1144,7 @@ export default function Stage3() {
                         <textarea
                           value={adjustInput}
                           onChange={event => setAdjustInput(event.target.value)}
-                          placeholder="追加调整，如：摘要简短一点、结语别拔高…"
+                          placeholder="追加调整，如：英文摘要更像论文 Abstract、关键词改成影视空间叙事、结语别拔高…"
                           rows={2}
                           style={{ width: '100%', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '6px 8px', fontSize: 11, resize: 'none', fontFamily: 'var(--font-sans)', outline: 'none', boxSizing: 'border-box' }}
                         />

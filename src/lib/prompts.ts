@@ -203,6 +203,16 @@ const LEVEL_GUIDE: Record<AcademicLevel, string> = {
   '期刊': '期刊论文写作标准：论点鲜明，论据充分，语言精炼，具备较高学术规范性和原创性',
 }
 
+const THESIS_FORMAT_GUIDE = `论文格式规则：
+- 正文主章节之外，完整论文应包含：中文摘要、中文关键词、英文 Abstract、英文 Keywords、引言、结语、参考文献。
+- 中文摘要应使用第三人称客观语气，概括研究背景、研究对象、研究方法或分析路径、核心发现与研究意义，通常 200-350 字；避免口语化和“我认为”等表达。
+- 中文关键词置于摘要之后，格式为“关键词：关键词一；关键词二；关键词三”，通常 3-5 个，使用中文分号分隔。
+- 英文摘要标题使用“Abstract”，内容不是逐字翻译中文摘要，而是符合英文学术摘要习惯：先交代 research background 和 object，再说明 method / analytical framework，再概括 findings / contribution；段落可分为 1-3 段，语言保持正式、清晰、紧凑。
+- 英文关键词格式为“Keywords: keyword one; keyword two; keyword three”，3-5 个，使用英文分号分隔；作品名、专有名词按英文规范斜体或保留通行译名。
+- 引言进入正文之前应完成问题提出、研究背景、研究意义、研究对象、文献与方法的引入；不要重复摘要句式。
+- 结语应回应全文论证，概括发现、说明局限和后续研究方向，避免拔高和空泛抒情。
+- 大纲阶段只生成正文主章节，不要把“摘要 / Abstract / 关键词 / Keywords / 参考文献”作为正文第 1 章；但写作计划必须预留这些前置与后置格式。`
+
 export function promptWriteSection(
   sectionTitle: string,
   comprehensionSummary: string,
@@ -340,17 +350,21 @@ export function promptFinishDraft(
   return [
     {
       role: 'system',
-      content: `你是一个论文写作助手。请学习用户提供的完整论文正文，在充分理解研究主题和结构的基础上，完成以下四项生成任务。
+      content: `你是一个论文写作助手。请学习用户提供的完整论文正文，在充分理解研究主题和结构的基础上，完成论文前置与收尾部分。
 
 研究对象：${researchObject}
 
 学段标准：${levelGuide}
 
+${THESIS_FORMAT_GUIDE}
+
 生成任务：
-1. 【摘要】生成第三人称客观语气的摘要，约200字，禁止出现"本文"等第一人称表述
-2. 【关键词】提炼4-5个关键词，准确概括论文研究重点，用"、"分隔
-3. 【引言】生成一段具有学术规范、逻辑清晰且有吸引力的引言，约两段，引出研究背景和意义
-4. 【结语】生成一个发散性、开放性的结语，用于总结研究并引出进一步思考，不要过度拔高
+1. 【摘要】生成中文摘要，第三人称客观语气，约 200-350 字，覆盖研究背景、研究对象、研究路径、核心发现和意义。
+2. 【关键词】提炼 3-5 个中文关键词，格式为“关键词：……；……；……”。
+3. 【Abstract】生成英文摘要。必须符合英文论文摘要习惯，不要逐字翻译中文摘要；需包含 background / object / method or framework / findings / contribution。
+4. 【Keywords】提炼 3-5 个英文关键词，格式为“Keywords: ...; ...; ...”。
+5. 【引言】生成具有学术规范、逻辑清晰且有问题意识的引言，约两段，引出研究背景、问题、对象和意义。
+6. 【结语】生成克制的结语，回应全文论证，总结发现、说明局限和后续研究方向，不要过度拔高。
 
 输出格式（严格按照以下格式，每项之间空一行）：
 【摘要】
@@ -358,6 +372,12 @@ export function promptFinishDraft(
 
 【关键词】
 ……
+
+【Abstract】
+...
+
+【Keywords】
+...
 
 【引言】
 ……
@@ -379,9 +399,11 @@ export function promptAdjustFinish(
   return [
     {
       role: 'system',
-      content: `你是一个论文写作助手。用户对你上一次生成的摘要/关键词/引言/结语有调整意见。
+      content: `你是一个论文写作助手。用户对你上一次生成的中文摘要、英文 Abstract、关键词、引言或结语有调整意见。
 
 请在上一次生成结果的基础上，只修改用户指出的部分，其余部分保持不变。
+
+${THESIS_FORMAT_GUIDE}
 
 调整原则：
 - 只修改用户明确要求调整的内容
@@ -419,11 +441,14 @@ export function promptGenerateOutline(
 学段要求：${levelGuide[academicLevel]}
 ${additionalRequirements ? `\n额外要求：${additionalRequirements}` : ''}
 
+${THESIS_FORMAT_GUIDE}
+
 大纲要求：
 - 包含完整的三级标题结构（章 → 节 → 小节）
 - 每个标题简洁准确，反映该部分的核心内容
 - 章节之间逻辑递进，层次分明
 - 必须包含：绪论、文献综述（或理论基础）、研究方法、核心论述章节、结论
+- 大纲 JSON 只放正文主章节；摘要、Abstract、关键词、Keywords、参考文献不进入 sections，但大纲逻辑要能支撑后续生成中英文摘要
 
 请严格用以下 JSON 格式输出，不要输出任何其他内容：
 {
@@ -467,11 +492,14 @@ export function promptReviseOutline(
 论文背景：
 ${comprehensionSummary}
 
+${THESIS_FORMAT_GUIDE}
+
 调整原则：
 - 只修改用户明确提到的部分
 - 保留用户未提及的章节结构
 - 保持原有的 JSON 格式和字段结构不变
 - 新增章节时自动补充合理的 order 编号
+- 不要把摘要、Abstract、关键词、Keywords、参考文献新增为正文主章节，除非用户明确要求把它们作为可编辑章节
 
 请直接输出修改后的完整 JSON，不要输出任何其他内容，格式与输入保持一致。`,
     },
@@ -509,11 +537,15 @@ ${referenceContext || '（无引用资料）'}
 ${levelGuide}
 ${styleGuide ? `\n【语言风格参考】\n${styleGuide}` : ''}
 
+【论文格式规则】
+${THESIS_FORMAT_GUIDE}
+
 计划要求：
 - 明确整篇论文的中心论点和论证路线
 - 说明每一章承担的功能、核心论点、承接关系
 - 标记哪些概念需要前后一致
 - 给出引用资料的大致分配策略
+- 给出中文摘要、中文关键词、英文 Abstract、英文 Keywords 的写作方向和关键词候选
 - 提醒哪些内容不要重复
 - 这是内部计划，不要写正文
 
@@ -529,6 +561,9 @@ ${styleGuide ? `\n【语言风格参考】\n${styleGuide}` : ''}
 ...
 
 【术语与引用策略】
+...
+
+【中英文摘要与关键词策略】
 ...
 
 【避免重复】
@@ -608,11 +643,15 @@ ${styleGuide ? `\n【语言风格参考】\n${styleGuide}` : ''}
 【学段写作标准】
 ${levelGuide[academicLevel]}
 
+【论文格式边界】
+${THESIS_FORMAT_GUIDE}
+
 写作规则：
 - 严格按照本章大纲结构展开，每个子节都要覆盖
 - 子节标题用加粗格式输出：**X.X 标题名称**
 - 本章需要服务于全文写作计划，不要像孤立文章一样重新开题
 - 与前文已有内容保持承接，避免重复解释同一概念
+- 当前任务只生成正文主章节，不要在章节正文中插入中文摘要、Abstract、关键词、Keywords 或参考文献
 - 禁止出现：${banned}
 - 语言自然、灵活，高级词汇不要密集堆砌
 - 每节正文 400-600 字，整章合计不少于 1500 字
