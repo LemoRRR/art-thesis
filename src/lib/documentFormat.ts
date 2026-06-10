@@ -73,8 +73,10 @@ export function formatSectionsForPaper(sections: DocSection[]): DocSection[] {
   }))
 }
 
-export function sectionsToPlainText(sections: DocSection[]): string {
-  return formatSectionsForPaper(sections)
+export function sectionsToPlainText(sections: DocSection[], title?: string): string {
+  const body = formatSectionsForPaper(sections)
     .map(section => `${section.title}\n\n${section.content}`)
     .join('\n\n')
+  const cleanPaperTitle = title ? cleanTitle(title) : ''
+  return cleanPaperTitle ? `${cleanPaperTitle}\n\n${body}` : body
 }

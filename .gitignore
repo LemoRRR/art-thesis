@@ -13,6 +13,8 @@ dist-ssr
 *.local
 .env
 .env.server
+sample_journal_zhang.*
+supabase/.temp/
 
 # Editor directories and files
 .vscode/*

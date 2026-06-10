@@ -1,71 +1,495 @@
-import { useRef, useEffect, useCallback } from 'react'
-import { Sparkles, Edit3 } from 'lucide-react'
+import { useRef, useCallback, useState } from 'react'
+import type { ClipboardEvent, KeyboardEvent } from 'react'
+import { Sparkles } from 'lucide-react'
 import SelectionToolbar from './SelectionToolbar'
-import { formatSectionContent } from '../lib/documentFormat'
-import { versionStore, type DocSection } from '../lib/storage'
+import FootnoteText from './FootnoteText'
+import FootnoteEditor from './FootnoteEditor'
+import { formatSectionContent, parsePaperBlocks, type PaperBlockType } from '../lib/documentFormat'
+import { getFootnotesForBlock } from '../lib/footnotes'
+import { sectionStore, versionStore, type DocSection, type SectionFootnote } from '../lib/storage'
 
 interface DocAreaProps {
   projectId: string
+  paperTitle: string
   sections:        DocSection[]
   activeSectionId: string | null
   onSectionClick:  (id: string) => void
   onSectionChange: (id: string, content: string) => void
+  onPaperTitleChange: (title: string) => void
   onGenerateSection: (title: string) => void
+  onAddFootnote?: (payload: {
+    sectionId: string
+    blockIndex: number
+    start: number
+    end: number
+    anchorText: string
+    noteText: string
+  }) => void
+  onUpdateFootnote?: (footnoteId: string, noteText: string) => void
+  onDeleteFootnote?: (footnoteId: string) => void
+}
+
+const A4_WIDTH = 794
+const A4_MIN_HEIGHT = 1123
+const PAGE_HORIZONTAL_PADDING = 86
+const PAGE_VERTICAL_PADDING = 76
+const PAGE_CONTENT_HEIGHT = A4_MIN_HEIGHT - PAGE_VERTICAL_PADDING * 2 - 44
+const PREVIEW_CHARS_PER_LINE = 46
+const PARAGRAPH_LINE_HEIGHT = 31
+
+interface FlowBlock {
+  id: string
+  sectionId: string
+  sectionTitle: string
+  type: PaperBlockType | 'sectionTitle' | 'hint' | 'placeholder' | 'generating'
+  text: string
+  blockIndex?: number
+  textStart?: number
+  textEnd?: number
+  previousText?: string
+  height: number
+}
+
+function estimateBlockHeight(text: string, type: FlowBlock['type']): number {
+  if (type === 'sectionTitle') return 54
+  if (type === 'hint') return 34
+  if (type === 'generating' || type === 'placeholder') return 48
+  if (type === 'heading2') return 44
+  if (type === 'heading3') return 38
+  const lines = Math.max(1, Math.ceil(text.length / PREVIEW_CHARS_PER_LINE))
+  return lines * PARAGRAPH_LINE_HEIGHT + 10
+}
+
+function splitParagraphForPreview(text: string): string[] {
+  if (text.length <= 360) return [text]
+
+  const chunks: string[] = []
+  let remaining = text.trim()
+
+  while (remaining.length > 360) {
+    const windowText = remaining.slice(0, 360)
+    const breakAt = Math.max(
+      windowText.lastIndexOf('。'),
+      windowText.lastIndexOf('；'),
+      windowText.lastIndexOf('，'),
+      windowText.lastIndexOf('. '),
+      windowText.lastIndexOf('; '),
+      windowText.lastIndexOf(', ')
+    )
+    const safeBreak = breakAt > 180 ? breakAt + 1 : 360
+    chunks.push(remaining.slice(0, safeBreak).trim())
+    remaining = remaining.slice(safeBreak).trim()
+  }
+
+  if (remaining) chunks.push(remaining)
+  return chunks
+}
+
+function splitTextToFit(text: string, availableHeight: number): [string, string] | null {
+  const availableLines = Math.floor((availableHeight - 10) / PARAGRAPH_LINE_HEIGHT)
+  if (availableLines < 3) return null
+
+  const maxChars = Math.min(text.length - 80, availableLines * PREVIEW_CHARS_PER_LINE)
+  if (maxChars < 100) return null
+
+  const windowText = text.slice(0, maxChars)
+  const breakAt = Math.max(
+    windowText.lastIndexOf('。'),
+    windowText.lastIndexOf('；'),
+    windowText.lastIndexOf('，'),
+    windowText.lastIndexOf('. '),
+    windowText.lastIndexOf('; '),
+    windowText.lastIndexOf(', ')
+  )
+  const safeBreak = breakAt > 80 ? breakAt + 1 : maxChars
+  const head = text.slice(0, safeBreak).trim()
+  const tail = text.slice(safeBreak).trim()
+  return head && tail ? [head, tail] : null
+}
+
+function cloneParagraphBlock(block: FlowBlock, text: string, suffix: string): FlowBlock {
+  return {
+    ...block,
+    id: `${block.id}-${suffix}`,
+    text,
+    previousText: text,
+    height: estimateBlockHeight(text, block.type),
+  }
+}
+
+function isKeepWithNextBlock(block: FlowBlock): boolean {
+  return block.type === 'heading2' || block.type === 'heading3' || block.type === 'sectionTitle'
+}
+
+function buildFlowBlocks(sections: DocSection[]): FlowBlock[] {
+  return sections.flatMap(section => {
+    const blocks: FlowBlock[] = [{
+      id: `${section.id}-title`,
+      sectionId: section.id,
+      sectionTitle: section.title,
+      type: 'sectionTitle',
+      text: section.title,
+      height: estimateBlockHeight(section.title, 'sectionTitle'),
+    }]
+
+    if (section.content) {
+      blocks.push({
+        id: `${section.id}-hint`,
+        sectionId: section.id,
+        sectionTitle: section.title,
+        type: 'hint',
+        text: 'AI 建议：选中词语后点「添加脚注」，可在页脚显示引用说明。这与 @ 资料调用是两套功能。',
+        height: estimateBlockHeight('', 'hint'),
+      })
+    }
+
+    if (section.status === 'generating') {
+      blocks.push({
+        id: `${section.id}-generating`,
+        sectionId: section.id,
+        sectionTitle: section.title,
+        type: 'generating',
+        text: 'AI 正在生成…',
+        height: estimateBlockHeight('', 'generating'),
+      })
+      return blocks
+    }
+
+    const contentBlocks = parsePaperBlocks(section.content)
+    if (contentBlocks.length === 0) {
+      blocks.push({
+        id: `${section.id}-empty`,
+        sectionId: section.id,
+        sectionTitle: section.title,
+        type: 'placeholder',
+        text: '点击此处直接输入，或在左侧对话框说这一节的标题让 AI 生成',
+        blockIndex: 0,
+        height: estimateBlockHeight('', 'placeholder'),
+      })
+      return blocks
+    }
+
+    contentBlocks.forEach((block, index) => {
+      const previewChunks = block.type === 'paragraph'
+        ? splitParagraphForPreview(block.text)
+        : [block.text]
+
+      previewChunks.forEach((chunk, chunkIndex) => {
+        const textStart = previewChunks.slice(0, chunkIndex).reduce((sum, item) => sum + item.length, 0)
+        blocks.push({
+          id: `${section.id}-${index}-${chunkIndex}`,
+          sectionId: section.id,
+          sectionTitle: section.title,
+          type: block.type,
+          text: chunk,
+          previousText: chunk,
+          blockIndex: index,
+          textStart,
+          textEnd: textStart + chunk.length,
+          height: estimateBlockHeight(chunk, block.type),
+        })
+      })
+    })
+
+    return blocks
+  })
+}
+
+function paginateBlocks(blocks: FlowBlock[]): FlowBlock[][] {
+  const pages: FlowBlock[][] = []
+  let page: FlowBlock[] = []
+  let usedHeight = 0
+  const queue = [...blocks]
+
+  while (queue.length > 0) {
+    const block = queue.shift()!
+    const nextBlock = queue[0]
+    const remainingHeight = PAGE_CONTENT_HEIGHT - usedHeight
+    const keepWithNextHeight = nextBlock && isKeepWithNextBlock(block)
+      ? block.height + Math.min(nextBlock.height, 92)
+      : block.height
+
+    if (
+      page.length > 0 &&
+      remainingHeight < 150 &&
+      keepWithNextHeight > remainingHeight &&
+      isKeepWithNextBlock(block)
+    ) {
+      pages.push(page)
+      page = []
+      usedHeight = 0
+    }
+
+    const freshRemainingHeight = PAGE_CONTENT_HEIGHT - usedHeight
+    if (
+      block.type === 'paragraph' &&
+      page.length > 0 &&
+      block.height > freshRemainingHeight &&
+      freshRemainingHeight >= 130
+    ) {
+      const split = splitTextToFit(block.text, freshRemainingHeight)
+      if (split) {
+        const [head, tail] = split
+        const fitBlock = cloneParagraphBlock(block, head, 'fit')
+        const restBlock = cloneParagraphBlock(block, tail, 'rest')
+        page.push(fitBlock)
+        pages.push(page)
+        page = []
+        usedHeight = 0
+        queue.unshift(restBlock)
+        continue
+      }
+    }
+
+    const shouldBreak = page.length > 0 && usedHeight + block.height > PAGE_CONTENT_HEIGHT
+    if (shouldBreak) {
+      pages.push(page)
+      page = []
+      usedHeight = 0
+    }
+    page.push(block)
+    usedHeight += block.height
+  }
+
+  if (page.length > 0) pages.push(page)
+  return pages
 }
 
 export default function DocArea({
   projectId,
+  paperTitle,
   sections,
   activeSectionId,
   onSectionClick,
   onSectionChange,
+  onPaperTitleChange,
   onGenerateSection,
+  onAddFootnote,
+  onUpdateFootnote,
+  onDeleteFootnote,
 }: DocAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const snapshotTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const undoStack = useRef<Record<string, string[]>>({})
+  const undoDebounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const undoPauseOpen = useRef<Record<string, boolean>>({})
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null)
+  const [editingFootnote, setEditingFootnote] = useState<SectionFootnote | null>(null)
+  const [footnoteDraft, setFootnoteDraft] = useState('')
+  const [footnoteEditorPos, setFootnoteEditorPos] = useState({ top: 0, left: 0 })
 
-  // 每个节对应的 ref（用于 contenteditable DOM 操作）
-  const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const openFootnoteEditor = useCallback((footnote: SectionFootnote, clientX: number, clientY: number) => {
+    if (!onUpdateFootnote && !onDeleteFootnote) return
+    setEditingFootnote(footnote)
+    setFootnoteDraft(footnote.noteText)
+    setFootnoteEditorPos({ top: clientY + 8, left: clientX - 120 })
+  }, [onDeleteFootnote, onUpdateFootnote])
 
-  // 当 AI 生成内容时，同步更新 contenteditable 的 DOM
-  // （因为 contenteditable 不受 React 控制，需要手动同步）
-  useEffect(() => {
-    sections.forEach(section => {
-      const el = sectionRefs.current[section.id]
-      if (!el) return
-      // 只有当 DOM 内容与 state 不同时才更新（避免覆盖用户输入）
-      const formattedContent = formatSectionContent(section.content)
-      if (el.innerText !== formattedContent && document.activeElement !== el) {
-        el.innerText = formattedContent
-      }
-    })
+  const persistSectionContent = useCallback((sectionId: string, content: string) => {
+    const nextSections = sections.map(section =>
+      section.id === sectionId ? { ...section, content, status: 'done' as const, lastModified: Date.now() } : section
+    )
+    sectionStore.saveForProject(projectId, nextSections)
+    onSectionChange(sectionId, content)
+  }, [onSectionChange, projectId, sections])
+
+  const pushUndoState = useCallback((sectionId: string, content: string) => {
+    const last = undoStack.current[sectionId]?.[undoStack.current[sectionId].length - 1]
+    if (last === content) return
+    undoStack.current[sectionId] = [
+      ...(undoStack.current[sectionId] ?? []),
+      content,
+    ].slice(-80)
+  }, [])
+
+  const buildUpdatedSectionContent = useCallback((sectionId: string, blockIndex: number, text: string, previousText?: string) => {
+    const section = sections.find(item => item.id === sectionId)
+    if (!section) return ''
+    const blocks = parsePaperBlocks(section.content)
+    if (blocks.length === 0) return formatSectionContent(text)
+    const nextText = formatSectionContent(text)
+    const oldText = blocks[blockIndex]?.text ?? ''
+    blocks[blockIndex] = {
+      ...blocks[blockIndex],
+      text: previousText && oldText.includes(previousText)
+        ? oldText.replace(previousText, nextText)
+        : nextText,
+    }
+    return blocks.map(block => block.text).join('\n\n')
   }, [sections])
 
-  // 处理 contenteditable 的输入（debounce 1s 后保存）
-  const handleInput = useCallback((id: string, el: HTMLDivElement) => {
-    const content = formatSectionContent(el.innerText)
+  const handleBlockInput = useCallback((block: FlowBlock, el: HTMLDivElement) => {
+    if (block.blockIndex === undefined) return
+    const key = block.id
+    if (debounceTimers.current[key]) clearTimeout(debounceTimers.current[key])
+    if (snapshotTimers.current[block.sectionId]) clearTimeout(snapshotTimers.current[block.sectionId])
+    debounceTimers.current[key] = setTimeout(() => {
+      const content = buildUpdatedSectionContent(block.sectionId, block.blockIndex!, el.innerText, block.previousText)
+      if (content) persistSectionContent(block.sectionId, content)
+    }, 900)
+    snapshotTimers.current[block.sectionId] = setTimeout(() => {
+      versionStore.snapshot(`手动编辑：${block.sectionTitle.slice(0, 20)}`, projectId)
+    }, 3500)
+  }, [buildUpdatedSectionContent, persistSectionContent, projectId])
 
-    // 清除旧的 debounce 定时器
-    if (debounceTimers.current[id]) {
-      clearTimeout(debounceTimers.current[id])
+  const handleBlockBlur = useCallback((block: FlowBlock, el: HTMLDivElement) => {
+    if (block.blockIndex === undefined) return
+    const key = block.id
+    if (debounceTimers.current[key]) clearTimeout(debounceTimers.current[key])
+    if (snapshotTimers.current[block.sectionId]) clearTimeout(snapshotTimers.current[block.sectionId])
+    const content = buildUpdatedSectionContent(block.sectionId, block.blockIndex, el.innerText, block.previousText)
+    if (content) {
+      persistSectionContent(block.sectionId, content)
+      versionStore.snapshot(`手动编辑：${block.sectionTitle.slice(0, 20)}`, projectId)
+    }
+  }, [buildUpdatedSectionContent, persistSectionContent, projectId])
+
+  const findEditableBlock = useCallback((node: Node | null): HTMLElement | null => {
+    if (!node) return null
+    const element = node instanceof HTMLElement ? node : node.parentElement
+    return element?.closest<HTMLElement>('[data-section-id][data-block-index]') ?? null
+  }, [])
+
+  const handleEditBeforeInput = useCallback((pageBlocks: FlowBlock[]) => {
+    const selection = window.getSelection()
+    const blockElement = selection?.rangeCount
+      ? findEditableBlock(selection.getRangeAt(0).startContainer)
+      : null
+    const block = pageBlocks.find(item => item.id === blockElement?.dataset.blockId)
+    if (!block) return
+
+    const section = sections.find(item => item.id === block.sectionId)
+    if (!section) return
+
+    if (!undoPauseOpen.current[block.sectionId]) {
+      pushUndoState(block.sectionId, section.content)
+      undoPauseOpen.current[block.sectionId] = true
     }
 
-    debounceTimers.current[id] = setTimeout(() => {
-      onSectionChange(id, content)
-    }, 1000)
-  }, [onSectionChange])
-
-  // blur 时立即保存 + 生成版本快照
-  const handleBlur = useCallback((id: string, title: string, el: HTMLDivElement) => {
-    const content = formatSectionContent(el.innerText)
-
-    // 清除 debounce，立即保存
-    if (debounceTimers.current[id]) {
-      clearTimeout(debounceTimers.current[id])
+    if (undoDebounceTimers.current[block.sectionId]) {
+      clearTimeout(undoDebounceTimers.current[block.sectionId])
     }
-    onSectionChange(id, content)
-    versionStore.snapshot(`手动编辑：${title.slice(0, 20)}`, projectId)
-  }, [onSectionChange, projectId])
+    undoDebounceTimers.current[block.sectionId] = setTimeout(() => {
+      undoPauseOpen.current[block.sectionId] = false
+    }, 1200)
+  }, [findEditableBlock, pushUndoState, sections])
+
+  const getPointInBlock = useCallback((node: Node, offset: number) => {
+    const element = findEditableBlock(node)
+    if (!element) return null
+    const sectionId = element.dataset.sectionId
+    const blockIndex = Number.parseInt(element.dataset.blockIndex ?? '', 10)
+    const textStart = Number.parseInt(element.dataset.textStart ?? '0', 10)
+    if (!sectionId || Number.isNaN(blockIndex)) return null
+
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    range.setEnd(node, offset)
+    const localOffset = range.toString().length
+    range.detach()
+
+    return { element, sectionId, blockIndex, textStart, offset: localOffset }
+  }, [findEditableBlock])
+
+  const replaceStructuredSelection = useCallback((replacementText: string, snapshotLabel: string) => {
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return false
+
+    const range = selection.getRangeAt(0)
+    const start = getPointInBlock(range.startContainer, range.startOffset)
+    const end = getPointInBlock(range.endContainer, range.endOffset)
+    if (!start || !end || start.sectionId !== end.sectionId) return false
+
+    const crossesEditableBlocks = start.element !== end.element
+    if (!crossesEditableBlocks) return false
+
+    const section = sections.find(item => item.id === start.sectionId)
+    if (!section) return false
+
+    const blocks = parsePaperBlocks(section.content)
+    if (blocks.length === 0) return false
+
+    const fromIndex = Math.min(start.blockIndex, end.blockIndex)
+    const toIndex = Math.max(start.blockIndex, end.blockIndex)
+    const fromOffset = start.textStart + start.offset
+    const toOffset = end.textStart + end.offset
+    const firstBlock = blocks[fromIndex]
+    const lastBlock = blocks[toIndex]
+    if (!firstBlock || !lastBlock) return false
+
+    const before = blocks.slice(0, fromIndex).map(block => block.text)
+    const after = blocks.slice(toIndex + 1).map(block => block.text)
+    const mergedText = `${firstBlock.text.slice(0, fromOffset)}${replacementText}${lastBlock.text.slice(toOffset)}`
+    const nextContent = formatSectionContent([...before, mergedText, ...after].filter(Boolean).join('\n\n'))
+
+    pushUndoState(start.sectionId, section.content)
+
+    onSectionClick(start.sectionId)
+    setEditingSectionId(start.sectionId)
+    persistSectionContent(start.sectionId, nextContent)
+    versionStore.snapshot(snapshotLabel, projectId)
+    selection.removeAllRanges()
+    return true
+  }, [getPointInBlock, onSectionClick, persistSectionContent, projectId, pushUndoState, sections])
+
+  const handleDocKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    const isUndo = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.shiftKey
+    if (isUndo) {
+      const selection = window.getSelection()
+      const sectionId = selection?.rangeCount
+        ? findEditableBlock(selection.getRangeAt(0).startContainer)?.dataset.sectionId ?? editingSectionId
+        : editingSectionId
+      const previous = sectionId ? undoStack.current[sectionId]?.pop() : undefined
+      if (sectionId && previous !== undefined) {
+        event.preventDefault()
+        Object.values(debounceTimers.current).forEach(timer => clearTimeout(timer))
+        debounceTimers.current = {}
+        if (snapshotTimers.current[sectionId]) clearTimeout(snapshotTimers.current[sectionId])
+        if (undoDebounceTimers.current[sectionId]) clearTimeout(undoDebounceTimers.current[sectionId])
+        undoPauseOpen.current[sectionId] = false
+        onSectionClick(sectionId)
+        persistSectionContent(sectionId, previous)
+      }
+      return
+    }
+
+    if ((event.key === 'Backspace' || event.key === 'Delete') && replaceStructuredSelection('', '手动删除：跨段文本')) {
+      event.preventDefault()
+    }
+  }, [editingSectionId, findEditableBlock, onSectionClick, persistSectionContent, replaceStructuredSelection])
+
+  const handleEditablePaste = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const text = event.clipboardData.getData('text/plain')
+    if (replaceStructuredSelection(text, '手动粘贴：跨段文本')) return
+    const selection = window.getSelection()
+    const sectionId = selection?.rangeCount
+      ? findEditableBlock(selection.getRangeAt(0).startContainer)?.dataset.sectionId
+      : undefined
+    const section = sectionId ? sections.find(item => item.id === sectionId) : undefined
+    if (section) pushUndoState(section.id, section.content)
+    document.execCommand('insertText', false, text)
+  }, [findEditableBlock, pushUndoState, replaceStructuredSelection, sections])
+
+  const handlePageInput = useCallback((pageBlocks: FlowBlock[]) => {
+    const selection = window.getSelection()
+    const blockElement = selection?.rangeCount
+      ? findEditableBlock(selection.getRangeAt(0).startContainer)
+      : null
+    const block = pageBlocks.find(item => item.id === blockElement?.dataset.blockId)
+    if (!block || block.blockIndex === undefined || !blockElement) return
+    handleBlockInput(block, blockElement as HTMLDivElement)
+  }, [findEditableBlock, handleBlockInput])
+
+  const handlePageBlur = useCallback((pageBlocks: FlowBlock[], pageEl: HTMLDivElement) => {
+    pageBlocks.forEach(block => {
+      if (block.blockIndex === undefined) return
+      const blockElement = pageEl.querySelector<HTMLDivElement>(`[data-block-id="${block.id}"]`)
+      if (!blockElement || blockElement.innerText === block.text) return
+      handleBlockBlur(block, blockElement)
+    })
+  }, [handleBlockBlur])
 
   if (sections.length === 0) {
     return (
@@ -94,6 +518,9 @@ export default function DocArea({
     )
   }
 
+  const pages = paginateBlocks(buildFlowBlocks(sections))
+  const totalPages = 1 + pages.length
+
   return (
     <div style={{ flex: 1, position: 'relative', overflow: 'hidden', display: 'flex' }}>
 
@@ -104,200 +531,317 @@ export default function DocArea({
         sections={sections}
         activeSectionId={activeSectionId}
         onContentUpdate={(id, newContent) => {
-          const el = sectionRefs.current[id]
-          if (el) el.innerText = newContent
-          onSectionChange(id, newContent)
+          persistSectionContent(id, newContent)
           versionStore.snapshot('AI 修改：选中文本', projectId)
         }}
+        onAddFootnote={onAddFootnote}
       />
 
       {/* 文档滚动区 */}
       <div
         ref={containerRef}
         id="doc-scroll-area"
+        onKeyDown={handleDocKeyDown}
         style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '26px 34px',
+          padding: '32px 0 64px',
           display: 'flex',
           flexDirection: 'column',
-          gap: 16,
-          background: '#F8F6F1',
+          alignItems: 'center',
+          gap: 24,
+          background: '#E7E3DD',
         }}
       >
-        {sections.map(section => {
-          const isActive = section.id === activeSectionId
+        <div
+          style={{
+            width: A4_WIDTH,
+            height: A4_MIN_HEIGHT,
+            minHeight: A4_MIN_HEIGHT,
+            flexShrink: 0,
+            boxSizing: 'border-box',
+            border: '1px solid #D8D2C8',
+            background: '#fff',
+            boxShadow: '0 16px 38px rgba(38, 32, 24, 0.16)',
+            padding: `${PAGE_VERTICAL_PADDING}px ${PAGE_HORIZONTAL_PADDING}px`,
+            textAlign: 'center',
+            position: 'relative',
+          }}
+        >
+          <input
+            value={paperTitle}
+            onChange={event => onPaperTitleChange(event.target.value)}
+            placeholder="请输入论文标题"
+            style={{
+              width: '100%',
+              border: 'none',
+              outline: 'none',
+              background: 'transparent',
+              textAlign: 'center',
+              color: 'var(--color-ink)',
+              fontFamily: 'var(--font-serif)',
+              fontSize: 24,
+              fontWeight: 700,
+              lineHeight: 1.5,
+            }}
+          />
+          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--color-ink-3)' }}>
+            A4 页面预览 · 论文标题会同步到 Word 导出
+          </div>
+          <div
+            style={{
+              position: 'absolute',
+              left: PAGE_HORIZONTAL_PADDING,
+              right: PAGE_HORIZONTAL_PADDING,
+              bottom: 34,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontSize: 11,
+              color: '#A59B8D',
+              borderTop: '1px solid #E7E0D6',
+              paddingTop: 10,
+            }}
+          >
+            <span>A4 · 210 × 297 mm</span>
+            <span>1 / {totalPages}</span>
+          </div>
+        </div>
+
+        {pages.map((pageBlocks, pageIndex) => {
+          const pageNo = pageIndex + 2
+          const activeOnPage = pageBlocks.some(block => block.sectionId === activeSectionId)
+          const pageFootnotes = pageBlocks.flatMap(block => {
+            if (block.blockIndex === undefined) return [] as SectionFootnote[]
+            const section = sections.find(item => item.id === block.sectionId)
+            return getFootnotesForBlock(section, block.blockIndex).filter(footnote => {
+              if (block.textStart === undefined || block.textEnd === undefined) return true
+              return footnote.end > block.textStart && footnote.start < block.textEnd
+            })
+          }).filter((footnote, index, list) => list.findIndex(item => item.id === footnote.id) === index)
+            .sort((a, b) => a.number - b.number)
 
           return (
             <div
-              key={section.id}
-              id={`section-${section.id}`}
-              className="doc-section-wrapper"
-              onClick={() => onSectionClick(section.id)}
+              key={`page-${pageIndex}`}
+              className="doc-page"
               style={{
                 position: 'relative',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-md)',
-                background: 'var(--color-surface)',
-                boxShadow: isActive ? 'var(--shadow-md)' : 'var(--shadow-sm)',
-                padding: '16px 18px 16px 20px',
-                borderLeft: `4px solid ${
-                  isActive
-                    ? 'var(--color-accent)'
-                    : section.status === 'generating'
-                    ? 'var(--color-gpt)'
-                    : 'var(--color-border)'
-                }`,
+                width: A4_WIDTH,
+                height: A4_MIN_HEIGHT,
+                minHeight: A4_MIN_HEIGHT,
+                flexShrink: 0,
+                boxSizing: 'border-box',
+                border: `1px solid ${activeOnPage ? 'var(--color-accent)' : '#D8D2C8'}`,
+                background: '#fff',
+                boxShadow: activeOnPage
+                  ? '0 18px 42px rgba(45, 90, 61, 0.18)'
+                  : '0 16px 38px rgba(38, 32, 24, 0.14)',
+                padding: `${PAGE_VERTICAL_PADDING}px ${PAGE_HORIZONTAL_PADDING}px`,
+                overflow: 'hidden',
                 transition: 'box-shadow 0.2s, border-color 0.2s',
               }}
             >
-              {/* 章节标题 */}
               <div
                 style={{
-                  fontSize: 17,
-                  fontWeight: 600,
-                  color: 'var(--color-ink)',
-                  marginBottom: 10,
-                  fontFamily: 'var(--font-serif)',
-                  letterSpacing: '0.01em',
-                  userSelect: 'none',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
+                  position: 'absolute',
+                  top: 32,
+                  right: PAGE_HORIZONTAL_PADDING,
+                  fontSize: 11,
+                  color: '#A59B8D',
                 }}
               >
-                <span>{section.title}</span>
-
-                {/* Hover 操作按钮 */}
-                <div
-                  className="section-hover-actions"
-                  style={{
-                    display: 'flex',
-                    gap: 5,
-                    opacity: 1,
-                    transition: 'opacity 0.15s',
-                  }}
-                >
-                  {section.status === 'pending' || !section.content ? (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onGenerateSection(section.title)
-                      }}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 4,
-                        padding: '3px 9px', borderRadius: 'var(--radius-sm)',
-                        border: '1px solid var(--color-border)',
-                        background: 'var(--color-surface)',
-                        color: 'var(--color-accent)',
-                        fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-sans)',
-                        fontWeight: 500,
-                      }}
-                    >
-                      <Sparkles size={11} />
-                      AI 生成
-                    </button>
-                  ) : (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        sectionRefs.current[section.id]?.focus()
-                      }}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 4,
-                        padding: '3px 9px', borderRadius: 'var(--radius-sm)',
-                        border: '1px solid var(--color-border)',
-                        background: 'var(--color-surface)',
-                        color: 'var(--color-ink-2)',
-                        fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-sans)',
-                      }}
-                    >
-                      <Edit3 size={11} />
-                      手动编辑
-                    </button>
-                  )}
-                </div>
+                第 {pageNo} 页 / 共 {totalPages} 页
               </div>
 
-              {section.content && (
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: '#B27A3A',
-                    background: '#FFF8EA',
-                    borderLeft: '2px solid #E5B76E',
-                    padding: '4px 8px',
-                    marginBottom: 8,
-                  }}
-                >
-                  AI 删除修改：优化句式结构，突出研究对象与问题导向。
-                </div>
-              )}
+              <div
+                contentEditable
+                suppressContentEditableWarning
+                onBeforeInput={() => handleEditBeforeInput(pageBlocks)}
+                onInput={() => handlePageInput(pageBlocks)}
+                onPaste={handleEditablePaste}
+                onBlur={event => handlePageBlur(pageBlocks, event.currentTarget)}
+                style={{
+                  outline: 'none',
+                  minHeight: PAGE_CONTENT_HEIGHT - 120,
+                  cursor: 'text',
+                  userSelect: 'text',
+                }}
+              >
+              {pageBlocks.map(block => {
+                const isActive = block.sectionId === activeSectionId
+                const isEditable = block.blockIndex !== undefined && block.type !== 'placeholder'
+                const section = sections.find(item => item.id === block.sectionId)
+                const blockFootnotes = block.blockIndex === undefined
+                  ? []
+                  : getFootnotesForBlock(section, block.blockIndex)
+                    .filter(footnote => {
+                      if (block.textStart === undefined || block.textEnd === undefined) return true
+                      return footnote.end > block.textStart && footnote.start < block.textEnd
+                    })
+                    .map(footnote => ({
+                      ...footnote,
+                      start: block.textStart === undefined
+                        ? footnote.start
+                        : Math.max(0, footnote.start - block.textStart),
+                      end: block.textStart === undefined
+                        ? footnote.end
+                        : Math.min(block.text.length, footnote.end - block.textStart),
+                    }))
 
-              {/* 章节正文（contenteditable）*/}
-              {section.status === 'generating' ? (
-                // 生成中动画
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0' }}>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    {[0, 1, 2].map(i => (
-                      <div
-                        key={i}
-                        style={{
-                          width: 5, height: 5, borderRadius: '50%',
-                          background: 'var(--color-gpt)',
-                          animation: 'bounce 1.2s ease-in-out infinite',
-                          animationDelay: `${i * 0.2}s`,
-                        }}
-                      />
-                    ))}
+                if (block.type === 'sectionTitle') {
+                  const section = sections.find(item => item.id === block.sectionId)
+                  return (
+                    <div
+                      key={block.id}
+                      data-section-id={block.sectionId}
+                      contentEditable={false}
+                      onClick={() => onSectionClick(block.sectionId)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        margin: '0 0 14px',
+                        paddingLeft: 10,
+                        borderLeft: `4px solid ${isActive ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                      }}
+                    >
+                      <h2 style={{ margin: 0, fontSize: 19, lineHeight: 1.6, fontFamily: 'var(--font-serif)', color: 'var(--color-ink)' }}>
+                        {block.text}
+                      </h2>
+                      {section && (
+                        section.status === 'pending' || !section.content ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onGenerateSection(section.title)
+                            }}
+                            style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-accent)', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 500 }}
+                          >
+                            <Sparkles size={11} />
+                            AI 生成
+                          </button>
+                        ) : null
+                      )}
+                    </div>
+                  )
+                }
+
+                if (block.type === 'hint') {
+                  return (
+                    <div
+                      key={block.id}
+                      data-section-id={block.sectionId}
+                      contentEditable={false}
+                      style={{ fontSize: 11, color: '#B27A3A', background: '#FFF8EA', borderLeft: '2px solid #E5B76E', padding: '4px 8px', marginBottom: 12 }}
+                    >
+                      {block.text}
+                    </div>
+                  )
+                }
+
+                if (block.type === 'generating') {
+                  return (
+                    <div key={block.id} data-section-id={block.sectionId} contentEditable={false} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0' }}>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {[0, 1, 2].map(i => (
+                          <div key={i} style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--color-gpt)', animation: 'bounce 1.2s ease-in-out infinite', animationDelay: `${i * 0.2}s` }} />
+                        ))}
+                      </div>
+                      <span style={{ fontSize: 12, color: 'var(--color-gpt)' }}>AI 正在生成…</span>
+                    </div>
+                  )
+                }
+
+                return (
+                  <div
+                    key={block.id}
+                    suppressContentEditableWarning
+                    data-section-id={block.sectionId}
+                    data-block-id={block.id}
+                    data-block-index={block.blockIndex}
+                    data-text-start={block.textStart ?? 0}
+                    data-text-end={block.textEnd ?? block.text.length}
+                    onClick={() => onSectionClick(block.sectionId)}
+                    onFocus={() => setEditingSectionId(block.sectionId)}
+                    style={{
+                      minHeight: block.type === 'placeholder' ? 42 : undefined,
+                      margin: block.type === 'heading2' ? '18px 0 10px' : block.type === 'heading3' ? '14px 0 8px' : '0 0 12px',
+                      fontSize: block.type === 'heading2' ? 15.5 : block.type === 'heading3' ? 14.5 : 14.5,
+                      lineHeight: block.type === 'paragraph' ? 2 : 1.8,
+                      color: block.type === 'placeholder' ? 'var(--color-ink-3)' : 'var(--color-ink-2)',
+                      fontFamily: 'var(--font-serif)',
+                      fontWeight: block.type === 'heading2' || block.type === 'heading3' ? 650 : 400,
+                      outline: 'none',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      cursor: isEditable ? 'text' : 'default',
+                      userSelect: 'text',
+                      textAlign: block.type === 'paragraph' ? 'justify' : 'left',
+                      textIndent: block.type === 'paragraph' ? '2em' : 0,
+                    }}
+                  >
+                    {editingSectionId === block.sectionId && isEditable
+                      ? block.text
+                      : <FootnoteText
+                          text={block.text}
+                          footnotes={blockFootnotes}
+                          onFootnoteClick={(footnote, event) => openFootnoteEditor(footnote, event.clientX, event.clientY)}
+                        />}
                   </div>
-                  <span style={{ fontSize: 12, color: 'var(--color-gpt)' }}>AI 正在生成…</span>
-                </div>
-              ) : (
-                <div
-                  ref={el => { sectionRefs.current[section.id] = el }}
-                  contentEditable
-                  suppressContentEditableWarning
-                  data-section-id={section.id}
-                  data-placeholder={
-                    section.content
-                      ? undefined
-                      : '点击此处直接输入，或在左侧对话框说「写这一节」让 AI 生成'
-                  }
-                  onInput={e => handleInput(section.id, e.currentTarget)}
-                  onBlur={e => handleBlur(section.id, section.title, e.currentTarget)}
-                  style={{
-                    minHeight: 56,
-                    fontSize: 14,
-                    lineHeight: 1.85,
-                    color: section.content ? 'var(--color-ink-2)' : 'var(--color-ink-3)',
-                    fontFamily: 'var(--font-sans)',
-                    outline: 'none',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    cursor: 'text',
-                  }}
-                  // placeholder 样式通过 CSS 实现
-                />
-              )}
+                )
+              })}
+              </div>
 
-              {/* 内容为空时的 placeholder 样式 */}
-              {!section.content && section.status !== 'generating' && (
+              {pageFootnotes.length > 0 && (
                 <div
                   style={{
                     position: 'absolute',
-                    top: 40,
-                    left: 24,
-                    fontSize: 13,
-                    color: 'var(--color-ink-3)',
-                    fontStyle: 'italic',
-                    pointerEvents: 'none',
-                    lineHeight: 1.6,
+                    left: PAGE_HORIZONTAL_PADDING,
+                    right: PAGE_HORIZONTAL_PADDING,
+                    bottom: 68,
+                    borderTop: '1px solid #D8D2C8',
+                    paddingTop: 8,
+                    fontSize: 10.5,
+                    lineHeight: 1.65,
+                    color: '#6E655B',
                   }}
                 >
-                  点击此处直接输入，或在左侧对话框说这一节的标题让 AI 生成
+                  {pageFootnotes.map(footnote => (
+                    <div
+                      key={footnote.id}
+                      onClick={event => openFootnoteEditor(footnote, event.clientX, event.clientY)}
+                      style={{
+                        marginBottom: 4,
+                        cursor: onUpdateFootnote || onDeleteFootnote ? 'pointer' : 'default',
+                      }}
+                    >
+                      <sup style={{ marginRight: 4, fontWeight: 650 }}>[{footnote.number}]</sup>
+                      {footnote.noteText}
+                    </div>
+                  ))}
                 </div>
               )}
+
+              <div
+                style={{
+                  position: 'absolute',
+                  left: PAGE_HORIZONTAL_PADDING,
+                  right: PAGE_HORIZONTAL_PADDING,
+                  bottom: 34,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  fontSize: 11,
+                  color: '#A59B8D',
+                  borderTop: '1px solid #E7E0D6',
+                  paddingTop: 10,
+                }}
+              >
+                <span>{paperTitle || '未命名论文'}</span>
+                <span>{pageNo}</span>
+              </div>
             </div>
           )
         })}
@@ -305,6 +849,26 @@ export default function DocArea({
         {/* 底部留白 */}
         <div style={{ height: 80 }} />
       </div>
+
+      {editingFootnote && (
+        <FootnoteEditor
+          footnote={editingFootnote}
+          draft={footnoteDraft}
+          position={footnoteEditorPos}
+          onDraftChange={setFootnoteDraft}
+          onSave={() => {
+            onUpdateFootnote?.(editingFootnote.id, footnoteDraft)
+            setEditingFootnote(null)
+          }}
+          onDelete={() => {
+            if (confirm(`确认删除脚注 [${editingFootnote.number}]？`)) {
+              onDeleteFootnote?.(editingFootnote.id)
+              setEditingFootnote(null)
+            }
+          }}
+          onClose={() => setEditingFootnote(null)}
+        />
+      )}
 
       {/* Hover 样式注入 */}
       <style>{`

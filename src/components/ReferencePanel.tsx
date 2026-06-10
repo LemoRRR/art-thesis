@@ -166,14 +166,13 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
         ) : (
           filteredReferenceItems.map(item => {
             const checked = selection.libraryItemIds.includes(item.id)
-            const bound = project.libraryItemIds.includes(item.id)
 
             return (
               <ToggleRow
                 key={item.id}
                 checked={checked}
                 title={item.title}
-                subtitle={`${bound ? '项目已绑定 · ' : ''}${item.summary || item.text.slice(0, 48)}`}
+                subtitle={item.summary || item.text.slice(0, 48)}
                 onClick={() => toggleLibrary(item.id)}
               />
             )

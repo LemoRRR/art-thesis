@@ -8,18 +8,35 @@ export function getToken(): string | null {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken()
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers ?? {}),
-    },
-  })
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), 20_000)
+  let res: Response
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      ...options,
+      signal: options.signal ?? controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers ?? {}),
+      },
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(`${path} 请求超时，请确认后端正在运行`)
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: '请求失败' }))
-    throw new Error(error.error ?? '请求失败')
+    if (res.status === 401) {
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('auth_user')
+    }
+    throw new Error(`${path} ${res.status}: ${error.error ?? '请求失败'}`)
   }
 
   return res.json()
@@ -43,10 +60,14 @@ export const authAPI = {
 export const projectsAPI = {
   list: () => request('/api/projects'),
   get: (id: string) => request(`/api/projects/${id}`),
-  create: (title: string, description?: string) =>
+  create: (titleOrData: string | unknown, description?: string) =>
     request('/api/projects', {
       method: 'POST',
-      body: JSON.stringify({ title, description }),
+      body: JSON.stringify(
+        typeof titleOrData === 'string'
+          ? { title: titleOrData, description }
+          : titleOrData
+      ),
     }),
   update: (id: string, data: unknown) =>
     request(`/api/projects/${id}`, {
@@ -68,6 +89,83 @@ export const sectionsAPI = {
       body: JSON.stringify({ sections }),
     }),
   delete: (id: string) => request(`/api/sections/${id}`, { method: 'DELETE' }),
+}
+
+export const outlinesAPI = {
+  getByProject: (projectId: string) => request(`/api/outlines/project/${projectId}`),
+  saveForProject: (projectId: string, data: unknown) =>
+    request(`/api/outlines/project/${projectId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  confirm: (projectId: string) =>
+    request(`/api/outlines/project/${projectId}/confirm`, { method: 'POST' }),
+  clear: (projectId: string) =>
+    request(`/api/outlines/project/${projectId}`, { method: 'DELETE' }),
+}
+
+export const libraryAPI = {
+  list: () => request('/api/library'),
+  search: (query: string) => request(`/api/library?search=${encodeURIComponent(query)}`),
+  get: (id: string) => request(`/api/library/${id}`),
+  create: (data: unknown) =>
+    request('/api/library', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: unknown) =>
+    request(`/api/library/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  delete: (id: string) => request(`/api/library/${id}`, { method: 'DELETE' }),
+}
+
+export const chatAPI = {
+  listByProjectStage: (projectId: string, stage: string) =>
+    request(`/api/chat/project/${projectId}/${stage}`),
+  saveForProjectStage: (projectId: string, stage: string, messages: unknown[]) =>
+    request(`/api/chat/project/${projectId}/${stage}`, {
+      method: 'PUT',
+      body: JSON.stringify({ messages }),
+    }),
+}
+
+export const versionsAPI = {
+  listByProject: (projectId: string) => request(`/api/versions/project/${projectId}`),
+  create: (projectId: string, data: unknown) =>
+    request(`/api/versions/project/${projectId}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+}
+
+export const referencesAPI = {
+  get: (projectId: string, stage: string) =>
+    request(`/api/references/project/${projectId}/${stage}`),
+  save: (projectId: string, stage: string, data: unknown) =>
+    request(`/api/references/project/${projectId}/${stage}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+}
+
+export const filesAPI = {
+  upload: async (file: File) => {
+    const token = getToken()
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await fetch(`${BASE_URL}/api/files/upload`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: formData,
+    })
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ error: '文件上传失败' }))
+      if (res.status === 401) {
+        localStorage.removeItem('access_token')
+        localStorage.removeItem('auth_user')
+      }
+      throw new Error(error.error ?? '文件上传失败')
+    }
+    return res.json()
+  },
 }
 
 export function callAIStream(

@@ -1,15 +1,20 @@
+import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   BookOpen,
   ChevronDown,
   Feather,
   Folder,
+  LogIn,
+  LogOut,
   MessageSquare,
   MoreHorizontal,
   Plus,
   Shapes,
+  Trash2,
 } from 'lucide-react'
 import { projectStore } from '../lib/storage'
+import { auth } from '../lib/auth'
 
 const NAV_ITEMS = [
   { label: '库', icon: BookOpen, path: '/library' },
@@ -18,11 +23,43 @@ const NAV_ITEMS = [
   { label: '更多', icon: MoreHorizontal, path: '/projects' },
 ]
 
+function getProjectDisplayTitle(project: ReturnType<typeof projectStore.getAll>[number]) {
+  if (project.title && project.title !== '未命名论文' && project.title !== '未命名论文对话') {
+    return project.title
+  }
+  return project.context.researchObject || project.context.rawSummary.split('\n')[0]?.replace(/^研究对象[:：]/, '') || project.title
+}
+
+const STAGE_LABELS = {
+  stage1: '材料理解',
+  stage2: '大纲撰写',
+  stage3: '文章生成',
+} as const
+
+function getUserLabel() {
+  const user = auth.getUser()
+  if (!user) return ''
+  return user.user_metadata?.displayName
+    || user.user_metadata?.display_name
+    || user.user_metadata?.name
+    || user.email
+    || '已登录账户'
+}
+
+function getInitials(label: string) {
+  const clean = label.trim()
+  if (!clean) return '未'
+  if (/^[A-Za-z]/.test(clean)) return clean.slice(0, 2).toUpperCase()
+  return clean.slice(0, 1)
+}
+
 export default function Sidebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const projects = projectStore.getAll()
   const activeProjectId = projectStore.getActiveId()
+  const [loggedIn, setLoggedIn] = useState(() => auth.isLoggedIn())
+  const userLabel = getUserLabel()
 
   const openConversation = (projectId: string) => {
     projectStore.setActiveId(projectId)
@@ -32,6 +69,35 @@ export default function Sidebar() {
   const startNewConversation = () => {
     const project = projectStore.add('未命名论文对话', '从一次材料理解对话开始的新项目')
     navigate(`/projects/${project.id}/stage1`)
+  }
+
+  const deleteProject = (projectId: string) => {
+    const project = projectStore.get(projectId)
+    if (!project) return
+    const title = getProjectDisplayTitle(project)
+    if (!confirm(`确认删除「${title}」？相关对话、大纲和正文也会一起删除。`)) return
+
+    projectStore.remove(projectId)
+    const nextProject = projectStore.getAll()[0]
+    if (projectId === activeProjectId) {
+      if (nextProject) {
+        navigate(`/projects/${nextProject.id}/stage1`)
+      } else {
+        const created = projectStore.add('未命名论文对话', '从一次材料理解对话开始的新项目')
+        navigate(`/projects/${created.id}/stage1`)
+      }
+    }
+  }
+
+  const goLogin = () => {
+    const redirect = `${location.pathname}${location.search}`
+    navigate(`/login?redirect=${encodeURIComponent(redirect)}`)
+  }
+
+  const logout = async () => {
+    if (!confirm('退出登录后仍可使用本地模式，但云端同步、云端解析和跨设备资料库会暂停。确认退出？')) return
+    await auth.logout()
+    setLoggedIn(false)
   }
 
   return (
@@ -169,7 +235,7 @@ export default function Sidebar() {
       <div style={{ height: 1, background: 'var(--color-border)', margin: '15px 0 12px' }} />
 
       {/* Recent */}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <div
           style={{
             fontSize: 11,
@@ -180,86 +246,194 @@ export default function Sidebar() {
         >
           最近
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {projects.slice(0, 6).map((project) => (
-            <button
+        <div
+          className="sidebar-recent-list"
+          style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4, paddingRight: 2 }}
+        >
+          {projects
+            .slice()
+            .sort((a, b) => b.updatedAt - a.updatedAt)
+            .map((project) => (
+            <div
               key={project.id}
-              onClick={() => {
-                openConversation(project.id)
-              }}
+              className="sidebar-project-row"
               style={{
-                border: 'none',
-                borderRadius: 5,
+                position: 'relative',
+                borderRadius: 7,
                 background: project.id === activeProjectId ? 'var(--color-accent-light)' : 'transparent',
                 color: project.id === activeProjectId ? 'var(--color-accent)' : 'var(--color-ink-2)',
                 display: 'flex',
-                alignItems: 'center',
+                alignItems: 'flex-start',
                 gap: 7,
-                padding: '6px 7px',
+                padding: '8px 4px 8px 7px',
+              }}
+            >
+              <button
+                onClick={() => {
+                  openConversation(project.id)
+                }}
+                style={{
+                  minWidth: 0,
+                  flex: 1,
+                  border: 'none',
+                  background: 'transparent',
+                  color: 'inherit',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 7,
+                  padding: 0,
                 fontSize: 11,
                 fontFamily: 'var(--font-sans)',
                 cursor: 'pointer',
                 textAlign: 'left',
-                width: '100%',
               }}
             >
-              <MessageSquare size={12} strokeWidth={1.8} style={{ flexShrink: 0 }} />
+              <MessageSquare size={12} strokeWidth={1.8} style={{ flexShrink: 0, marginTop: 2 }} />
               <span
                 style={{
+                  minWidth: 0,
+                  flex: 1,
+                }}
+              >
+                <span
+                  style={{
+                    display: 'block',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
                 }}
               >
-                {project.title}
+                  {getProjectDisplayTitle(project)}
+                </span>
+                <span style={{ display: 'block', marginTop: 2, fontSize: 9, color: 'var(--color-ink-3)' }}>
+                  {STAGE_LABELS[project.currentStage] ?? project.currentStage}
+                </span>
               </span>
-            </button>
+              </button>
+              <button
+                className="sidebar-delete-button"
+                title="删除"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  deleteProject(project.id)
+                }}
+                style={{
+                  width: 22,
+                  height: 22,
+                  flexShrink: 0,
+                  border: 'none',
+                  borderRadius: 5,
+                  background: 'transparent',
+                  color: 'var(--color-ink-3)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  opacity: 0.65,
+                }}
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
           ))}
         </div>
       </div>
 
-      {/* User */}
-      <button
+      <style>{`
+        .sidebar-recent-list::-webkit-scrollbar {
+          width: 6px;
+        }
+        .sidebar-recent-list::-webkit-scrollbar-thumb {
+          background: transparent;
+          border-radius: 999px;
+        }
+        .sidebar-recent-list:hover::-webkit-scrollbar-thumb {
+          background: rgba(44, 95, 65, 0.22);
+        }
+        .sidebar-project-row:hover {
+          background: var(--color-accent-light) !important;
+        }
+        .sidebar-delete-button:hover {
+          background: rgba(192, 57, 43, 0.08) !important;
+          color: #C0392B !important;
+          opacity: 1 !important;
+        }
+      `}</style>
+
+      {/* Account status */}
+      <div
         style={{
-          border: '1px solid var(--color-border)',
+          border: `1px solid ${loggedIn ? 'rgba(47, 158, 68, 0.22)' : '#FFD8A8'}`,
           borderRadius: 8,
-          background: 'var(--color-surface)',
+          background: loggedIn ? '#F0FAF2' : '#FFF8EC',
           padding: 8,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          cursor: 'pointer',
-          fontFamily: 'var(--font-sans)',
           boxShadow: 'var(--shadow-sm)',
         }}
       >
-        <span
+        <div
+          onClick={loggedIn ? undefined : goLogin}
           style={{
-            width: 28,
-            height: 28,
-            borderRadius: '50%',
-            background: '#D7E4DF',
-            color: 'var(--color-accent)',
+            width: '100%',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 11,
-            fontWeight: 650,
-            flexShrink: 0,
+            gap: 8,
+            cursor: loggedIn ? 'default' : 'pointer',
+            fontFamily: 'var(--font-sans)',
+            textAlign: 'left',
           }}
         >
-          RR
-        </span>
-        <span style={{ minWidth: 0, textAlign: 'left', flex: 1 }}>
-          <span style={{ display: 'block', fontSize: 11, color: 'var(--color-ink)', fontWeight: 500 }}>
-            Ruby Ren
+          <span
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: '50%',
+              background: loggedIn ? '#D7EEDF' : '#FFE8C2',
+              color: loggedIn ? '#2F9E44' : '#B35C00',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 11,
+              fontWeight: 650,
+              flexShrink: 0,
+            }}
+          >
+            {loggedIn ? getInitials(userLabel) : <LogIn size={14} />}
           </span>
-          <span style={{ display: 'block', fontSize: 9, color: 'var(--color-ink-3)' }}>
-            个人账户
+          <span style={{ minWidth: 0, textAlign: 'left', flex: 1 }}>
+            <span style={{ display: 'block', fontSize: 11, color: 'var(--color-ink)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {loggedIn ? userLabel : '未登录'}
+            </span>
+            <span style={{ display: 'block', marginTop: 2, fontSize: 9, color: loggedIn ? '#2F9E44' : '#B35C00' }}>
+              {loggedIn ? '云端同步已开启' : '本地模式 · 点此登录'}
+            </span>
           </span>
-        </span>
-        <ChevronDown size={12} color="var(--color-ink-3)" />
-      </button>
+          {loggedIn ? (
+            <button
+              title="退出登录"
+              onClick={event => {
+                event.stopPropagation()
+                void logout()
+              }}
+              style={{
+                width: 24,
+                height: 24,
+                border: 'none',
+                borderRadius: 5,
+                background: 'transparent',
+                color: 'var(--color-ink-3)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+              }}
+            >
+              <LogOut size={13} />
+            </button>
+          ) : (
+            <ChevronDown size={12} color="#B35C00" />
+          )}
+        </div>
+      </div>
     </aside>
   )
 }

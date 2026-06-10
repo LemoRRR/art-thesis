@@ -51,3 +51,36 @@ export async function callAIStream(
     }),
   })
 }
+
+export async function callAIOnce(
+  messages: Message[],
+  provider: 'gpt' | 'doubao' = 'gpt'
+): Promise<string> {
+  const config = getAIConfig(provider)
+  if (!config.baseURL || !config.apiKey || !config.model) {
+    throw new Error(`${provider} AI 环境变量未配置完整`)
+  }
+
+  const response = await fetch(`${config.baseURL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages,
+      stream: false,
+      max_tokens: 2200,
+      temperature: 0.3,
+    }),
+  })
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`AI 调用失败 ${response.status}: ${detail}`)
+  }
+
+  const data = await response.json()
+  return data.choices?.[0]?.message?.content ?? ''
+}

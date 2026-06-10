@@ -1,22 +1,33 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { BookOpen, CheckCircle2, Copy, Download, History, MessageSquare, RefreshCw, Send, Sparkles } from 'lucide-react'
 import ChatBubble from '../components/ChatBubble'
 import DocumentToolbar from '../components/DocumentToolbar'
 import DocArea from '../components/DocArea'
+import MentionInput, { type MentionRef } from '../components/MentionInput'
 import ReferencePanel from '../components/ReferencePanel'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import VersionPanel from '../components/VersionPanel'
 import { callDoubao, callGPT } from '../lib/ai'
-import { buildAIContext } from '../lib/context'
+import {
+  finalizeSectionWithCitations,
+  formatCitableSourcesForPrompt,
+  getCitationPromptRules,
+  getStageCitableSources,
+  stripCitationMarkers,
+} from '../lib/citations'
+import { buildAIContext, buildMentionContext } from '../lib/context'
 import { formatSectionContent, formatSectionsForPaper, sectionsToPlainText } from '../lib/documentFormat'
+import { createFootnote, buildBibliographyContent, buildBibliographySection, deleteFootnote, getAllFootnotes, updateFootnoteNote } from '../lib/footnotes'
 import {
   promptAdjustFinish,
   promptFinishDraft,
   promptGenerateChapter,
+  promptGeneratePaperPlan,
   promptReviseSection,
+  promptSummarizeGeneratedChapter,
   type AcademicLevel,
 } from '../lib/prompts'
 import {
@@ -32,7 +43,10 @@ import {
 
 type Mode = 'revise' | 'finish'
 
-const uid = () => Math.random().toString(36).slice(2, 9)
+const uid = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
+}
 
 const normalizeAcademicLevel = (level: string): AcademicLevel => {
   return level === '硕士' || level === '期刊' ? level : '本科'
@@ -54,6 +68,83 @@ function chapterChildrenToText(section: OutlineSection): string {
       : ''
     return `  ${child.order} ${child.title}${grandchildren}`
   }).join('\n')
+}
+
+function outlineSectionTitle(section: OutlineSection): string {
+  return `${section.order} ${section.title}`.trim()
+}
+
+function outlineChildrenSignature(section: OutlineSection): string {
+  return outlineToText(section.children ?? [])
+}
+
+function normalizeSectionTitle(title: string): string {
+  return title
+    .replace(/^\s*\d+(?:\.\d+)*\s*/, '')
+    .replace(/\s+/g, '')
+    .trim()
+}
+
+function normalizeMeaningTitle(title: string): string {
+  return title
+    .replace(/^\s*\d+(?:\.\d+)*\s*/, '')
+    .replace(/[：:，,。.\s]/g, '')
+    .trim()
+}
+
+function streamGPTText(
+  messages: ReturnType<typeof promptGenerateChapter>,
+  signal?: AbortSignal,
+  onChunk?: (text: string) => void
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let fullContent = ''
+    callGPT(
+      messages,
+      {
+        onChunk: (chunk) => {
+          fullContent += chunk
+          onChunk?.(fullContent)
+        },
+        onDone: () => resolve(fullContent),
+        onError: reject,
+      },
+      signal
+    )
+  })
+}
+
+function BibliographyCard({
+  content,
+  footnoteCount,
+}: {
+  content: string
+  footnoteCount: number
+}) {
+  if (!content) return null
+
+  return (
+    <div style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 11, color: 'var(--color-ink-3)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+        <span>参考文献（由 {footnoteCount} 条脚注自动生成）</span>
+        <button
+          onClick={async () => {
+            await navigator.clipboard.writeText(content)
+            alert('参考文献已复制')
+          }}
+          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-ink-3)', fontSize: 11, flexShrink: 0 }}
+        >
+          复制
+        </button>
+      </div>
+      <div style={{ padding: 12, fontSize: 12, lineHeight: 1.85, color: 'var(--color-ink-2)', whiteSpace: 'pre-wrap', maxHeight: 180, overflowY: 'auto' }}>
+        {content}
+      </div>
+      <div style={{ padding: '8px 12px', borderTop: '1px solid var(--color-border)', fontSize: 11, color: 'var(--color-ink-3)' }}>
+        点击正文或页脚中的 [n] 可编辑/删除脚注；导出 Word 时会附带本章参考文献。
+      </div>
+    </div>
+  )
 }
 
 export default function Stage3() {
@@ -81,12 +172,89 @@ export default function Stage3() {
   const [adjustInput, setAdjustInput] = useState('')
   const [isAdjusting, setIsAdjusting] = useState(false)
   const [projectTitle, setProjectTitle] = useState(project.title)
+  const [mentions, setMentions] = useState<MentionRef[]>([])
 
   const academicLevel = normalizeAcademicLevel(project.context.academicLevel)
+  const footnoteCount = useMemo(() => getAllFootnotes(sections).length, [sections])
+  const bibliographyContent = useMemo(() => buildBibliographyContent(sections), [sections])
+
+  const persistSections = useCallback((next: DocSection[], snapshotLabel?: string) => {
+    sectionStore.saveForProject(project.id, next)
+    if (snapshotLabel) versionStore.snapshot(snapshotLabel, project.id)
+    return next
+  }, [project.id])
 
   const saveStageMessages = useCallback((nextMessages: ChatMessage[]) => {
     chatStore.saveForProject(project.id, 'stage3', nextMessages)
   }, [project.id])
+
+  const buildCitationAwareContext = useCallback((baseContext: string, mentionItemIds: string[] = []) => {
+    const citableSources = getStageCitableSources(project.id, mentionItemIds)
+    const citationContext = [
+      baseContext,
+      formatCitableSourcesForPrompt(citableSources),
+      `【引用脚注规则】\n${getCitationPromptRules(citableSources.length > 0)}`,
+    ].filter(Boolean).join('\n\n')
+
+    return { citationContext, citableSources }
+  }, [project.id])
+
+  const reconcileSectionsWithOutline = useCallback((sourceSections: DocSection[], outlineSections: OutlineSection[]) => {
+    const usedSectionIds = new Set<string>()
+    const nextSections: DocSection[] = []
+    const addedOutlineSections: OutlineSection[] = []
+    const removedSections: DocSection[] = []
+    const notices: string[] = []
+
+    outlineSections.forEach((outlineSection, index) => {
+      const expectedTitle = outlineSectionTitle(outlineSection)
+      const childrenSignature = outlineChildrenSignature(outlineSection)
+      const matched = sourceSections.find(section => section.outlineNodeId === outlineSection.id) ??
+        sourceSections.find(section =>
+          !usedSectionIds.has(section.id) &&
+          normalizeSectionTitle(section.title) === normalizeSectionTitle(expectedTitle)
+        )
+
+      if (!matched) {
+        addedOutlineSections.push(outlineSection)
+        notices.push(`新增章节「${expectedTitle}」将单独生成正文。`)
+        return
+      }
+
+      usedSectionIds.add(matched.id)
+      const oldTitleMeaning = normalizeMeaningTitle(matched.title)
+      const newTitleMeaning = normalizeMeaningTitle(expectedTitle)
+      const titleChanged = matched.title !== expectedTitle
+      const meaningChanged = oldTitleMeaning !== newTitleMeaning
+      const childChanged = Boolean(matched.outlineChildrenSignature) && matched.outlineChildrenSignature !== childrenSignature
+
+      if (titleChanged && !meaningChanged) {
+        notices.push(`章节「${matched.title}」已同步为「${expectedTitle}」。`)
+      } else if (titleChanged && meaningChanged) {
+        notices.push(`章节「${matched.title}」标题含义变为「${expectedTitle}」，建议稍后用 AI 对该章做一次定向调整。`)
+      }
+
+      if (childChanged) {
+        notices.push(`章节「${expectedTitle}」的小节结构发生变化，原正文已保留，建议对新增/变化小节进行补写或局部重写。`)
+      }
+
+      nextSections.push({
+        ...matched,
+        title: expectedTitle,
+        outlineNodeId: outlineSection.id,
+        outlineOrder: outlineSection.order,
+        outlineChildrenSignature: childrenSignature,
+        order: index,
+        lastModified: titleChanged ? Date.now() : matched.lastModified,
+      })
+    })
+
+    sourceSections.forEach(section => {
+      if (!usedSectionIds.has(section.id)) removedSections.push(section)
+    })
+
+    return { nextSections, addedOutlineSections, removedSections, notices }
+  }, [])
 
   const startFullGeneration = useCallback(async (outlineSections: OutlineSection[]) => {
     if (hasStartedGenerationRef.current || outlineSections.length === 0) return
@@ -96,17 +264,21 @@ export default function Stage3() {
     setGeneratingProgress({ current: 0, total: outlineSections.length })
 
     const currentProject = projectStore.ensure(project.id)
-    const referenceContext = buildAIContext({ projectId: project.id, stage: 'stage3' })
+    const { citationContext, citableSources } = buildCitationAwareContext(
+      buildAIContext({ projectId: project.id, stage: 'stage3' })
+    )
     const fullOutlineSummary = outlineToText(outlineSections)
     const comprehensionSummary = currentProject.context.rawSummary ?? ''
     const bannedPhrases = currentProject.context.bannedPhrases ?? []
     const styleGuide = currentProject.context.stylePreference || undefined
     const generatedSections: DocSection[] = []
+    let paperPlan = ''
+    const chapterSummaries: string[] = []
 
     const startMsg: ChatMessage = {
       id: `s3_${uid()}`,
       role: 'ai',
-      content: `已确认大纲，开始按 ${outlineSections.length} 章逐章生成全文。`,
+      content: `已确认大纲，先生成全文写作计划，再按 ${outlineSections.length} 章逐章生成正文。`,
       timestamp: Date.now(),
       projectId: project.id,
       stage: 'stage3',
@@ -117,14 +289,32 @@ export default function Stage3() {
       return next
     })
 
+    try {
+      paperPlan = await streamGPTText(
+        promptGeneratePaperPlan(
+          fullOutlineSummary,
+          comprehensionSummary,
+          citationContext,
+          academicLevel,
+          styleGuide
+        )
+      )
+    } catch {
+      paperPlan = ''
+    }
+
     for (let index = 0; index < outlineSections.length; index += 1) {
       const chapter = outlineSections[index]
       setGeneratingProgress({ current: index + 1, total: outlineSections.length })
 
       const section: DocSection = {
-        id: `sec_${uid()}`,
+        id: uid(),
         projectId: project.id,
-        title: `${chapter.order} ${chapter.title}`,
+        outlineNodeId: chapter.id,
+        outlineOrder: chapter.order,
+        outlineChildrenSignature: outlineChildrenSignature(chapter),
+        generationPlan: paperPlan,
+        title: outlineSectionTitle(chapter),
         content: '',
         status: 'generating',
         lastModified: Date.now(),
@@ -135,53 +325,67 @@ export default function Stage3() {
       setSections([...generatedSections])
       if (index === 0) setActiveSectionId(section.id)
 
-      await new Promise<void>((resolve) => {
-        let fullContent = ''
-        const abort = new AbortController()
-        abortRef.current = abort
-
-        callGPT(
+      const abort = new AbortController()
+      abortRef.current = abort
+      let fullContent = ''
+      try {
+        fullContent = await streamGPTText(
           promptGenerateChapter(
-            `${chapter.order} ${chapter.title}`,
+            outlineSectionTitle(chapter),
             chapterChildrenToText(chapter),
             fullOutlineSummary,
             comprehensionSummary,
-            referenceContext,
+            citationContext,
             bannedPhrases,
             academicLevel,
-            styleGuide
+            styleGuide,
+            undefined,
+            paperPlan,
+            chapterSummaries.join('\n\n'),
+            outlineSections[index + 1] ? outlineSectionTitle(outlineSections[index + 1]) : undefined
           ),
-          {
-            onChunk: (chunk) => {
-              fullContent += chunk
-              setSections(prev => prev.map(item =>
-                item.id === section.id ? { ...item, content: fullContent } : item
-              ))
-            },
-            onDone: () => {
-              const cleanContent = formatSectionContent(fullContent)
-              const doneSection = {
-                ...section,
-                content: cleanContent,
-                status: 'done' as const,
-                lastModified: Date.now(),
-              }
-              generatedSections[index] = doneSection
-              setSections(prev => prev.map(item => item.id === section.id ? doneSection : item))
-              sectionStore.saveForProject(project.id, generatedSections)
-              versionStore.snapshot(`AI 生成：${chapter.title}`, project.id)
-              resolve()
-            },
-            onError: () => {
-              const failedSection = { ...section, status: 'pending' as const, lastModified: Date.now() }
-              generatedSections[index] = failedSection
-              setSections(prev => prev.map(item => item.id === section.id ? failedSection : item))
-              resolve()
-            },
-          },
-          abort.signal
+          abort.signal,
+          (streamed) => {
+            setSections(prev => prev.map(item =>
+              item.id === section.id ? { ...item, content: stripCitationMarkers(streamed) } : item
+            ))
+          }
         )
-      })
+
+        let chapterSummary = ''
+        try {
+          chapterSummary = await streamGPTText(promptSummarizeGeneratedChapter(outlineSectionTitle(chapter), stripCitationMarkers(fullContent)))
+          chapterSummaries.push(`${outlineSectionTitle(chapter)}：${chapterSummary}`)
+        } catch {
+          chapterSummary = stripCitationMarkers(fullContent).slice(0, 220)
+          chapterSummaries.push(`${outlineSectionTitle(chapter)}：${chapterSummary}`)
+        }
+
+        const finalizedSections = finalizeSectionWithCitations(
+          generatedSections,
+          section.id,
+          fullContent,
+          citableSources
+        )
+        const doneSection = {
+          ...finalizedSections[index],
+          outlineNodeId: chapter.id,
+          outlineOrder: chapter.order,
+          outlineChildrenSignature: outlineChildrenSignature(chapter),
+          generationPlan: paperPlan,
+          generatedSummary: chapterSummary,
+          status: 'done' as const,
+          lastModified: Date.now(),
+        }
+        generatedSections[index] = doneSection
+        setSections(prev => prev.map(item => item.id === section.id ? doneSection : item))
+        sectionStore.saveForProject(project.id, generatedSections)
+        versionStore.snapshot(`AI 生成：${chapter.title}`, project.id)
+      } catch {
+        const failedSection = { ...section, status: 'pending' as const, lastModified: Date.now() }
+        generatedSections[index] = failedSection
+        setSections(prev => prev.map(item => item.id === section.id ? failedSection : item))
+      }
     }
 
     setIsGeneratingFull(false)
@@ -201,7 +405,138 @@ export default function Stage3() {
       saveStageMessages(next)
       return next
     })
-  }, [academicLevel, project.id, saveStageMessages])
+  }, [academicLevel, buildCitationAwareContext, project.id, saveStageMessages])
+
+  const generateAdditionalSections = useCallback(async (
+    newOutlineSections: OutlineSection[],
+    startIndex: number,
+    existingSections: DocSection[],
+    allOutlineSections: OutlineSection[]
+  ) => {
+    if (newOutlineSections.length === 0) return
+
+    setIsGeneratingFull(true)
+    setGeneratingProgress({ current: 0, total: newOutlineSections.length })
+
+    const currentProject = projectStore.ensure(project.id)
+    const { citationContext, citableSources } = buildCitationAwareContext(
+      buildAIContext({ projectId: project.id, stage: 'stage3' })
+    )
+    const fullOutlineSummary = outlineToText(allOutlineSections)
+    const comprehensionSummary = currentProject.context.rawSummary ?? ''
+    const bannedPhrases = currentProject.context.bannedPhrases ?? []
+    const styleGuide = currentProject.context.stylePreference || undefined
+    const nextSections = [...existingSections]
+    const paperPlan = existingSections.find(section => section.generationPlan)?.generationPlan ?? ''
+    const chapterSummaries = existingSections
+      .filter(section => section.generatedSummary)
+      .map(section => `${section.title}：${section.generatedSummary}`)
+
+    const startMsg: ChatMessage = {
+      id: `s3_${uid()}`,
+      role: 'ai',
+      content: `检测到大纲新增 ${newOutlineSections.length} 个章节，开始只生成新增部分；已有正文不会被覆盖。`,
+      timestamp: Date.now(),
+      projectId: project.id,
+      stage: 'stage3',
+    }
+    setMessages(prev => {
+      const next = [...prev, startMsg]
+      saveStageMessages(next)
+      return next
+    })
+
+    for (let index = 0; index < newOutlineSections.length; index += 1) {
+      const chapter = newOutlineSections[index]
+      const outlineIndex = allOutlineSections.findIndex(item => item.id === chapter.id)
+      const sectionIndex = outlineIndex === -1 ? startIndex + index : Math.min(outlineIndex, nextSections.length)
+      setGeneratingProgress({ current: index + 1, total: newOutlineSections.length })
+
+      const section: DocSection = {
+        id: uid(),
+        projectId: project.id,
+        outlineNodeId: chapter.id,
+        outlineOrder: chapter.order,
+        outlineChildrenSignature: outlineChildrenSignature(chapter),
+        generationPlan: paperPlan,
+        title: outlineSectionTitle(chapter),
+        content: '',
+        status: 'generating',
+        lastModified: Date.now(),
+        order: sectionIndex,
+      }
+
+      nextSections.splice(sectionIndex, 0, section)
+      setSections([...nextSections])
+      setActiveSectionId(section.id)
+
+      await new Promise<void>((resolve) => {
+        let fullContent = ''
+        const abort = new AbortController()
+        abortRef.current = abort
+
+        callGPT(
+          promptGenerateChapter(
+            outlineSectionTitle(chapter),
+            chapterChildrenToText(chapter),
+            fullOutlineSummary,
+            comprehensionSummary,
+            citationContext,
+            bannedPhrases,
+            academicLevel,
+            styleGuide,
+            undefined,
+            paperPlan,
+            chapterSummaries.join('\n\n'),
+            allOutlineSections[sectionIndex + 1] ? outlineSectionTitle(allOutlineSections[sectionIndex + 1]) : undefined
+          ),
+          {
+            onChunk: (chunk) => {
+              fullContent += chunk
+              setSections(prev => prev.map(item =>
+                item.id === section.id ? { ...item, content: stripCitationMarkers(fullContent) } : item
+              ))
+            },
+            onDone: () => {
+              const finalizedSections = finalizeSectionWithCitations(
+                nextSections,
+                section.id,
+                fullContent,
+                citableSources
+              )
+              const doneSection = {
+                ...(finalizedSections.find(item => item.id === section.id) ?? section),
+                outlineNodeId: chapter.id,
+                outlineOrder: chapter.order,
+                outlineChildrenSignature: outlineChildrenSignature(chapter),
+                generationPlan: paperPlan,
+                status: 'done' as const,
+                lastModified: Date.now(),
+              }
+              const currentIndex = nextSections.findIndex(item => item.id === section.id)
+              if (currentIndex !== -1) nextSections[currentIndex] = doneSection
+              setSections([...nextSections])
+              sectionStore.saveForProject(project.id, nextSections)
+              versionStore.snapshot(`AI 生成新增章节：${chapter.title}`, project.id)
+              resolve()
+            },
+            onError: () => {
+              const failedSection = { ...section, status: 'pending' as const, lastModified: Date.now() }
+              const currentIndex = nextSections.findIndex(item => item.id === section.id)
+              if (currentIndex !== -1) nextSections[currentIndex] = failedSection
+              setSections([...nextSections])
+              resolve()
+            },
+          },
+          abort.signal
+        )
+      })
+    }
+
+    setIsGeneratingFull(false)
+    setAllGenerated(nextSections.every(section => section.status === 'done'))
+    sectionStore.saveForProject(project.id, nextSections)
+  }, [academicLevel, buildCitationAwareContext, project.id, saveStageMessages])
 
   useEffect(() => {
     const savedMessages = chatStore.getByProject(project.id, 'stage3')
@@ -211,10 +546,73 @@ export default function Stage3() {
     if (savedMessages.length > 0) setMessages(savedMessages)
 
     if (savedSections.length > 0) {
-      const formattedSections = formatSectionsForPaper(savedSections)
-      setSections(formattedSections)
-      setActiveSectionId(formattedSections[0]?.id ?? null)
-      setAllGenerated(formattedSections.every(section => section.status === 'done'))
+      let formattedSections = formatSectionsForPaper(savedSections)
+
+      if (outline?.sections?.length) {
+        let syncSnapshotDescription = ''
+        const {
+          nextSections,
+          addedOutlineSections,
+          removedSections,
+          notices,
+        } = reconcileSectionsWithOutline(formattedSections, outline.sections)
+
+        formattedSections = nextSections
+
+        if (removedSections.length > 0) {
+          const shouldRemove = confirm(`检测到大纲删除了 ${removedSections.length} 个正文章节。\n\n为避免误删，当前不会自动硬删。是否将这些章节从正文视图移除并写入版本历史？\n\n将移除：${removedSections.map(section => section.title).join('、')}`)
+          if (!shouldRemove) {
+            formattedSections = [
+              ...formattedSections,
+              ...removedSections.map((section, index) => ({
+                ...section,
+                order: formattedSections.length + index,
+              })),
+            ]
+          } else {
+            syncSnapshotDescription = '根据大纲归档删除正文章节'
+          }
+        }
+
+        if (notices.length > 0) {
+          const noticeMsg: ChatMessage = {
+            id: `s3_outline_sync_${Date.now()}`,
+            role: 'ai',
+            content: `已根据大纲同步正文结构：\n${notices.map(item => `- ${item}`).join('\n')}`,
+            timestamp: Date.now(),
+            projectId: project.id,
+            stage: 'stage3',
+          }
+          setMessages(prev => {
+            const next = prev.some(message => message.id === noticeMsg.id) ? prev : [...prev, noticeMsg]
+            saveStageMessages(next)
+            return next
+          })
+          syncSnapshotDescription ||= '根据大纲同步正文结构'
+        }
+
+        setSections(formattedSections)
+        setActiveSectionId(formattedSections[0]?.id ?? null)
+        setAllGenerated(formattedSections.every(section => section.status === 'done'))
+        sectionStore.saveForProject(project.id, formattedSections)
+        if (syncSnapshotDescription) versionStore.snapshot(syncSnapshotDescription, project.id)
+
+        if (
+          addedOutlineSections.length > 0 &&
+          confirm(`检测到新增大纲 ${addedOutlineSections.length} 个章节，是否生成新增章节？\n\n将生成：${addedOutlineSections.map(outlineSectionTitle).join('、')}`)
+        ) {
+          void generateAdditionalSections(
+            addedOutlineSections,
+            formattedSections.length,
+            formattedSections,
+            outline.sections
+          )
+        }
+      } else {
+        setSections(formattedSections)
+        setActiveSectionId(formattedSections[0]?.id ?? null)
+        setAllGenerated(formattedSections.every(section => section.status === 'done'))
+      }
       hasStartedGenerationRef.current = true
     } else if (outline?.confirmedAt) {
       startFullGeneration(outline.sections)
@@ -232,7 +630,7 @@ export default function Stage3() {
     }
 
     projectStore.update(project.id, { currentStage: 'stage3' })
-  }, [project.id, saveStageMessages, startFullGeneration])
+  }, [generateAdditionalSections, project.id, reconcileSectionsWithOutline, saveStageMessages, startFullGeneration])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -244,7 +642,12 @@ export default function Stage3() {
     }
   }, [project.id, sections])
 
-  const handleReviseMode = useCallback(async (opinion: string, currentMessages: ChatMessage[]) => {
+  const handleReviseMode = useCallback(async (
+    opinion: string,
+    currentMessages: ChatMessage[],
+    mentionContext = '',
+    mentionItemIds: string[] = []
+  ) => {
     const activeSection = sections.find(section => section.id === activeSectionId)
     if (!activeSection) {
       const errMsg: ChatMessage = {
@@ -277,37 +680,43 @@ export default function Stage3() {
       section.id === activeSectionId ? { ...section, status: 'generating' } : section
     ))
 
-    const referenceContext = buildAIContext({
-      projectId: project.id,
-      stage: 'stage3',
-      userInput: opinion,
-      currentSectionId: activeSection.id,
-    })
+    const baseReferenceContext = [
+      buildAIContext({
+        projectId: project.id,
+        stage: 'stage3',
+        userInput: opinion,
+        currentSectionId: activeSection.id,
+      }),
+      mentionContext,
+    ].filter(Boolean).join('\n\n---\n\n')
+    const { citationContext, citableSources } = buildCitationAwareContext(baseReferenceContext, mentionItemIds)
     const bannedPhrases = project.context.bannedPhrases ?? []
     let fullContent = ''
     const abort = new AbortController()
     abortRef.current = abort
 
     callDoubao(
-      promptReviseSection(opinion, activeSection.content, referenceContext, bannedPhrases),
+      promptReviseSection(opinion, activeSection.content, citationContext, bannedPhrases),
       {
         onChunk: (chunk) => {
           fullContent += chunk
           setSections(prev => prev.map(section =>
-            section.id === activeSectionId ? { ...section, content: fullContent } : section
+            section.id === activeSectionId ? { ...section, content: stripCitationMarkers(fullContent) } : section
           ))
           setMessages(prev => prev.map(message =>
             message.id === aiMsgId ? { ...message, content: `正在修改「${activeSection.title}」…` } : message
           ))
         },
         onDone: () => {
-          const cleanContent = formatSectionContent(fullContent)
           setIsLoading(false)
           setStreamingId(null)
-          setSections(prev => prev.map(section =>
-            section.id === activeSectionId
-              ? { ...section, content: cleanContent, status: 'done', lastModified: Date.now() }
-              : section
+          setSections(prev => finalizeSectionWithCitations(
+            prev,
+            activeSection.id,
+            fullContent,
+            citableSources
+          ).map(section =>
+            section.id === activeSection.id ? { ...section, status: 'done', lastModified: Date.now() } : section
           ))
           versionStore.snapshot(`按意见修改：${activeSection.title}`, project.id)
           const finalMessages = [...currentMessages, { ...aiMsg, content: `「${activeSection.title}」修改完成。还有需要调整的地方吗？` }]
@@ -327,12 +736,15 @@ export default function Stage3() {
       },
       abort.signal
     )
-  }, [activeSectionId, project.context.bannedPhrases, project.id, saveStageMessages, sections])
+  }, [activeSectionId, buildCitationAwareContext, project.context.bannedPhrases, project.id, saveStageMessages, sections])
 
   const sendMessage = useCallback(async () => {
     const text = inputText.trim()
     if (!text || isLoading) return
     setInputText('')
+    const mentionContext = buildMentionContext(mentions)
+    const mentionItemIds = mentions.map(item => item.itemId)
+    setMentions([])
 
     const userMsg: ChatMessage = {
       id: `s3_${uid()}`,
@@ -345,8 +757,8 @@ export default function Stage3() {
     const newMessages = [...messages, userMsg]
     setMessages(newMessages)
     saveStageMessages(newMessages)
-    await handleReviseMode(text, newMessages)
-  }, [handleReviseMode, inputText, isLoading, messages, project.id, saveStageMessages])
+    await handleReviseMode(text, newMessages, mentionContext, mentionItemIds)
+  }, [handleReviseMode, inputText, isLoading, mentions, messages, project.id, saveStageMessages])
 
   const runFinish = () => {
     const fullText = sectionsToPlainText(sections)
@@ -396,21 +808,79 @@ export default function Stage3() {
     )
   }
 
+  const buildCompleteSections = () => {
+    const baseSections = [...sections]
+    const finishContent = formatSectionContent(finishResult)
+    if (finishContent) {
+      baseSections.push({
+        id: 'finish-result-export',
+        projectId: project.id,
+        title: '摘要、引言与结语',
+        content: finishContent,
+        status: 'done' as const,
+        lastModified: Date.now(),
+        order: baseSections.length,
+      })
+    }
+
+    const bibliographySection = buildBibliographySection(sections, project.id)
+    if (bibliographySection) baseSections.push(bibliographySection)
+
+    return baseSections
+  }
+
   const copyAll = async () => {
-    await navigator.clipboard.writeText(sectionsToPlainText(sections))
+    await navigator.clipboard.writeText(sectionsToPlainText(buildCompleteSections(), projectTitle))
     alert('全文已复制到剪贴板')
   }
 
   const exportWord = async () => {
-    if (sections.length === 0) return
+    const exportSections = buildCompleteSections()
+    if (exportSections.length === 0) return
     const { exportSectionsToDocx } = await import('../lib/docxExport')
-    await exportSectionsToDocx(projectTitle, sections)
+    await exportSectionsToDocx(projectTitle, exportSections)
   }
 
   const updateProjectTitle = (title: string) => {
     setProjectTitle(title)
     projectStore.update(project.id, { title: title.trim() || '未命名论文' })
   }
+
+  const handleAddFootnote = useCallback((payload: {
+    sectionId: string
+    blockIndex: number
+    start: number
+    end: number
+    anchorText: string
+    noteText: string
+  }) => {
+    setSections(prev => persistSections(
+      prev.map(section => {
+        if (section.id !== payload.sectionId) return section
+        const footnote = createFootnote(prev, payload)
+        return {
+          ...section,
+          footnotes: [...(section.footnotes ?? []), footnote],
+          lastModified: Date.now(),
+        }
+      }),
+      `添加脚注：${payload.anchorText.slice(0, 12)}`
+    ))
+  }, [persistSections])
+
+  const handleUpdateFootnote = useCallback((footnoteId: string, noteText: string) => {
+    setSections(prev => persistSections(
+      updateFootnoteNote(prev, footnoteId, noteText),
+      '更新脚注'
+    ))
+  }, [persistSections])
+
+  const handleDeleteFootnote = useCallback((footnoteId: string) => {
+    setSections(prev => persistSections(
+      deleteFootnote(prev, footnoteId),
+      '删除脚注'
+    ))
+  }, [persistSections])
 
   const regenerateFullText = () => {
     const outline = outlineStore.get(project.id)
@@ -432,6 +902,22 @@ export default function Stage3() {
     setStreamingId(null)
     sectionStore.saveForProject(project.id, [])
     startFullGeneration(outline.sections)
+  }
+
+  const syncSectionsToCloud = async () => {
+    try {
+      const cachedSections = sectionStore.getByProject(project.id)
+      const sourceSections = sections.length > 0 ? sections : cachedSections
+      if (sourceSections.length === 0) {
+        alert('当前没有可同步的正文。请先生成全文，或确认本地正文没有被清空。')
+        return
+      }
+      sectionStore.saveForProject(project.id, sourceSections)
+      const count = await sectionStore.syncProject(project.id)
+      alert(`已同步 ${count} 个章节到 Supabase`)
+    } catch (error) {
+      alert(`同步失败：${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -480,6 +966,13 @@ export default function Stage3() {
               >
                 <RefreshCw size={13} />
                 重新生成全文
+              </button>
+              <button
+                onClick={syncSectionsToCloud}
+                style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-accent)', fontSize: 12, cursor: 'pointer' }}
+              >
+                <CheckCircle2 size={13} />
+                同步云端
               </button>
               <button
                 onClick={() => navigate(`/projects/${project.id}`)}
@@ -549,17 +1042,22 @@ export default function Stage3() {
                   </div>
                 )}
 
+                {footnoteCount > 0 && (
+                  <div style={{ padding: '0 10px 10px', flexShrink: 0 }}>
+                    <BibliographyCard content={bibliographyContent} footnoteCount={footnoteCount} />
+                  </div>
+                )}
+
                 <div style={{ borderTop: '1px solid var(--color-border)', padding: 10, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <textarea
+                  <MentionInput
                     value={inputText}
-                    onChange={event => setInputText(event.target.value)}
+                    onChange={setInputText}
+                    mentions={mentions}
+                    onMentionsChange={setMentions}
                     onKeyDown={handleKeyDown}
-                    placeholder={allGenerated ? '说修改意见，如：这段太口语化，改成学术表达' : '等待全文生成完成…'}
+                    placeholder={allGenerated ? '说修改意见，或输入 @ 引用资料维度' : '等待全文生成完成…'}
                     rows={3}
                     disabled={!allGenerated || isLoading}
-                    style={{ width: '100%', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '8px 10px', fontSize: 12, resize: 'none', fontFamily: 'var(--font-sans)', outline: 'none', boxSizing: 'border-box' }}
-                    onFocus={event => (event.currentTarget.style.borderColor = 'var(--color-accent)')}
-                    onBlur={event => (event.currentTarget.style.borderColor = 'var(--color-border)')}
                   />
                   <button
                     onClick={sendMessage}
@@ -621,6 +1119,8 @@ export default function Stage3() {
                     )}
                   </div>
                 )}
+
+                <BibliographyCard content={bibliographyContent} footnoteCount={footnoteCount} />
               </div>
             )}
           </div>
@@ -659,15 +1159,20 @@ export default function Stage3() {
             <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
               <DocArea
                 projectId={project.id}
+                paperTitle={projectTitle}
                 sections={sections}
                 activeSectionId={activeSectionId}
                 onSectionClick={id => setActiveSectionId(id)}
                 onSectionChange={(id, content) => {
-                  setSections(prev => prev.map(section =>
+                  setSections(prev => persistSections(prev.map(section =>
                     section.id === id ? { ...section, content, status: 'done', lastModified: Date.now() } : section
-                  ))
+                  )))
                 }}
+                onPaperTitleChange={updateProjectTitle}
                 onGenerateSection={() => {}}
+                onAddFootnote={handleAddFootnote}
+                onUpdateFootnote={handleUpdateFootnote}
+                onDeleteFootnote={handleDeleteFootnote}
               />
 
               {showHistory && (

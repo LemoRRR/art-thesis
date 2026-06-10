@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import multer from 'multer'
+import { extractDimensions } from '../lib/extract'
 import { parseFile } from '../lib/parser'
-import { supabase } from '../lib/supabase'
+import { createUserClient } from '../lib/supabase'
 import { requireAuth, type AuthRequest } from '../middleware/auth'
 
 const router = Router()
@@ -12,6 +13,23 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 },
 })
 
+function buildStorageKey(userId: string, originalName: string): string {
+  const ext = originalName.split('.').pop()?.toLowerCase()?.replace(/[^a-z0-9]/g, '') || 'bin'
+  const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  return `${userId}/${id}.${ext}`
+}
+
+function decodeUploadFileName(fileName: string): string {
+  try {
+    const decoded = Buffer.from(fileName, 'latin1').toString('utf8')
+    return decoded.includes('�') ? fileName : decoded
+  } catch {
+    return fileName
+  }
+}
+
 router.post('/upload', upload.single('file'), async (req: AuthRequest, res) => {
   if (!req.file) {
     res.status(400).json({ error: '没有文件' })
@@ -19,43 +37,53 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res) => {
   }
 
   const file = req.file
-  const fileName = `${req.userId}/${Date.now()}_${file.originalname}`
-  const { error: uploadError } = await supabase.storage
+  const db = createUserClient(req.accessToken!)
+  const originalFileName = decodeUploadFileName(file.originalname)
+  const fileName = buildStorageKey(req.userId!, originalFileName)
+  const { error: uploadError } = await db.storage
     .from('library-files')
     .upload(fileName, file.buffer, { contentType: file.mimetype })
 
   if (uploadError) {
-    res.status(500).json({ error: '文件上传失败' })
+    console.error('[Files] Supabase Storage 上传失败', uploadError)
+    res.status(500).json({ error: `文件上传失败：${uploadError.message}` })
     return
   }
 
-  const { data: signedUrlData } = await supabase.storage
+  const { data: signedUrlData } = await db.storage
     .from('library-files')
     .createSignedUrl(fileName, 60 * 60)
 
-  const textContent = await parseFile(file.buffer, file.originalname)
-  const type = getFileType(file.originalname)
-  const { data, error } = await supabase
+  const textContent = await parseFile(file.buffer, originalFileName)
+  const type = getFileType(originalFileName)
+  const { data, error } = await db
     .from('library_items')
     .insert({
       user_id: req.userId,
-      title: file.originalname.replace(/\.[^.]+$/, ''),
+      title: originalFileName.replace(/\.[^.]+$/, ''),
       type,
-      file_name: file.originalname,
+      file_name: originalFileName,
       file_size: file.size,
       file_url: signedUrlData?.signedUrl ?? '',
       text_content: textContent,
       summary: textContent.slice(0, 150),
       tags: [type.toUpperCase()],
       index_status: 'ready',
+      extract_status: 'processing',
     })
     .select()
     .single()
 
   if (error) {
+    console.error('[Files] library_items 写入失败', error)
     res.status(500).json({ error: error.message })
     return
   }
+
+  extractDimensions(data.id, textContent, req.accessToken).catch(() => {
+    // 已在 extractDimensions 内部记录并更新 failed 状态。
+  })
+
   res.json(data)
 })
 

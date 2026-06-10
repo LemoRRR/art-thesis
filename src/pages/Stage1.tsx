@@ -7,8 +7,9 @@ import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import ChatBubble from '../components/ChatBubble'
 import ModelTag from '../components/ModelTag'
+import MentionInput, { type MentionRef } from '../components/MentionInput'
 import { callDoubao, callGPT } from '../lib/ai'
-import { buildAIContext } from '../lib/context'
+import { buildAIContext, buildMentionContext } from '../lib/context'
 import { promptChatFollowup } from '../lib/prompts'
 import {
   chatStore,
@@ -21,6 +22,14 @@ import type { Message } from '../lib/ai'
 
 type ChatModel = 'gpt' | 'doubao'
 
+interface ParsedComprehension {
+  paperTitle?: string
+  researchObject?: string
+  writingBoundary?: string
+  academicLevel?: string
+  coreClaims?: string
+}
+
 // AI 第一句话
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -30,12 +39,62 @@ const WELCOME_MESSAGE: ChatMessage = {
   timestamp: Date.now(),
 }
 
+function parseComprehensionReply(content: string): ParsedComprehension | null {
+  const jsonMatch = content.match(/\{[\s\S]*"researchObject"[\s\S]*?\}/)
+  if (!jsonMatch) return null
+  try {
+    return JSON.parse(jsonMatch[0]) as ParsedComprehension
+  } catch {
+    return null
+  }
+}
+
+function buildComprehensionModel(parsed: ParsedComprehension): ComprehensionModel {
+  const rawSummary = [
+    `研究对象：${parsed.researchObject ?? ''}`,
+    `写作边界：${parsed.writingBoundary ?? ''}`,
+    `学段：${parsed.academicLevel ?? '本科'}`,
+    parsed.coreClaims ? `核心论点：${parsed.coreClaims}` : '',
+  ].filter(Boolean).join('\n')
+
+  return {
+    researchObject: parsed.researchObject ?? '',
+    writingBoundary: parsed.writingBoundary ?? '',
+    academicLevel: parsed.academicLevel ?? '本科',
+    rawSummary,
+  }
+}
+
+function inferPaperTitle(parsed: ParsedComprehension): string {
+  const explicitTitle = parsed.paperTitle?.trim()
+  if (explicitTitle) return explicitTitle
+
+  const researchObject = parsed.researchObject?.trim()
+  if (researchObject) return `${researchObject}研究`
+
+  return '未命名论文'
+}
+
+function formatComprehensionReply(content: string, parsed: ParsedComprehension): string {
+  const lead = content.split('【理解完成】')[0].trim()
+  const paperTitle = inferPaperTitle(parsed)
+  return [
+    lead || '我已经理解了这篇论文的基本写作方向。',
+    '',
+    '【理解完成】',
+    `论文标题：${paperTitle}`,
+    `研究对象：${parsed.researchObject ?? '未明确'}`,
+    `写作边界：${parsed.writingBoundary ?? '未明确'}`,
+    `学段判断：${parsed.academicLevel ?? '本科'}`,
+    parsed.coreClaims ? `核心论点：${parsed.coreClaims}` : '',
+  ].filter(Boolean).join('\n')
+}
+
 export default function Stage1() {
   const navigate = useNavigate()
   const params = useParams()
   const project = projectStore.ensure(params.projectId)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const inputRef  = useRef<HTMLTextAreaElement>(null)
   const abortRef  = useRef<AbortController | null>(null)
 
   const [messages,     setMessages]     = useState<ChatMessage[]>([])
@@ -47,6 +106,7 @@ export default function Stage1() {
   const [showReferences, setShowReferences] = useState(false)
   const [selectedModel, setSelectedModel] = useState<ChatModel>('gpt')
   const [comprehension, setComprehension] = useState<ComprehensionModel | null>(null)
+  const [mentions, setMentions] = useState<MentionRef[]>([])
 
   // 初始化：从 localStorage 读取历史记录
   useEffect(() => {
@@ -93,6 +153,8 @@ export default function Stage1() {
     if (!text || isLoading) return
 
     setInputText('')
+    const mentionContext = buildMentionContext(mentions)
+    setMentions([])
 
     // 构建用户消息
     const userMsg: ChatMessage = {
@@ -125,7 +187,10 @@ export default function Stage1() {
     setStreamingId(aiMsgId)
 
     // 构建发送给 GPT 的历史（转换格式）
-    const contextualText = buildAIContext({ projectId: project.id, stage: 'stage1', userInput: text })
+    const contextualText = [
+      buildAIContext({ projectId: project.id, stage: 'stage1', userInput: text }),
+      mentionContext,
+    ].filter(Boolean).join('\n\n---\n\n')
     const history: Message[] = newMessages
       .slice(1)  // 跳过欢迎消息
       .map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.content }))
@@ -150,43 +215,32 @@ export default function Stage1() {
           setStreamingId(null)
 
           // 更新 localStorage
-          const finalMessages = [...newMessages, { ...aiMsg, content: fullContent }]
+          const parsedComprehension = parseComprehensionReply(fullContent)
+          const displayContent = parsedComprehension
+            ? formatComprehensionReply(fullContent, parsedComprehension)
+            : fullContent
+          const finalMessages = [...newMessages, { ...aiMsg, content: displayContent }]
           chatStore.saveForProject(project.id, 'stage1', finalMessages)
           setMessages(finalMessages)
 
           // 检测理解完成，直接从当前回复里解析 JSON
-          if (fullContent.includes('【理解完成】') || fullContent.includes('【理解完成')) {
+          if (parsedComprehension || fullContent.includes('【理解完成】') || fullContent.includes('【理解完成')) {
             setIsCompleted(true)
-            try {
-              const jsonMatch = fullContent.match(/\{[\s\S]*"researchObject"[\s\S]*?\}/)
-              if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0])
-                const rawSummary = [
-                  `研究对象：${parsed.researchObject}`,
-                  `写作边界：${parsed.writingBoundary}`,
-                  `学段：${parsed.academicLevel}`,
-                  parsed.coreClaims ? `核心论点：${parsed.coreClaims}` : '',
-                ].filter(Boolean).join('\n')
-                const model: ComprehensionModel = {
-                  researchObject: parsed.researchObject ?? '',
-                  writingBoundary: parsed.writingBoundary ?? '',
-                  academicLevel: parsed.academicLevel ?? '本科',
-                  rawSummary,
-                }
-                projectStore.update(project.id, {
-                  context: {
-                    ...project.context,
-                    researchObject: model.researchObject,
-                    writingBoundary: model.writingBoundary,
-                    academicLevel: model.academicLevel,
-                    rawSummary: model.rawSummary,
-                  },
-                  currentStage: 'stage2',
-                })
-                setComprehension(model)
-              }
-            } catch {
-              // 解析失败不影响流程，用户仍可手动进入阶段二
+            if (parsedComprehension) {
+              const model = buildComprehensionModel(parsedComprehension)
+              const paperTitle = inferPaperTitle(parsedComprehension)
+              projectStore.update(project.id, {
+                title: paperTitle,
+                context: {
+                  ...project.context,
+                  researchObject: model.researchObject,
+                  writingBoundary: model.writingBoundary,
+                  academicLevel: model.academicLevel,
+                  rawSummary: model.rawSummary,
+                },
+                currentStage: 'stage2',
+              })
+              setComprehension(model)
             }
           }
         },
@@ -204,7 +258,7 @@ export default function Stage1() {
       },
       abort.signal
     )
-  }, [inputText, messages, isLoading, uploadedFile, project.context, project.id, selectedModel])
+  }, [inputText, isLoading, mentions, messages, project.context, project.id, selectedModel, uploadedFile])
 
   // 文件上传处理
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -341,6 +395,7 @@ export default function Stage1() {
                   理解模型
                 </div>
                 {[
+                  { label: '论文标题', value: projectStore.ensure(project.id).title },
                   { label: '研究对象', value: comprehension.researchObject },
                   { label: '写作边界', value: comprehension.writingBoundary },
                   { label: '学段判断', value: comprehension.academicLevel },
@@ -507,38 +562,15 @@ export default function Stage1() {
               </label>
 
               {/* 文字输入框 */}
-              <textarea
-                ref={inputRef}
+              <MentionInput
                 value={inputText}
-                onChange={e => setInputText(e.target.value)}
+                onChange={setInputText}
+                mentions={mentions}
+                onMentionsChange={setMentions}
                 onKeyDown={handleKeyDown}
-                placeholder="输入题目、大纲、研究框架，或直接描述你的论文内容……（Enter 发送，Shift+Enter 换行）"
+                placeholder="输入题目、大纲、研究框架，或输入 @ 引用资料维度……（Enter 发送，Shift+Enter 换行）"
                 rows={1}
-                style={{
-                  flex: 1,
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '8px 12px',
-                  fontSize: 13,
-                  lineHeight: 1.6,
-                  resize: 'none',
-                  fontFamily: 'var(--font-sans)',
-                  color: 'var(--color-ink)',
-                  background: 'var(--color-bg)',
-                  outline: 'none',
-                  transition: 'border-color 0.15s',
-                  minHeight: 38,
-                  maxHeight: 120,
-                  overflowY: 'auto',
-                }}
-                onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-accent)')}
-                onBlur={e => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-                onInput={e => {
-                  // 自动撑高
-                  const t = e.currentTarget
-                  t.style.height = 'auto'
-                  t.style.height = Math.min(t.scrollHeight, 120) + 'px'
-                }}
+                style={{ flex: 1 }}
               />
 
               {/* 发送按钮 */}

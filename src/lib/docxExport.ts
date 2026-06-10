@@ -1,12 +1,14 @@
 import {
   AlignmentType,
   Document,
+  FootnoteReferenceRun,
   HeadingLevel,
   Packer,
   Paragraph,
   TextRun,
 } from 'docx'
 import { cleanTitle, parsePaperBlocks } from './documentFormat'
+import { getFootnotesForBlock, splitTextWithFootnotes } from './footnotes'
 import type { DocSection } from './storage'
 
 const FONT = '宋体'
@@ -57,19 +59,55 @@ function createSubHeading(text: string, level: 2 | 3) {
   })
 }
 
-function createBodyParagraph(text: string) {
+function createBodyParagraphFromBlock(text: string, section: DocSection | undefined, blockIndex: number) {
+  const footnotes = getFootnotesForBlock(section, blockIndex)
+  const parts = splitTextWithFootnotes(text, footnotes)
+
+  const children = parts.flatMap(part => {
+    if (part.type === 'text') {
+      return [new TextRun({ text: part.text, font: FONT, size: 24 })]
+    }
+
+    const runs: Array<TextRun | FootnoteReferenceRun> = [
+      new TextRun({ text: part.text, font: FONT, size: 24 }),
+      ...(part.footnotes ?? [part.footnote!]).map(footnote => new FootnoteReferenceRun(footnote.number)),
+    ]
+    return runs
+  })
+
   return new Paragraph({
     alignment: AlignmentType.JUSTIFIED,
     indent: { firstLine: 480 },
     spacing: { line: 360, after: 160 },
-    children: [
-      new TextRun({
-        text,
-        font: FONT,
-        size: 24,
-      }),
-    ],
+    children,
   })
+}
+
+function buildFootnotesMap(sections: DocSection[]) {
+  const footnotes: Record<string, { children: Paragraph[] }> = {}
+
+  sections.forEach(section => {
+    ;(section.footnotes ?? []).forEach(footnote => {
+      footnotes[String(footnote.number)] = {
+        children: [
+          new Paragraph({
+            indent: { hanging: 240 },
+            spacing: { after: 120 },
+            children: [
+              new FootnoteReferenceRun(footnote.number),
+              new TextRun({
+                text: ` ${footnote.noteText}`,
+                font: FONT,
+                size: 20,
+              }),
+            ],
+          }),
+        ],
+      }
+    })
+  })
+
+  return footnotes
 }
 
 function buildDocChildren(title: string, sections: DocSection[]) {
@@ -77,13 +115,13 @@ function buildDocChildren(title: string, sections: DocSection[]) {
 
   sections.forEach(section => {
     children.push(createSectionHeading(section.title))
-    parsePaperBlocks(section.content).forEach(block => {
+    parsePaperBlocks(section.content).forEach((block, blockIndex) => {
       if (block.type === 'heading2') {
         children.push(createSubHeading(block.text, 2))
       } else if (block.type === 'heading3') {
         children.push(createSubHeading(block.text, 3))
       } else {
-        children.push(createBodyParagraph(block.text))
+        children.push(createBodyParagraphFromBlock(block.text, section, blockIndex))
       }
     })
   })
@@ -92,7 +130,9 @@ function buildDocChildren(title: string, sections: DocSection[]) {
 }
 
 export async function exportSectionsToDocx(title: string, sections: DocSection[]) {
+  const footnotes = buildFootnotesMap(sections)
   const doc = new Document({
+    footnotes: Object.keys(footnotes).length > 0 ? footnotes : undefined,
     styles: {
       default: {
         document: {
@@ -124,12 +164,11 @@ export async function exportSectionsToDocx(title: string, sections: DocSection[]
   })
 
   const blob = await Packer.toBlob(doc)
+  const safeTitle = cleanTitle(title).replace(FILE_SAFE_PATTERN, '_') || '论文'
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `${(cleanTitle(title) || '未命名论文').replace(FILE_SAFE_PATTERN, '_')}.docx`
-  document.body.appendChild(link)
+  link.download = `${safeTitle}.docx`
   link.click()
-  link.remove()
   URL.revokeObjectURL(url)
 }

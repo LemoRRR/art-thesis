@@ -14,9 +14,22 @@ import versionsRouter from './routes/versions'
 
 const app = express()
 const PORT = process.env.PORT || 3001
+const allowedOrigins = new Set([
+  process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+])
 
 app.use(helmet())
-app.use(cors({ origin: process.env.CORS_ORIGIN ?? 'http://localhost:5173' }))
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true)
+      return
+    }
+    callback(new Error(`CORS origin not allowed: ${origin}`))
+  },
+}))
 app.use(express.json({ limit: '10mb' }))
 
 app.get('/api/health', (_req, res) => {

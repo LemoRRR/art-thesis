@@ -1,17 +1,22 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { authAPI } from '../lib/api'
 import { auth } from '../lib/auth'
 
 export default function Login() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [tab, setTab] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const redirectTo = (() => {
+    const value = searchParams.get('redirect')
+    return value?.startsWith('/') && !value.startsWith('/login') ? value : '/'
+  })()
 
   const handleLogin = async () => {
     if (!email || !password || loading) return
@@ -19,7 +24,7 @@ export default function Login() {
     setError('')
     try {
       await auth.login(email, password)
-      navigate('/')
+      navigate(redirectTo)
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败')
     } finally {
@@ -40,7 +45,7 @@ export default function Login() {
         localStorage.setItem('access_token', data.session.access_token)
         localStorage.setItem('auth_user', JSON.stringify(data.user))
       }
-      navigate('/')
+      navigate(redirectTo)
     } catch (err) {
       setError(err instanceof Error ? err.message : '注册失败')
     } finally {

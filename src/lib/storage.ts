@@ -1,5 +1,16 @@
 // localStorage 持久化封装
 // Demo 阶段所有数据存本地，完整版替换为 API 调用即可
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import {
+  chatAPI,
+  libraryAPI,
+  outlinesAPI,
+  projectsAPI,
+  referencesAPI,
+  sectionsAPI,
+  versionsAPI,
+} from './api'
+import { auth } from './auth'
 
 const KEYS = {
   CHAT:          'pai_chat_history',
@@ -47,18 +58,36 @@ export interface ChatMessage {
 
 export type SectionStatus = 'pending' | 'generating' | 'done'
 export type WorkflowStage = 'stage1' | 'stage2' | 'stage3'
-export type LibraryItemType = 'pdf' | 'docx' | 'doc' | 'txt' | 'note' | 'style' | 'case' | 'other'
+export type LibraryItemType = 'pdf' | 'docx' | 'doc' | 'txt' | 'note' | 'background' | 'style' | 'case' | 'other'
 export type IndexStatus = 'pending' | 'ready' | 'failed'
+export type ExtractStatus = 'pending' | 'processing' | 'done' | 'failed'
+
+export interface SectionFootnote {
+  id: string
+  number: number
+  blockIndex: number
+  start: number
+  end: number
+  anchorText: string
+  noteText: string
+}
 
 export interface DocSection {
   id: string
   projectId?: string
+  outlineNodeId?: string
+  outlineOrder?: string
+  outlineChildrenSignature?: string
+  generationPlan?: string
+  generatedSummary?: string
+  archivedAt?: number
   title: string
   content: string
   status: SectionStatus
   lastModified: number
   order?: number
   sourceRefs?: string[]
+  footnotes?: SectionFootnote[]
 }
 
 export interface VersionSnapshot {
@@ -67,6 +96,7 @@ export interface VersionSnapshot {
   timestamp: number
   description: string
   sections: DocSection[]
+  outline?: Outline
 }
 
 export interface OutlineSection {
@@ -112,6 +142,12 @@ export interface LibraryItem {
   text: string
   summary: string
   tags: string[]
+  structureExtract?: string
+  styleExtract?: string
+  viewpointsExtract?: string
+  casesExtract?: string
+  extractStatus?: ExtractStatus
+  fileUrl?: string
   createdAt: number
   updatedAt: number
   indexStatus: IndexStatus
@@ -155,7 +191,394 @@ export interface ReferenceSelection {
   updatedAt: number
 }
 
-const uid = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 9)}`
+const uid = (prefix?: string) => {
+  void prefix
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
+}
+
+const STAGES: WorkflowStage[] = ['stage1', 'stage2', 'stage3']
+
+function canUseRemote(): boolean {
+  return auth.isLoggedIn()
+}
+
+function remoteTask(task: () => Promise<unknown>) {
+  if (!canUseRemote()) return
+  task().catch(error => {
+    console.warn('[Storage] 远端同步失败，已保留本地数据', error)
+  })
+}
+
+function toTime(value?: string | null): number {
+  return value ? Date.parse(value) || Date.now() : Date.now()
+}
+
+function fromApiProject(row: any): Project {
+  return {
+    id: row.id,
+    title: row.title ?? '未命名论文',
+    description: row.description ?? '',
+    currentStage: row.current_stage ?? 'stage1',
+    libraryItemIds: row.library_item_ids ?? [],
+    context: { ...createEmptyProjectContext(), ...(row.context ?? {}) },
+    createdAt: toTime(row.created_at),
+    updatedAt: toTime(row.updated_at),
+  }
+}
+
+function toApiProject(project: Project) {
+  return {
+    id: project.id,
+    title: project.title,
+    description: project.description,
+    current_stage: project.currentStage,
+    library_item_ids: project.libraryItemIds,
+    context: project.context,
+  }
+}
+
+function toApiProjectPatch(patch: Partial<Project>) {
+  return {
+    title: patch.title,
+    description: patch.description,
+    current_stage: patch.currentStage,
+    library_item_ids: patch.libraryItemIds,
+    context: patch.context,
+  }
+}
+
+function fromApiSection(row: any): DocSection {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title ?? '未命名章节',
+    content: row.content ?? '',
+    status: row.status ?? 'pending',
+    order: row.sort_order ?? 0,
+    lastModified: toTime(row.updated_at ?? row.created_at),
+  }
+}
+
+function toApiSection(section: DocSection) {
+  return {
+    id: section.id,
+    project_id: section.projectId,
+    title: section.title,
+    content: section.content,
+    status: section.status,
+    sort_order: section.order ?? 0,
+  }
+}
+
+function fromApiOutline(row: any): Outline | null {
+  if (!row) return null
+  return {
+    projectId: row.project_id,
+    sections: row.sections ?? [],
+    confirmedAt: row.confirmed_at ? toTime(row.confirmed_at) : undefined,
+    updatedAt: toTime(row.updated_at ?? row.created_at),
+  }
+}
+
+function toApiOutline(outline: Outline) {
+  return {
+    sections: outline.sections,
+    confirmed_at: outline.confirmedAt ? new Date(outline.confirmedAt).toISOString() : undefined,
+  }
+}
+
+function fromApiLibraryItem(row: any): LibraryItem {
+  return {
+    id: row.id,
+    title: row.title ?? '未命名资料',
+    type: row.type ?? 'note',
+    fileName: row.file_name ?? undefined,
+    fileSize: row.file_size ?? undefined,
+    fileUrl: row.file_url ?? undefined,
+    text: row.text_content ?? '',
+    summary: row.summary ?? '',
+    tags: row.tags ?? [],
+    structureExtract: row.structure_extract ?? '',
+    styleExtract: row.style_extract ?? '',
+    viewpointsExtract: row.viewpoints_extract ?? '',
+    casesExtract: row.cases_extract ?? '',
+    extractStatus: row.extract_status ?? 'pending',
+    indexStatus: row.index_status ?? 'ready',
+    createdAt: toTime(row.created_at),
+    updatedAt: toTime(row.updated_at),
+  }
+}
+
+function toApiLibraryItem(item: LibraryItem) {
+  return {
+    id: item.id,
+    title: item.title,
+    type: item.type,
+    file_name: item.fileName,
+    file_size: item.fileSize,
+    file_url: item.fileUrl,
+    text_content: item.text,
+    summary: item.summary,
+    tags: item.tags,
+    structure_extract: item.structureExtract,
+    style_extract: item.styleExtract,
+    viewpoints_extract: item.viewpointsExtract,
+    cases_extract: item.casesExtract,
+    extract_status: item.extractStatus,
+    index_status: item.indexStatus,
+  }
+}
+
+function fromApiChatMessage(row: any): ChatMessage {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    stage: row.stage,
+    role: row.role,
+    content: row.content ?? '',
+    timestamp: toTime(row.created_at),
+  }
+}
+
+function toApiChatMessage(message: ChatMessage) {
+  return {
+    role: message.role,
+    content: message.content,
+  }
+}
+
+function fromApiVersion(row: any): VersionSnapshot {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    timestamp: toTime(row.created_at),
+    description: row.description ?? '',
+    sections: row.sections_snapshot ?? [],
+  }
+}
+
+function toApiReference(selection: ReferenceSelection) {
+  return {
+    library_item_ids: selection.libraryItemIds,
+    section_ids: selection.sectionIds,
+    include_project_context: selection.includeProjectContext,
+    include_conversation_summary: selection.includeConversationSummary,
+  }
+}
+
+function fromApiReference(row: any): ReferenceSelection | null {
+  if (!row) return null
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    stage: row.stage,
+    libraryItemIds: row.library_item_ids ?? [],
+    sectionIds: row.section_ids ?? [],
+    includeProjectContext: row.include_project_context ?? true,
+    includeConversationSummary: row.include_conversation_summary ?? false,
+    updatedAt: toTime(row.updated_at),
+  }
+}
+
+function mergeById<T extends { id: string }>(localItems: T[], remoteItems: T[]): T[] {
+  const merged = new Map<string, T>()
+  localItems.forEach(item => merged.set(item.id, item))
+  remoteItems.forEach(item => merged.set(item.id, item))
+  return Array.from(merged.values())
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function ensureUuid(id?: string): string {
+  return id && UUID_RE.test(id) ? id : uid('id')
+}
+
+function normalizeLocalIdsForRemote() {
+  const projects = read<Project[]>(KEYS.PROJECTS) ?? [createDefaultProject()]
+  const libraryItems = read<LibraryItem[]>(KEYS.LIBRARY) ?? []
+  const sections = read<DocSection[]>(KEYS.SECTIONS) ?? []
+  const outlines = read<Outline[]>(KEYS.OUTLINE) ?? []
+  const chats = read<ChatMessage[]>(KEYS.CHAT) ?? []
+  const versions = read<VersionSnapshot[]>(KEYS.VERSIONS) ?? []
+  const refs = read<ReferenceSelection[]>(KEYS.REFERENCES) ?? []
+
+  const projectIdMap = new Map(projects.map(project => [project.id, ensureUuid(project.id)]))
+  const libraryIdMap = new Map(libraryItems.map(item => [item.id, ensureUuid(item.id)]))
+  const sectionIdMap = new Map(sections.map(section => [section.id, ensureUuid(section.id)]))
+
+  const mapProjectId = (id?: string) => id ? projectIdMap.get(id) ?? id : id
+  const mapLibraryId = (id: string) => libraryIdMap.get(id) ?? id
+  const mapSectionId = (id: string) => sectionIdMap.get(id) ?? id
+
+  const nextProjects = projects.map(project => ({
+    ...project,
+    id: mapProjectId(project.id)!,
+    libraryItemIds: project.libraryItemIds.map(mapLibraryId),
+  }))
+  const nextLibrary = libraryItems.map(item => ({ ...item, id: mapLibraryId(item.id) }))
+  const nextSections = sections.map(section => ({
+    ...section,
+    id: mapSectionId(section.id),
+    projectId: mapProjectId(section.projectId),
+  }))
+  const nextOutlines = outlines.map(outline => ({ ...outline, projectId: mapProjectId(outline.projectId)! }))
+  const nextChats = chats.map(message => ({
+    ...message,
+    id: ensureUuid(message.id),
+    projectId: mapProjectId(message.projectId),
+  }))
+  const nextVersions = versions.map(snapshot => ({
+    ...snapshot,
+    id: ensureUuid(snapshot.id),
+    projectId: mapProjectId(snapshot.projectId),
+    sections: snapshot.sections.map(section => ({
+      ...section,
+      id: mapSectionId(section.id),
+      projectId: mapProjectId(section.projectId),
+    })),
+  }))
+  const nextRefs = refs.map(ref => ({
+    ...ref,
+    id: ensureUuid(ref.id),
+    projectId: mapProjectId(ref.projectId)!,
+    libraryItemIds: ref.libraryItemIds.map(mapLibraryId),
+    sectionIds: ref.sectionIds.map(mapSectionId),
+  }))
+
+  write(KEYS.PROJECTS, nextProjects)
+  write(KEYS.LIBRARY, nextLibrary)
+  write(KEYS.SECTIONS, nextSections)
+  write(KEYS.OUTLINE, nextOutlines)
+  write(KEYS.CHAT, nextChats)
+  write(KEYS.VERSIONS, nextVersions)
+  write(KEYS.REFERENCES, nextRefs)
+
+  const activeId = read<string>(KEYS.ACTIVE_PROJECT)
+  if (activeId && projectIdMap.has(activeId)) {
+    write(KEYS.ACTIVE_PROJECT, projectIdMap.get(activeId))
+  }
+
+  return { projects: nextProjects, libraryItems: nextLibrary, sections: nextSections, outlines: nextOutlines, chats: nextChats, versions: nextVersions, refs: nextRefs }
+}
+
+async function pushLocalDataToRemote() {
+  const local = normalizeLocalIdsForRemote()
+
+  for (const item of local.libraryItems) {
+    await libraryAPI.create(toApiLibraryItem(item))
+  }
+
+  for (const project of local.projects) {
+    await projectsAPI.create(toApiProject(project))
+    await sectionsAPI.saveAll(project.id, local.sections.filter(section => section.projectId === project.id).map(toApiSection))
+    const outline = local.outlines.find(item => item.projectId === project.id)
+    if (outline) await outlinesAPI.saveForProject(project.id, toApiOutline(outline))
+
+    for (const stage of STAGES) {
+      const messages = local.chats.filter(message => message.projectId === project.id && message.stage === stage)
+      if (messages.length) await chatAPI.saveForProjectStage(project.id, stage, messages.map(toApiChatMessage))
+      const ref = local.refs.find(item => item.projectId === project.id && item.stage === stage)
+      if (ref) await referencesAPI.save(project.id, stage, toApiReference(ref))
+    }
+
+    for (const snapshot of local.versions.filter(item => item.projectId === project.id)) {
+      await versionsAPI.create(project.id, {
+        description: snapshot.description,
+        sections_snapshot: snapshot.sections,
+      })
+    }
+  }
+}
+
+export async function syncRemoteData(): Promise<void> {
+  if (!canUseRemote()) return
+
+  const localProjectsBeforeSync = read<Project[]>(KEYS.PROJECTS) ?? []
+  const localSectionsBeforeSync = read<DocSection[]>(KEYS.SECTIONS) ?? []
+  const localOutlinesBeforeSync = read<Outline[]>(KEYS.OUTLINE) ?? []
+  const localChatsBeforeSync = read<ChatMessage[]>(KEYS.CHAT) ?? []
+  const localVersionsBeforeSync = read<VersionSnapshot[]>(KEYS.VERSIONS) ?? []
+  const localRefsBeforeSync = read<ReferenceSelection[]>(KEYS.REFERENCES) ?? []
+  const remoteProjects = ((await projectsAPI.list()) as any[]).map(fromApiProject)
+  if (remoteProjects.length === 0) {
+    await pushLocalDataToRemote()
+    return
+  }
+
+  const [remoteLibrary, projectPayloads] = await Promise.all([
+    libraryAPI.list().then(rows => (rows as any[]).map(fromApiLibraryItem)),
+    Promise.all(remoteProjects.map(async project => {
+      const [sections, outline, versions, chatGroups, refs] = await Promise.all([
+        sectionsAPI.listByProject(project.id).then(rows => (rows as any[]).map(fromApiSection)),
+        outlinesAPI.getByProject(project.id).then(fromApiOutline),
+        versionsAPI.listByProject(project.id).then(rows => (rows as any[]).map(fromApiVersion)),
+        Promise.all(STAGES.map(stage =>
+          chatAPI.listByProjectStage(project.id, stage).then(rows => (rows as any[]).map(fromApiChatMessage))
+        )),
+        Promise.all(STAGES.map(stage =>
+          referencesAPI.get(project.id, stage).then(fromApiReference)
+        )),
+      ])
+
+      return {
+        remoteSectionCount: sections.length,
+        sections: sections.length > 0
+          ? sections
+          : localSectionsBeforeSync.filter(section => section.projectId === project.id),
+        outline,
+        versions,
+        chats: chatGroups.flat(),
+        refs: refs.filter((item): item is ReferenceSelection => item !== null),
+      }
+    })),
+  ])
+
+  const mergedRemoteProjects = remoteProjects.map(remoteProject => {
+    const localProject = localProjectsBeforeSync.find(project => project.id === remoteProject.id)
+    return localProject
+      ? {
+          ...remoteProject,
+          title: remoteProject.title || localProject.title,
+          context: {
+            ...remoteProject.context,
+            rawSummary: remoteProject.context.rawSummary || localProject.context.rawSummary,
+          },
+        }
+      : remoteProject
+  })
+  const mergedProjects = mergeById(localProjectsBeforeSync, mergedRemoteProjects)
+  const mergedSections = projectPayloads.flatMap(item => item.sections)
+  const mergedOutlines = projectPayloads
+    .map(item => item.outline)
+    .filter((item): item is Outline => item !== null)
+  const protectedOutlines = remoteProjects.map(project => {
+    const remoteOutline = mergedOutlines.find(outline => outline.projectId === project.id)
+    const localOutline = localOutlinesBeforeSync.find(outline => outline.projectId === project.id)
+    return remoteOutline ?? localOutline ?? null
+  }).filter((item): item is Outline => item !== null)
+
+  write(KEYS.PROJECTS, mergedProjects)
+  write(KEYS.LIBRARY, remoteLibrary)
+  write(KEYS.SECTIONS, mergeById(localSectionsBeforeSync, mergedSections))
+  write(KEYS.OUTLINE, protectedOutlines)
+  write(KEYS.VERSIONS, mergeById(localVersionsBeforeSync, projectPayloads.flatMap(item => item.versions)))
+  write(KEYS.CHAT, mergeById(localChatsBeforeSync, projectPayloads.flatMap(item => item.chats)))
+  write(KEYS.REFERENCES, mergeById(localRefsBeforeSync, projectPayloads.flatMap(item => item.refs)))
+
+  const activeId = read<string>(KEYS.ACTIVE_PROJECT)
+  if (!activeId || !remoteProjects.some(project => project.id === activeId)) {
+    write(KEYS.ACTIVE_PROJECT, remoteProjects[0].id)
+  }
+
+  for (const project of remoteProjects) {
+    const localFallbackSections = localSectionsBeforeSync.filter(section => section.projectId === project.id)
+    const payload = projectPayloads.find(item => item.sections.some(section => section.projectId === project.id))
+    if (payload?.remoteSectionCount === 0 && localFallbackSections.length > 0) {
+      sectionStore.saveForProject(project.id, localFallbackSections)
+    }
+  }
+}
 
 export function createEmptyProjectContext(): ProjectContext {
   return {
@@ -172,7 +595,7 @@ export function createEmptyProjectContext(): ProjectContext {
 export function createDefaultProject(): Project {
   const now = Date.now()
   return {
-    id: 'default-project',
+    id: uid('project'),
     title: docTitleStore.get(),
     description: '默认论文项目，用于承载当前 Demo 的完整工作流。',
     currentStage: 'stage1',
@@ -196,7 +619,9 @@ export const chatStore = {
     const other = chatStore.getAll().filter(msg =>
       msg.projectId !== projectId || msg.stage !== stage
     )
-    chatStore.save([...other, ...msgs.map(msg => ({ ...msg, projectId, stage }))])
+    const scoped = msgs.map(msg => ({ ...msg, projectId, stage }))
+    chatStore.save([...other, ...scoped])
+    remoteTask(() => chatAPI.saveForProjectStage(projectId, stage, scoped.map(toApiChatMessage)))
   },
   append: (msg: ChatMessage) => {
     const msgs = chatStore.getAll()
@@ -215,8 +640,27 @@ export const sectionStore = {
   save:   (sections: DocSection[]) => write(KEYS.SECTIONS, sections),
   saveForProject: (projectId: string, sections: DocSection[]) => {
     const other = sectionStore.getAll().filter(section => section.projectId !== projectId && section.projectId)
-    const scoped = sections.map((section, index) => ({ ...section, projectId, order: section.order ?? index }))
+    const scoped = sections.map((section, index) => ({
+      ...section,
+      id: ensureUuid(section.id),
+      projectId,
+      order: section.order ?? index,
+    }))
     sectionStore.save([...other, ...scoped])
+    remoteTask(() => sectionsAPI.saveAll(projectId, scoped.map(toApiSection)))
+  },
+  syncProject: async (projectId: string): Promise<number> => {
+    const sections = sectionStore.getByProject(projectId)
+    const other = sectionStore.getAll().filter(section => section.projectId !== projectId && section.projectId)
+    const scoped = sections.map((section, index) => ({
+      ...section,
+      id: ensureUuid(section.id),
+      projectId,
+      order: section.order ?? index,
+    }))
+    sectionStore.save([...other, ...scoped])
+    await sectionsAPI.saveAll(projectId, scoped.map(toApiSection))
+    return scoped.length
   },
   update: (id: string, patch: Partial<DocSection>) => {
     const sections = sectionStore.getAll()
@@ -224,11 +668,19 @@ export const sectionStore = {
     if (idx !== -1) {
       sections[idx] = { ...sections[idx], ...patch, lastModified: Date.now() }
       sectionStore.save(sections)
+      const projectId = sections[idx].projectId
+      if (projectId) {
+        remoteTask(() => sectionsAPI.saveAll(projectId, sectionStore.getByProject(projectId).map(toApiSection)))
+      }
     }
   },
   add: (section: Omit<DocSection, 'lastModified'>) => {
     const sections = sectionStore.getAll()
-    sectionStore.save([...sections, { ...section, lastModified: Date.now() }])
+    const next = { ...section, lastModified: Date.now() }
+    sectionStore.save([...sections, next])
+    if (next.projectId) {
+      remoteTask(() => sectionsAPI.saveAll(next.projectId!, sectionStore.getByProject(next.projectId!).map(toApiSection)))
+    }
   },
   clear: () => localStorage.removeItem(KEYS.SECTIONS),
 }
@@ -249,6 +701,7 @@ export const outlineStore = {
       all[idx] = next
       write(KEYS.OUTLINE, all)
     }
+    remoteTask(() => outlinesAPI.saveForProject(next.projectId, toApiOutline(next)))
   },
   confirm: (projectId: string) => {
     const outline = outlineStore.get(projectId)
@@ -257,6 +710,7 @@ export const outlineStore = {
   },
   clear: (projectId: string) => {
     write(KEYS.OUTLINE, outlineStore.getAll().filter(outline => outline.projectId !== projectId))
+    remoteTask(() => outlinesAPI.clear(projectId))
   },
 }
 
@@ -286,6 +740,19 @@ export const revisionStore = {
 }
 
 // ── 版本历史 ──────────────────────────────────────────────────
+function renumberOutlineSnapshot(sections: OutlineSection[], parentOrder = ''): OutlineSection[] {
+  return sections.map((section, index) => {
+    const order = parentOrder ? `${parentOrder}.${index + 1}` : `${index + 1}`
+    const level = Math.min(order.split('.').length, 3) as 1 | 2 | 3
+    return {
+      ...section,
+      order,
+      level,
+      children: section.children?.length ? renumberOutlineSnapshot(section.children, order) : undefined,
+    }
+  })
+}
+
 export const versionStore = {
   getAll: (): VersionSnapshot[] => read<VersionSnapshot[]>(KEYS.VERSIONS) ?? [],
   getByProject: (projectId: string): VersionSnapshot[] => {
@@ -302,8 +769,31 @@ export const versionStore = {
     }
     // 最多保留 30 条
     write(KEYS.VERSIONS, [snap, ...all].slice(0, 30))
+    if (projectId) {
+      remoteTask(() => versionsAPI.create(projectId, {
+        description,
+        sections_snapshot: snap.sections,
+      }))
+    }
+  },
+  snapshotOutline: (description: string, outline: Outline) => {
+    const all = versionStore.getAll()
+    const snap: VersionSnapshot = {
+      id:          Date.now().toString(),
+      projectId:   outline.projectId,
+      timestamp:   Date.now(),
+      description,
+      sections:    [],
+      outline:     { ...outline, sections: renumberOutlineSnapshot(outline.sections), updatedAt: Date.now() },
+    }
+    write(KEYS.VERSIONS, [snap, ...all].slice(0, 30))
   },
   restore: (snapshot: VersionSnapshot, projectId?: string) => {
+    if (projectId && snapshot.outline) {
+      outlineStore.save({ ...snapshot.outline, projectId, updatedAt: Date.now() })
+      if (snapshot.sections.length === 0) return
+    }
+
     if (projectId) {
       // 只恢复当前项目的章节，其他项目不受影响
       const other = sectionStore.getAll().filter(
@@ -344,6 +834,15 @@ export const libraryStore = {
   getAll: (): LibraryItem[] => read<LibraryItem[]>(KEYS.LIBRARY) ?? [],
   save: (items: LibraryItem[]) => write(KEYS.LIBRARY, items),
   get: (id: string) => libraryStore.getAll().find(item => item.id === id) ?? null,
+  upsertRemote: (row: any) => {
+    const next = fromApiLibraryItem(row)
+    const exists = libraryStore.get(next.id)
+    libraryStore.save(exists
+      ? libraryStore.getAll().map(item => item.id === next.id ? next : item)
+      : [next, ...libraryStore.getAll()]
+    )
+    return next
+  },
   add: (item: Omit<LibraryItem, 'id' | 'createdAt' | 'updatedAt' | 'indexStatus'>) => {
     const now = Date.now()
     const next: LibraryItem = {
@@ -352,17 +851,23 @@ export const libraryStore = {
       createdAt: now,
       updatedAt: now,
       indexStatus: 'ready',
+      extractStatus: item.extractStatus ?? 'pending',
     }
     libraryStore.save([next, ...libraryStore.getAll()])
+    remoteTask(() => libraryAPI.create(toApiLibraryItem(next)))
     return next
   },
   update: (id: string, patch: Partial<LibraryItem>) => {
-    libraryStore.save(libraryStore.getAll().map(item =>
+    const nextItems = libraryStore.getAll().map(item =>
       item.id === id ? { ...item, ...patch, updatedAt: Date.now() } : item
-    ))
+    )
+    libraryStore.save(nextItems)
+    const next = nextItems.find(item => item.id === id)
+    if (next) remoteTask(() => libraryAPI.update(id, toApiLibraryItem(next)))
   },
   remove: (id: string) => {
     libraryStore.save(libraryStore.getAll().filter(item => item.id !== id))
+    remoteTask(() => libraryAPI.delete(id))
     projectStore.save(projectStore.getAll().map(project => ({
       ...project,
       libraryItemIds: project.libraryItemIds.filter(itemId => itemId !== id),
@@ -380,7 +885,18 @@ export const projectStore = {
     write(KEYS.PROJECTS, [fallback])
     return [fallback]
   },
-  save: (projects: Project[]) => write(KEYS.PROJECTS, projects),
+  save: (projects: Project[]) => {
+    write(KEYS.PROJECTS, projects)
+    projects.forEach(project => {
+      remoteTask(async () => {
+        try {
+          await projectsAPI.update(project.id, toApiProjectPatch(project))
+        } catch {
+          await projectsAPI.create(toApiProject(project))
+        }
+      })
+    })
+  },
   get: (id: string): Project | null => projectStore.getAll().find(project => project.id === id) ?? null,
   getActiveId: (): string => read<string>(KEYS.ACTIVE_PROJECT) ?? projectStore.getAll()[0].id,
   setActiveId: (id: string) => write(KEYS.ACTIVE_PROJECT, id),
@@ -408,14 +924,32 @@ export const projectStore = {
       createdAt: now,
       updatedAt: now,
     }
-    projectStore.save([next, ...projectStore.getAll()])
+    const projects = [next, ...projectStore.getAll()]
+    write(KEYS.PROJECTS, projects)
+    remoteTask(() => projectsAPI.create(toApiProject(next)))
     projectStore.setActiveId(next.id)
     return next
   },
   update: (id: string, patch: Partial<Project>) => {
-    projectStore.save(projectStore.getAll().map(project =>
+    const nextProjects = projectStore.getAll().map(project =>
       project.id === id ? { ...project, ...patch, updatedAt: Date.now() } : project
-    ))
+    )
+    write(KEYS.PROJECTS, nextProjects)
+    remoteTask(() => projectsAPI.update(id, toApiProjectPatch(patch)))
+  },
+  remove: (id: string) => {
+    const nextProjects = projectStore.getAll().filter(project => project.id !== id)
+    write(KEYS.PROJECTS, nextProjects)
+    write(KEYS.SECTIONS, sectionStore.getAll().filter(section => section.projectId !== id))
+    write(KEYS.OUTLINE, outlineStore.getAll().filter(outline => outline.projectId !== id))
+    write(KEYS.CHAT, chatStore.getAll().filter(message => message.projectId !== id))
+    write(KEYS.VERSIONS, versionStore.getAll().filter(snapshot => snapshot.projectId !== id))
+    write(KEYS.REFERENCES, referenceStore.getAll().filter(selection => selection.projectId !== id))
+    const activeId = read<string>(KEYS.ACTIVE_PROJECT)
+    if (activeId === id && nextProjects[0]) {
+      projectStore.setActiveId(nextProjects[0].id)
+    }
+    remoteTask(() => projectsAPI.delete(id))
   },
   bindLibraryItem: (projectId: string, itemId: string) => {
     const project = projectStore.get(projectId)
@@ -458,6 +992,7 @@ export const referenceStore = {
       all[idx] = next
       write(KEYS.REFERENCES, all)
     }
+    remoteTask(() => referencesAPI.save(next.projectId, next.stage, toApiReference(next)))
   },
 }
 

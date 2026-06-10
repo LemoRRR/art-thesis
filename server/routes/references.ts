@@ -1,12 +1,13 @@
 import { Router } from 'express'
-import { supabase } from '../lib/supabase'
-import { requireAuth } from '../middleware/auth'
+import { createUserClient } from '../lib/supabase'
+import { requireAuth, type AuthRequest } from '../middleware/auth'
 
 const router = Router()
 router.use(requireAuth)
 
-router.get('/project/:projectId/:stage', async (req, res) => {
-  const { data, error } = await supabase
+router.get('/project/:projectId/:stage', async (req: AuthRequest, res) => {
+  const db = createUserClient(req.accessToken!)
+  const { data, error } = await db
     .from('reference_selections')
     .select('*')
     .eq('project_id', req.params.projectId)
@@ -20,7 +21,8 @@ router.get('/project/:projectId/:stage', async (req, res) => {
   res.json(data)
 })
 
-router.put('/project/:projectId/:stage', async (req, res) => {
+router.put('/project/:projectId/:stage', async (req: AuthRequest, res) => {
+  const db = createUserClient(req.accessToken!)
   const {
     library_item_ids = [],
     section_ids = [],
@@ -28,7 +30,7 @@ router.put('/project/:projectId/:stage', async (req, res) => {
     include_conversation_summary = false,
   } = req.body
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('reference_selections')
     .upsert({
       project_id: req.params.projectId,

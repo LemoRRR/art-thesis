@@ -1,24 +1,37 @@
 import { Check } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
+import { chatStore, outlineStore, projectStore, sectionStore } from '../lib/storage'
 
 interface StepBarProps {
   current: 0 | 1 | 2   // 0=阶段一, 1=阶段二, 2=阶段三
 }
 
 const STEPS = [
-  { label: '材料理解', route: '/stage1' },
-  { label: '撰写修改', route: '/stage2' },
-  { label: '文章收尾', route: null },   // 完整版，暂不可点
+  { label: '材料理解', route: 'stage1' },
+  { label: '大纲撰写', route: 'stage2' },
+  { label: '文章生成', route: 'stage3' },
 ]
 
 const STEP_COLORS = [
   { active: '#2D5A3D', light: '#EBF2ED', text: '#2D5A3D' },   // 绿
   { active: '#1A6B5A', light: '#E8F4F1', text: '#1A6B5A' },   // 青绿
-  { active: '#8A8480', light: '#F3F1EE', text: '#8A8480' },   // 灰（完整版）
+  { active: '#2D5A3D', light: '#EBF2ED', text: '#2D5A3D' },   // 绿
 ]
 
 export default function StepBar({ current }: StepBarProps) {
   const navigate = useNavigate()
+  const params = useParams()
+  const projectId = params.projectId ?? projectStore.getActiveId()
+  const project = projectStore.ensure(projectId)
+  const outline = outlineStore.get(project.id)
+  const sections = sectionStore.getByProject(project.id)
+  const stage1Messages = chatStore.getByProject(project.id, 'stage1')
+
+  const canAccess = [
+    true,
+    Boolean(current >= 1 || project.context.rawSummary || outline?.sections?.length || stage1Messages.length > 1),
+    Boolean(current >= 2 || sections.length > 0 || outline?.confirmedAt || outline?.sections?.length),
+  ]
 
   return (
     <div
@@ -32,7 +45,7 @@ export default function StepBar({ current }: StepBarProps) {
       {STEPS.map((step, i) => {
         const isDone    = i < current
         const isActive  = i === current
-        const isLocked  = step.route === null
+        const isLocked  = !canAccess[i]
         const color     = STEP_COLORS[i]
 
         return (
@@ -52,11 +65,11 @@ export default function StepBar({ current }: StepBarProps) {
             {/* 步骤按钮 */}
             <button
               onClick={() => {
-                if (!isLocked && step.route && (isDone || isActive)) {
-                  navigate(step.route)
+                if (!isLocked) {
+                  navigate(`/projects/${project.id}/${step.route}`)
                 }
               }}
-              disabled={isLocked || (!isDone && !isActive)}
+              disabled={isLocked}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -78,8 +91,8 @@ export default function StepBar({ current }: StepBarProps) {
                   : 'var(--color-ink-3)',
                 fontSize: 12,
                 fontWeight: isActive ? 500 : 400,
-                cursor: isLocked || (!isDone && !isActive) ? 'default' : 'pointer',
-                opacity: isLocked ? 0.45 : 1,
+                cursor: isLocked ? 'default' : 'pointer',
+                opacity: isLocked ? 0.55 : 1,
                 fontFamily: 'var(--font-sans)',
                 transition: 'all 0.15s',
               }}
@@ -121,7 +134,7 @@ export default function StepBar({ current }: StepBarProps) {
                     padding: '1px 4px',
                   }}
                 >
-                  完整版
+                  未就绪
                 </span>
               )}
             </button>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { ReactNode, RefObject } from 'react'
-import { Wand2, Minimize2, Maximize2, BookOpen, X, Check } from 'lucide-react'
+import { Wand2, Minimize2, Maximize2, BookOpen, X, Check, Quote } from 'lucide-react'
 import { callDoubao } from '../lib/ai'
 import { formatSectionContent } from '../lib/documentFormat'
 import { promptQuickAction, promptRewriteSelection, type QuickAction } from '../lib/prompts'
@@ -13,6 +13,14 @@ interface SelectionToolbarProps {
   sections:      DocSection[]
   activeSectionId: string | null
   onContentUpdate: (sectionId: string, newContent: string) => void
+  onAddFootnote?: (payload: {
+    sectionId: string
+    blockIndex: number
+    start: number
+    end: number
+    anchorText: string
+    noteText: string
+  }) => void
 }
 
 interface ToolbarPosition {
@@ -28,28 +36,95 @@ interface PendingRevision {
   type: RevisionChange['type']
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function findSectionIdFromNode(node: Node | null, container: HTMLElement): string | null {
+  let current: Node | null = node
+  while (current && current !== container) {
+    if (current instanceof HTMLElement) {
+      const id = current.getAttribute('data-section-id') ?? current.closest('[data-section-id]')?.getAttribute('data-section-id')
+      if (id) return id
+    }
+    current = current.parentNode
+  }
+  return null
+}
+
+function findBlockIndexFromNode(node: Node | null, container: HTMLElement): number | null {
+  let current: Node | null = node
+  while (current && current !== container) {
+    if (current instanceof HTMLElement) {
+      const blockIndex = current.getAttribute('data-block-index')
+      if (blockIndex !== null) return Number.parseInt(blockIndex, 10)
+    }
+    current = current.parentNode
+  }
+  return null
+}
+
+function findBlockElementFromNode(node: Node | null, container: HTMLElement): HTMLElement | null {
+  let current: Node | null = node
+  while (current && current !== container) {
+    if (current instanceof HTMLElement && current.hasAttribute('data-block-index')) {
+      return current
+    }
+    current = current.parentNode
+  }
+  return null
+}
+
+function replaceSelectedText(content: string, beforeText: string, afterText: string): string {
+  if (content.includes(beforeText)) return content.replace(beforeText, afterText)
+
+  const parts = beforeText.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return content
+
+  const flexiblePattern = parts.map(escapeRegExp).join('[\\s\\u00A0]*')
+  const match = content.match(new RegExp(flexiblePattern))
+  if (!match) return content
+
+  return content.slice(0, match.index) + afterText + content.slice((match.index ?? 0) + match[0].length)
+}
+
 export default function SelectionToolbar({
   projectId,
   containerRef,
   sections,
   activeSectionId: _activeSectionId,
   onContentUpdate,
+  onAddFootnote,
 }: SelectionToolbarProps) {
   const [visible,     setVisible]     = useState(false)
   const [position,    setPosition]    = useState<ToolbarPosition>({ top: 0, left: 0 })
   const [isLoading,   setIsLoading]   = useState(false)
-  const [showInput,   setShowInput]   = useState(false)     // AI 改写的自定义输入
+  const [showInput,   setShowInput]   = useState(false)
+  const [showFootnoteInput, setShowFootnoteInput] = useState(false)
   const [customInput, setCustomInput] = useState('')
-  const [done,        setDone]        = useState(false)     // 操作完成提示
+  const [footnoteInput, setFootnoteInput] = useState('')
+  const [done,        setDone]        = useState(false)
   const [pendingRevision, setPendingRevision] = useState<PendingRevision | null>(null)
 
-  // 保存当前选区（fetch 期间选区可能消失）
   const savedRangeRef    = useRef<Range | null>(null)
   const savedSectionId   = useRef<string | null>(null)
+  const savedBlockIndex  = useRef<number | null>(null)
+  const savedCharStart   = useRef(0)
+  const savedCharEnd     = useRef(0)
   const savedContext     = useRef<string>('')
   const savedSelectedText = useRef<string>('')
   const abortRef         = useRef<AbortController | null>(null)
   const toolbarRef       = useRef<HTMLDivElement>(null)
+
+  const closeToolbar = useCallback(() => {
+    setVisible(false)
+    setShowInput(false)
+    setShowFootnoteInput(false)
+    setPendingRevision(null)
+    setDone(false)
+    setCustomInput('')
+    setFootnoteInput('')
+  }, [])
 
   // ── 监听 mouseup：检测选区 ──────────────────────────────────
   useEffect(() => {
@@ -76,22 +151,31 @@ export default function SelectionToolbar({
           return
         }
 
-        // 找到选区属于哪个 Section
-        let node: Node | null = range.commonAncestorContainer
-        let sectionId: string | null = null
-        while (node && node !== container) {
-          if (node instanceof HTMLElement) {
-            const id = node.getAttribute('data-section-id')
-            if (id) { sectionId = id; break }
-          }
-          node = node.parentNode
-        }
+        // 找到选区属于哪个 Section。跨段落选择时 commonAncestor 可能是整页，
+        // 因此优先看起点/终点，只要仍在同一章节内就允许较大范围选择。
+        const startSectionId = findSectionIdFromNode(range.startContainer, container)
+        const endSectionId = findSectionIdFromNode(range.endContainer, container)
+        const commonSectionId = findSectionIdFromNode(range.commonAncestorContainer, container)
+        const sectionId = startSectionId && endSectionId && startSectionId === endSectionId
+          ? startSectionId
+          : commonSectionId
 
         if (!sectionId) { setVisible(false); return }
 
-        // 保存选区信息
+        const blockIndex = findBlockIndexFromNode(range.startContainer, container)
+        const blockElement = findBlockElementFromNode(range.startContainer, container)
+        if (blockIndex === null || !blockElement) { setVisible(false); return }
+
+        const blockText = blockElement.innerText
+        let charStart = blockText.indexOf(selectedText)
+        if (charStart === -1) charStart = 0
+        const charEnd = charStart + selectedText.length
+
         savedRangeRef.current = range.cloneRange()
         savedSectionId.current = sectionId
+        savedBlockIndex.current = blockIndex
+        savedCharStart.current = charStart
+        savedCharEnd.current = charEnd
         savedSelectedText.current = selectedText
 
         // 获取上下文（选中文字前后各 150 字）
@@ -107,24 +191,50 @@ export default function SelectionToolbar({
         // 计算工具栏位置（使用视口坐标，避免被文档容器裁切）
         const rect = range.getBoundingClientRect()
         const toolbarWidth = 520
+        const toolbarMaxHeight = Math.min(window.innerHeight - 24, 560)
         const safeLeft = Math.min(
           Math.max(12, rect.left + rect.width / 2 - toolbarWidth / 2),
           window.innerWidth - toolbarWidth - 12
         )
+        const preferredTop = rect.bottom + 10
         setPosition({
-          top:  Math.max(12, rect.bottom + 10),
+          top:  Math.min(Math.max(12, preferredTop), Math.max(12, window.innerHeight - toolbarMaxHeight - 12)),
           left: safeLeft,
         })
         setVisible(true)
         setDone(false)
         setShowInput(false)
+        setShowFootnoteInput(false)
         setCustomInput('')
+        setFootnoteInput('')
       }, 10)
     }
 
     document.addEventListener('mouseup', handleMouseUp)
     return () => document.removeEventListener('mouseup', handleMouseUp)
   }, [sections, containerRef])
+
+  useEffect(() => {
+    if (!visible) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (toolbarRef.current?.contains(target)) return
+      const container = containerRef.current
+      if (!container?.contains(target)) closeToolbar()
+    }
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') closeToolbar()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown, true)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [closeToolbar, containerRef, visible])
 
   // ── 执行替换 ─────────────────────────────────────────────────
   const acceptRevision = useCallback(() => {
@@ -133,7 +243,7 @@ export default function SelectionToolbar({
     if (!section) return
 
     const newContent = formatSectionContent(
-      section.content.replace(pendingRevision.beforeText, pendingRevision.afterText)
+      replaceSelectedText(section.content, pendingRevision.beforeText, pendingRevision.afterText)
     )
     const change = revisionStore.add({
       projectId,
@@ -145,9 +255,6 @@ export default function SelectionToolbar({
     })
     revisionStore.accept(change.id)
     onContentUpdate(pendingRevision.sectionId, newContent)
-
-    const el = document.querySelector(`[data-section-id="${pendingRevision.sectionId}"]`) as HTMLDivElement | null
-    if (el) el.innerText = newContent
 
     setPendingRevision(null)
     setDone(true)
@@ -217,11 +324,36 @@ export default function SelectionToolbar({
     setCustomInput('')
   }
 
+  const handleAddFootnote = () => {
+    if (!onAddFootnote || !savedSectionId.current || savedBlockIndex.current === null) return
+    const noteText = footnoteInput.trim()
+    if (!noteText) return
+
+    onAddFootnote({
+      sectionId: savedSectionId.current,
+      blockIndex: savedBlockIndex.current,
+      start: savedCharStart.current,
+      end: savedCharEnd.current,
+      anchorText: savedSelectedText.current,
+      noteText,
+    })
+
+    setFootnoteInput('')
+    setShowFootnoteInput(false)
+    setDone(true)
+    setTimeout(() => {
+      setVisible(false)
+      setDone(false)
+    }, 1200)
+  }
+
   if (!visible) return null
 
   return (
     <div
       ref={toolbarRef}
+      onMouseDown={event => event.preventDefault()}
+      onPointerDown={event => event.stopPropagation()}
       style={{
         position:    'fixed',
         top:         position.top,
@@ -237,13 +369,12 @@ export default function SelectionToolbar({
         overflow:    'hidden',
         width:       520,
         maxWidth:    'calc(100vw - 24px)',
-        maxHeight:   'min(70vh, 560px)',
+        maxHeight:   'min(calc(100vh - 24px), 560px)',
         transition:  'opacity 0.1s',
         userSelect:  'none',
       }}
     >
       {done ? (
-        // 完成状态
         <div
           style={{
             padding: '10px 16px',
@@ -252,7 +383,7 @@ export default function SelectionToolbar({
           }}
         >
           <Check size={14} />
-          替换完成
+          {showFootnoteInput ? '操作完成' : '替换完成'}
         </div>
       ) : (
         <>
@@ -276,12 +407,23 @@ export default function SelectionToolbar({
             <ToolbarBtn icon={<Minimize2 size={12} />} label="缩短" loading={isLoading} onClick={() => handleQuickAction('缩短')} />
             <ToolbarBtn icon={<Maximize2 size={12} />} label="扩写" loading={isLoading} onClick={() => handleQuickAction('扩写')} />
             <ToolbarBtn icon={<BookOpen size={12} />} label="学术化" loading={isLoading} onClick={() => handleQuickAction('学术化')} />
+            {onAddFootnote && (
+              <ToolbarBtn
+                icon={<Quote size={12} />}
+                label="添加脚注"
+                active={showFootnoteInput}
+                onClick={() => {
+                  setShowFootnoteInput(value => !value)
+                  setShowInput(false)
+                }}
+              />
+            )}
 
             <div style={{ flex: 1 }} />
 
             {/* 关闭 */}
             <button
-              onClick={() => setVisible(false)}
+              onClick={closeToolbar}
               style={{
                 padding: 4, border: 'none', background: 'transparent',
                 cursor: 'pointer', color: 'var(--color-ink-3)',
@@ -293,6 +435,59 @@ export default function SelectionToolbar({
           </div>
 
           {/* AI 改写自定义输入 */}
+          {showFootnoteInput && (
+            <div
+              style={{
+                borderTop: '1px solid var(--color-border)',
+                padding: '8px 10px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+              }}
+            >
+              <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>
+                正文脚注（与 @ 资料无关）：为「{savedSelectedText.current.slice(0, 18)}{savedSelectedText.current.length > 18 ? '…' : ''}」添加引用说明
+              </div>
+              <textarea
+                autoFocus
+                value={footnoteInput}
+                onChange={event => setFootnoteInput(event.target.value)}
+                placeholder="如：作者. 书名. 出版社, 年份, 页码."
+                rows={3}
+                style={{
+                  width: '100%',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '6px 8px',
+                  fontSize: 12,
+                  outline: 'none',
+                  fontFamily: 'var(--font-sans)',
+                  color: 'var(--color-ink)',
+                  background: 'var(--color-bg)',
+                  resize: 'vertical',
+                  boxSizing: 'border-box',
+                }}
+              />
+              <button
+                onClick={handleAddFootnote}
+                disabled={!footnoteInput.trim()}
+                style={{
+                  alignSelf: 'flex-end',
+                  padding: '5px 12px',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  background: footnoteInput.trim() ? 'var(--color-accent)' : 'var(--color-border)',
+                  color: '#fff',
+                  fontSize: 12,
+                  cursor: footnoteInput.trim() ? 'pointer' : 'not-allowed',
+                  fontFamily: 'var(--font-sans)',
+                }}
+              >
+                插入脚注
+              </button>
+            </div>
+          )}
+
           {showInput && (
             <div
               style={{
@@ -365,9 +560,9 @@ export default function SelectionToolbar({
           )}
 
           {pendingRevision && (
-            <div style={{ borderTop: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <div style={{ borderTop: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0, overflow: 'hidden' }}>
               <div style={{ padding: '10px 10px 6px', fontSize: 11, color: 'var(--color-ink-3)', flexShrink: 0 }}>AI 修改建议</div>
-              <div style={{ padding: '0 10px 10px', fontSize: 12, lineHeight: 1.7, overflowY: 'auto', minHeight: 0 }}>
+              <div style={{ padding: '0 10px 10px', fontSize: 12, lineHeight: 1.7, overflowY: 'auto', flex: '1 1 auto', minHeight: 0, maxHeight: 'min(44vh, 360px)' }}>
                 <div style={{ color: '#A8443F', background: '#FFF1EF', border: '1px solid #F0C5C0', borderRadius: 6, padding: 8, marginBottom: 6 }}>
                   <span style={{ fontSize: 10, fontWeight: 600 }}>删除</span>
                   <div style={{ textDecoration: 'line-through', whiteSpace: 'pre-wrap' }}>{pendingRevision.beforeText}</div>
@@ -377,7 +572,7 @@ export default function SelectionToolbar({
                   <div style={{ whiteSpace: 'pre-wrap' }}>{pendingRevision.afterText}</div>
                 </div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, padding: 10, borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)', flexShrink: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, padding: 10, borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)', flexShrink: 0, boxShadow: '0 -6px 12px rgba(38, 32, 24, 0.06)' }}>
                 <button
                   onClick={() => setPendingRevision(null)}
                   style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'transparent', color: 'var(--color-ink-3)', padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
@@ -385,6 +580,7 @@ export default function SelectionToolbar({
                   取消
                 </button>
                 <button
+                  onMouseDown={event => event.preventDefault()}
                   onClick={acceptRevision}
                   style={{ border: 'none', borderRadius: 'var(--radius-sm)', background: 'var(--color-accent)', color: '#fff', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
                 >

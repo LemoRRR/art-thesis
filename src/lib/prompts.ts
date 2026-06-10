@@ -24,6 +24,7 @@ export function promptUnderstandFromText(articleText: string): Message[] {
 
 请用以下 JSON 格式回复，不要输出任何其他内容：
 {
+  "paperTitle": "论文标题（简洁、学术化，适合作为最终论文标题）",
   "researchObject": "研究对象（一句话，说明研究什么）",
   "writingBoundary": "写作边界（一句话，说明论文讨论什么、不讨论什么）",
   "academicLevel": "本科|硕士|期刊|其他",
@@ -47,6 +48,7 @@ export function promptUnderstandFromOutline(outlineText: string): Message[] {
 
 请用以下 JSON 格式回复，不要输出任何其他内容：
 {
+  "paperTitle": "论文标题（简洁、学术化，适合作为最终论文标题）",
   "researchObject": "研究对象（一句话，说明研究什么）",
   "writingBoundary": "写作边界（一句话，说明论文讨论什么、不讨论什么）",
   "academicLevel": "本科|硕士|期刊|其他",
@@ -71,7 +73,7 @@ export function promptChatFollowup(
 ${referenceContext ? `\n用户已提供的材料信息：\n${referenceContext}\n` : ''}
 当信息足够时，在回复末尾另起一行输出以下内容（不要加代码块）：
 【理解完成】
-{"researchObject":"...","writingBoundary":"...","academicLevel":"本科|硕士|期刊|其他","coreClaims":"..."}`,
+{"paperTitle":"...","researchObject":"...","writingBoundary":"...","academicLevel":"本科|硕士|期刊|其他","coreClaims":"..."}`,
     },
     ...history,
     { role: 'user', content: userInput },
@@ -137,6 +139,56 @@ ${researchContext}
     {
       role: 'user',
       content: `参考文章内容：\n\n${referenceText.slice(0, 6000)}`,
+    },
+  ]
+}
+
+export function promptExtractBackgroundMaterial(
+  backgroundText: string,
+  researchContext: string
+): Message[] {
+  return [
+    {
+      role: 'system',
+      content: `你是一个艺术类论文资料整理助手。用户提供的是写作前的背景搜集材料，可能来自搜索、AI 汇总、课堂笔记或零散摘录。
+
+请把它整理成“背景语境资料”，用于帮助后续 AI 理解研究对象、时代背景、人物关系、理论概念和可写论点。
+
+研究背景：
+${researchContext || '未提供具体项目背景'}
+
+整理原则：
+- 不要把这类资料当成正式参考文献
+- 区分“可用于理解背景”和“可直接写进论文的论点”
+- 提醒哪些内容需要再找真实文献或片源核验
+- 用清晰的小标题，便于后续 @ 调用
+- 不要虚构原文没有的信息
+
+输出格式：
+【背景摘要】
+用 2-4 句话概括这批资料提供的核心语境。
+
+【时代线索】
+按时间、阶段或历史转折整理，无法形成时间线时写“无明确时间线”。
+
+【核心人物/作品/对象】
+列出人物、作品、机构或研究对象，并说明它们在论文中的意义。
+
+【关键词与概念】
+列出关键词、理论概念、审美概念或高频表述，并解释可用于什么论证。
+
+【可转化论点】
+把材料转化成可进入论文大纲或正文的论点，每条说明适合放在哪类章节。
+
+【章节调用建议】
+说明这份背景资料适合在 Stage1 理解、Stage2 大纲、Stage3 正文哪些位置调用。
+
+【引用风险】
+指出哪些内容只是背景理解，哪些必须补充正式文献、作品细读、可核验出处后才能作为脚注或参考文献。`,
+    },
+    {
+      role: 'user',
+      content: `背景资料原文：\n\n${backgroundText.slice(0, 10000)}`,
     },
   ]
 }
@@ -430,6 +482,84 @@ ${comprehensionSummary}
   ]
 }
 
+export function promptGeneratePaperPlan(
+  fullOutlineSummary: string,
+  comprehensionSummary: string,
+  referenceContext: string,
+  academicLevel: AcademicLevel = '本科',
+  styleGuide?: string
+): Message[] {
+  const levelGuide = LEVEL_GUIDE[academicLevel]
+
+  return [
+    {
+      role: 'system',
+      content: `你是论文总编。请在正式生成正文前，为整篇论文制定一份内部写作计划。
+
+【论文背景】
+${comprehensionSummary || '（暂无）'}
+
+【完整大纲】
+${fullOutlineSummary}
+
+【引用资料与项目上下文】
+${referenceContext || '（无引用资料）'}
+
+【学段写作标准】
+${levelGuide}
+${styleGuide ? `\n【语言风格参考】\n${styleGuide}` : ''}
+
+计划要求：
+- 明确整篇论文的中心论点和论证路线
+- 说明每一章承担的功能、核心论点、承接关系
+- 标记哪些概念需要前后一致
+- 给出引用资料的大致分配策略
+- 提醒哪些内容不要重复
+- 这是内部计划，不要写正文
+
+输出格式：
+【总论点】
+...
+
+【章节分工】
+1 ...
+2 ...
+
+【承接关系】
+...
+
+【术语与引用策略】
+...
+
+【避免重复】
+...`,
+    },
+    {
+      role: 'user',
+      content: '请生成全文写作计划。',
+    },
+  ]
+}
+
+export function promptSummarizeGeneratedChapter(chapterTitle: string, chapterContent: string): Message[] {
+  return [
+    {
+      role: 'system',
+      content: `你是论文总编助理。请把已生成章节压缩成后续章节可用的上下文摘要。
+
+要求：
+- 只总结本章已经完成的论点、关键概念、材料使用和结论
+- 标出下一章应避免重复的内容
+- 150-220 字
+- 直接输出摘要，不要加寒暄`,
+    },
+    {
+      role: 'user',
+      content: `章节标题：${chapterTitle}\n\n章节正文：\n${chapterContent.slice(0, 6000)}`,
+    },
+  ]
+}
+
 export function promptGenerateChapter(
   chapterTitle: string,
   chapterOutline: string,
@@ -439,7 +569,10 @@ export function promptGenerateChapter(
   bannedPhrases: string[],
   academicLevel: AcademicLevel = '本科',
   styleGuide?: string,
-  caseSummary?: string
+  caseSummary?: string,
+  paperPlan?: string,
+  previousChapterSummaries?: string,
+  nextChapterTitle?: string
 ): Message[] {
   const levelGuide: Record<AcademicLevel, string> = {
     '本科': '本科论文：语言规范清晰，论述完整，避免过度学术化',
@@ -462,6 +595,12 @@ ${comprehensionSummary}
 【完整大纲结构（供参考，了解章节上下文）】
 ${fullOutlineSummary}
 
+${paperPlan ? `【全文写作计划（必须遵守，用于保持章节连贯）】\n${paperPlan}\n` : ''}
+
+${previousChapterSummaries ? `【前文摘要（避免重复，并承接已经写过的内容）】\n${previousChapterSummaries}\n` : ''}
+
+${nextChapterTitle ? `【下一章提示】\n下一章是「${nextChapterTitle}」。本章结尾需要自然铺垫，但不要提前展开下一章主体内容。\n` : ''}
+
 【引用资料与项目上下文】
 ${referenceContext || '（无引用资料）'}
 ${caseSummary ? `\n【可用案例参考】\n${caseSummary}` : ''}
@@ -472,6 +611,8 @@ ${levelGuide[academicLevel]}
 写作规则：
 - 严格按照本章大纲结构展开，每个子节都要覆盖
 - 子节标题用加粗格式输出：**X.X 标题名称**
+- 本章需要服务于全文写作计划，不要像孤立文章一样重新开题
+- 与前文已有内容保持承接，避免重复解释同一概念
 - 禁止出现：${banned}
 - 语言自然、灵活，高级词汇不要密集堆砌
 - 每节正文 400-600 字，整章合计不少于 1500 字
