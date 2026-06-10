@@ -20,6 +20,7 @@ import {
 } from '../lib/citations'
 import { buildAIContext, buildMentionContext } from '../lib/context'
 import { formatSectionContent, formatSectionsForPaper, sectionsToPlainText } from '../lib/documentFormat'
+import { exportSectionsToDocx } from '../lib/docxExport'
 import { paperTextToEditorDoc } from '../lib/editorDocument'
 import { buildBibliographyContent, buildBibliographySection, deleteFootnote, getAllFootnotes, updateFootnoteNote } from '../lib/footnotes'
 import {
@@ -1079,7 +1080,6 @@ export default function Stage3() {
     const exportSections = buildCompleteSections()
     if (exportSections.length === 0) return
     try {
-      const { exportSectionsToDocx } = await import('../lib/docxExport')
       await exportSectionsToDocx(projectTitle, exportSections)
     } catch (error) {
       alert(`Word 导出失败：${error instanceof Error ? error.message : '请刷新后重试'}`)
