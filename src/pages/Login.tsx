@@ -19,9 +19,13 @@ export default function Login() {
   })()
 
   const handleLogin = async () => {
-    if (!email || !password || loading) return
-    if (!email.includes('@')) {
-      setError('请输入有效邮箱')
+    if (loading) return
+    if (!email || !password) {
+      setError('请填写邮箱和密码')
+      return
+    }
+    if (!isValidEmail(email)) {
+      setError('请输入有效邮箱，不能只填用户名')
       return
     }
     setLoading(true)
@@ -37,8 +41,12 @@ export default function Login() {
   }
 
   const handleRegister = async () => {
-    if (!email || !password || loading) return
-    if (!email.includes('@')) {
+    if (loading) return
+    if (!email || !password) {
+      setError('请填写邮箱和密码')
+      return
+    }
+    if (!isValidEmail(email)) {
       setError('请输入有效邮箱，不能只填用户名')
       return
     }
@@ -99,7 +107,7 @@ export default function Login() {
           <input
             value={email}
             onChange={event => setEmail(event.target.value)}
-            placeholder="邮箱"
+            placeholder="邮箱（用于登录）"
             type="email"
             style={inputStyle}
           />
@@ -112,6 +120,11 @@ export default function Login() {
             style={inputStyle}
           />
           {error && <div style={{ fontSize: 12, color: '#C0392B' }}>{error}</div>}
+          {!error && (
+            <div style={{ fontSize: 12, color: 'var(--color-ink-3)' }}>
+              注册请使用邮箱，密码至少 6 位。
+            </div>
+          )}
           <button
             onClick={submit}
             disabled={loading}
@@ -123,6 +136,10 @@ export default function Login() {
       </div>
     </div>
   )
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 }
 
 const inputStyle: CSSProperties = {
