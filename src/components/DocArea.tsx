@@ -34,7 +34,7 @@ const A4_MIN_HEIGHT = 1123
 const PAGE_HORIZONTAL_PADDING = 86
 const PAGE_VERTICAL_PADDING = 76
 const PAGE_CONTENT_HEIGHT = A4_MIN_HEIGHT - PAGE_VERTICAL_PADDING * 2 - 44
-const TITLE_AREA_HEIGHT = 92
+const TITLE_AREA_HEIGHT = 108
 const PREVIEW_UNITS_PER_LINE = 72
 const PARAGRAPH_LINE_HEIGHT = 31
 
@@ -142,6 +142,16 @@ function isKeepWithNextBlock(block: FlowBlock): boolean {
   return block.type === 'heading2' || block.type === 'heading3' || block.type === 'sectionTitle'
 }
 
+function isRepeatedHeading(
+  current: { block: { type: PaperBlockType; text: string } },
+  previous?: { block: { type: PaperBlockType; text: string } }
+): boolean {
+  if (!previous) return false
+  if (current.block.type !== 'heading2' && current.block.type !== 'heading3') return false
+  if (previous.block.type !== current.block.type) return false
+  return previous.block.text.trim() === current.block.text.trim()
+}
+
 function buildFlowBlocks(sections: DocSection[]): FlowBlock[] {
   return sections.flatMap(section => {
     const blocks: FlowBlock[] = [{
@@ -179,6 +189,7 @@ function buildFlowBlocks(sections: DocSection[]): FlowBlock[] {
     const contentBlocks = parsePaperBlocks(section.content)
       .map((block, originalIndex) => ({ block, originalIndex }))
       .filter(({ block }, index) => index > 0 || !isDuplicateSectionTitle(block.text, section.title))
+      .filter((item, index, list) => !isRepeatedHeading(item, list[index - 1]))
 
     if (contentBlocks.length === 0) {
       blocks.push({
@@ -628,21 +639,23 @@ export default function DocArea({
                 <div
                   contentEditable={false}
                   style={{
-                    height: TITLE_AREA_HEIGHT,
+                    minHeight: TITLE_AREA_HEIGHT,
                     textAlign: 'center',
                     display: 'flex',
-                    alignItems: 'flex-start',
+                    alignItems: 'center',
                     justifyContent: 'center',
                     flexDirection: 'column',
                     gap: 4,
                   }}
                 >
-                  <input
+                  <textarea
                     value={paperTitle}
-                    onChange={event => onPaperTitleChange(event.target.value)}
+                    onChange={event => onPaperTitleChange(event.target.value.replace(/\n/g, ' '))}
                     placeholder="请输入论文标题"
+                    rows={2}
                     style={{
                       width: '100%',
+                      minHeight: 76,
                       border: 'none',
                       outline: 'none',
                       background: 'transparent',
@@ -652,6 +665,10 @@ export default function DocArea({
                       fontSize: 24,
                       fontWeight: 700,
                       lineHeight: 1.45,
+                      resize: 'none',
+                      overflow: 'hidden',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
                     }}
                   />
                 </div>
@@ -672,7 +689,6 @@ export default function DocArea({
                 }}
               >
               {pageBlocks.map(block => {
-                const isActive = block.sectionId === activeSectionId
                 const isEditable = block.blockIndex !== undefined && block.type !== 'placeholder'
                 const section = sections.find(item => item.id === block.sectionId)
                 const blockFootnotes = block.blockIndex === undefined
@@ -701,16 +717,17 @@ export default function DocArea({
                       contentEditable={false}
                       onClick={() => onSectionClick(block.sectionId)}
                       style={{
+                        position: 'relative',
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'space-between',
+                        justifyContent: 'center',
                         gap: 12,
-                        margin: '0 0 14px',
-                        paddingLeft: 10,
-                        borderLeft: `4px solid ${isActive ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                        margin: '8px 0 22px',
+                        padding: '0 70px',
+                        textAlign: 'center',
                       }}
                     >
-                      <h2 style={{ margin: 0, fontSize: 19, lineHeight: 1.6, fontFamily: 'var(--font-serif)', color: 'var(--color-ink)' }}>
+                      <h2 style={{ margin: 0, fontSize: 20, lineHeight: 1.6, fontFamily: 'var(--font-serif)', color: 'var(--color-ink)', fontWeight: 700 }}>
                         {block.text}
                       </h2>
                       {section && (
@@ -720,7 +737,7 @@ export default function DocArea({
                               e.stopPropagation()
                               onGenerateSection(section.title)
                             }}
-                            style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-accent)', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 500 }}
+                            style={{ position: 'absolute', right: 0, top: 2, display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-accent)', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 500 }}
                           >
                             <Sparkles size={11} />
                             AI 生成

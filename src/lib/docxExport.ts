@@ -110,6 +110,15 @@ function buildFootnotesMap(sections: DocSection[]) {
   return footnotes
 }
 
+function isRepeatedHeading(
+  current: ReturnType<typeof parsePaperBlocks>[number],
+  previous?: ReturnType<typeof parsePaperBlocks>[number]
+) {
+  if (!previous) return false
+  if (current.type !== 'heading2' && current.type !== 'heading3') return false
+  return previous.type === current.type && previous.text.trim() === current.text.trim()
+}
+
 function buildDocChildren(title: string, sections: DocSection[]) {
   const children: Paragraph[] = [createTitleParagraph(title)]
 
@@ -118,6 +127,7 @@ function buildDocChildren(title: string, sections: DocSection[]) {
     parsePaperBlocks(section.content)
       .map((block, blockIndex) => ({ block, blockIndex }))
       .filter(({ block }, index) => index > 0 || !isDuplicateSectionTitle(block.text, section.title))
+      .filter((item, index, list) => !isRepeatedHeading(item.block, list[index - 1]?.block))
       .forEach(({ block, blockIndex }) => {
         if (block.type === 'heading2') {
           children.push(createSubHeading(block.text, 2))
