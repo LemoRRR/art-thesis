@@ -11,6 +11,7 @@ import {
   versionsAPI,
 } from './api'
 import { auth } from './auth'
+import type { PaperEditorDoc } from './editorDocument'
 
 const KEYS = {
   CHAT:          'pai_chat_history',
@@ -83,6 +84,7 @@ export interface DocSection {
   archivedAt?: number
   title: string
   content: string
+  editorDoc?: PaperEditorDoc
   status: SectionStatus
   lastModified: number
   order?: number
@@ -254,6 +256,7 @@ function fromApiSection(row: any): DocSection {
     projectId: row.project_id,
     title: row.title ?? '未命名章节',
     content: row.content ?? '',
+    editorDoc: row.content_doc ?? undefined,
     status: row.status ?? 'pending',
     order: row.sort_order ?? 0,
     lastModified: toTime(row.updated_at ?? row.created_at),
@@ -266,6 +269,7 @@ function toApiSection(section: DocSection) {
     project_id: section.projectId,
     title: section.title,
     content: section.content,
+    content_doc: section.editorDoc,
     status: section.status,
     sort_order: section.order ?? 0,
   }

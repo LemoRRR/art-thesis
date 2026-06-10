@@ -8,6 +8,8 @@ import {
   TextRun,
 } from 'docx'
 import { cleanTitle, isDuplicateSectionTitle, parsePaperBlocks } from './documentFormat'
+import type { PaperEditorMark, PaperEditorNode } from './editorDocument'
+import { isPaperEditorDoc, walkEditorText } from './editorDocument'
 import { getFootnotesForBlock, splitTextWithFootnotes } from './footnotes'
 import type { DocSection } from './storage'
 
@@ -83,6 +85,43 @@ function createBodyParagraphFromBlock(text: string, section: DocSection | undefi
   })
 }
 
+function footnoteNumberFromMarks(marks: PaperEditorMark[]) {
+  const footnote = marks.find(mark => mark.type === 'footnote')
+  const rawNumber = footnote?.attrs?.footnoteNumber
+  const number = typeof rawNumber === 'number' ? rawNumber : Number(rawNumber)
+  return Number.isFinite(number) && number > 0 ? number : null
+}
+
+function runsFromEditorNode(node: PaperEditorNode) {
+  const children: Array<TextRun | FootnoteReferenceRun> = []
+
+  walkEditorText(node.content, (text, marks) => {
+    if (!text) return
+    const number = footnoteNumberFromMarks(marks)
+    children.push(new TextRun({ text, font: FONT, size: 24 }))
+    if (number) children.push(new FootnoteReferenceRun(number))
+  })
+
+  return children.length > 0 ? children : [new TextRun({ text: '', font: FONT, size: 24 })]
+}
+
+function plainTextFromEditorNode(node: PaperEditorNode) {
+  let text = ''
+  walkEditorText(node.content, chunk => {
+    text += chunk
+  })
+  return text.trim()
+}
+
+function createBodyParagraphFromEditorNode(node: PaperEditorNode) {
+  return new Paragraph({
+    alignment: AlignmentType.JUSTIFIED,
+    indent: { firstLine: 480 },
+    spacing: { line: 360, after: 160 },
+    children: runsFromEditorNode(node),
+  })
+}
+
 function buildFootnotesMap(sections: DocSection[]) {
   const footnotes: Record<string, { children: Paragraph[] }> = {}
 
@@ -124,6 +163,25 @@ function buildDocChildren(title: string, sections: DocSection[]) {
 
   sections.forEach(section => {
     children.push(createSectionHeading(section.title))
+
+    if (isPaperEditorDoc(section.editorDoc)) {
+      section.editorDoc.content
+        .filter((node, index) => index > 0 || !isDuplicateSectionTitle(plainTextFromEditorNode(node), section.title))
+        .filter((node, index, list) => {
+          if (node.type !== 'heading') return true
+          const previous = list[index - 1]
+          return !(previous?.type === 'heading' && plainTextFromEditorNode(previous) === plainTextFromEditorNode(node))
+        })
+        .forEach(node => {
+          if (node.type === 'heading') {
+            children.push(createSubHeading(plainTextFromEditorNode(node), node.attrs?.level === 3 ? 3 : 2))
+          } else if (node.type === 'paragraph') {
+            children.push(createBodyParagraphFromEditorNode(node))
+          }
+        })
+      return
+    }
+
     parsePaperBlocks(section.content)
       .map((block, blockIndex) => ({ block, blockIndex }))
       .filter(({ block }, index) => index > 0 || !isDuplicateSectionTitle(block.text, section.title))

@@ -20,7 +20,8 @@ import {
 } from '../lib/citations'
 import { buildAIContext, buildMentionContext } from '../lib/context'
 import { formatSectionContent, formatSectionsForPaper, sectionsToPlainText } from '../lib/documentFormat'
-import { createFootnote, buildBibliographyContent, buildBibliographySection, deleteFootnote, getAllFootnotes, updateFootnoteNote } from '../lib/footnotes'
+import { paperTextToEditorDoc } from '../lib/editorDocument'
+import { buildBibliographyContent, buildBibliographySection, deleteFootnote, getAllFootnotes, updateFootnoteNote } from '../lib/footnotes'
 import {
   promptAdjustFinish,
   promptFinishDraft,
@@ -423,6 +424,7 @@ export default function Stage3() {
           outlineChildrenSignature: outlineChildrenSignature(chapter),
           generationPlan: paperPlan,
           generatedSummary: chapterSummary,
+          editorDoc: paperTextToEditorDoc(finalizedSections[index].content),
           status: 'done' as const,
           lastModified: Date.now(),
         }
@@ -559,6 +561,7 @@ export default function Stage3() {
                 outlineOrder: chapter.order,
                 outlineChildrenSignature: outlineChildrenSignature(chapter),
                 generationPlan: paperPlan,
+                editorDoc: paperTextToEditorDoc((finalizedSections.find(item => item.id === section.id) ?? section).content),
                 status: 'done' as const,
                 lastModified: Date.now(),
               }
@@ -765,7 +768,9 @@ export default function Stage3() {
             fullContent,
             citableSources
           ).map(section =>
-            section.id === activeSection.id ? { ...section, status: 'done', lastModified: Date.now() } : section
+            section.id === activeSection.id
+              ? { ...section, editorDoc: paperTextToEditorDoc(section.content), status: 'done', lastModified: Date.now() }
+              : section
           ))
           versionStore.snapshot(`按意见修改：${activeSection.title}`, project.id)
           const finalMessages = [...currentMessages, { ...aiMsg, content: `「${activeSection.title}」修改完成。还有需要调整的地方吗？` }]
@@ -890,28 +895,6 @@ export default function Stage3() {
     setProjectTitle(title)
     projectStore.update(project.id, { title: title.trim() || '未命名论文' })
   }
-
-  const handleAddFootnote = useCallback((payload: {
-    sectionId: string
-    blockIndex: number
-    start: number
-    end: number
-    anchorText: string
-    noteText: string
-  }) => {
-    setSections(prev => persistSections(
-      prev.map(section => {
-        if (section.id !== payload.sectionId) return section
-        const footnote = createFootnote(prev, payload)
-        return {
-          ...section,
-          footnotes: [...(section.footnotes ?? []), footnote],
-          lastModified: Date.now(),
-        }
-      }),
-      `添加脚注：${payload.anchorText.slice(0, 12)}`
-    ))
-  }, [persistSections])
 
   const handleUpdateFootnote = useCallback((footnoteId: string, noteText: string) => {
     setSections(prev => persistSections(
@@ -1208,14 +1191,22 @@ export default function Stage3() {
                 sections={sections}
                 activeSectionId={activeSectionId}
                 onSectionClick={id => setActiveSectionId(id)}
-                onSectionChange={(id, content) => {
+                onSectionChange={(id, content, editorDoc, footnotes, snapshotLabel) => {
                   setSections(prev => persistSections(prev.map(section =>
-                    section.id === id ? { ...section, content, status: 'done', lastModified: Date.now() } : section
-                  )))
+                    section.id === id
+                      ? {
+                          ...section,
+                          content,
+                          editorDoc: editorDoc ?? section.editorDoc,
+                          footnotes: footnotes ?? section.footnotes,
+                          status: 'done',
+                          lastModified: Date.now(),
+                        }
+                      : section
+                  ), snapshotLabel))
                 }}
                 onPaperTitleChange={updateProjectTitle}
                 onGenerateSection={() => {}}
-                onAddFootnote={handleAddFootnote}
                 onUpdateFootnote={handleUpdateFootnote}
                 onDeleteFootnote={handleDeleteFootnote}
               />
