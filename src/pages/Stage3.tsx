@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { BookOpen, CheckCircle2, Copy, Download, History, MessageSquare, RefreshCw, Send, Sparkles } from 'lucide-react'
 import ChatBubble from '../components/ChatBubble'
 import DocumentToolbar from '../components/DocumentToolbar'
@@ -44,6 +44,8 @@ import {
 
 type Mode = 'revise' | 'finish'
 
+const OUTLINE_TRANSITION_MS = 2200
+
 const uid = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
@@ -77,6 +79,180 @@ function outlineSectionTitle(section: OutlineSection): string {
 
 function outlineChildrenSignature(section: OutlineSection): string {
   return outlineToText(section.children ?? [])
+}
+
+function OutlineToDraftTransition({
+  title,
+  current,
+  total,
+}: {
+  title: string
+  current: number
+  total: number
+}) {
+  const progress = total > 0 ? Math.max(10, Math.min(100, (current / total) * 100)) : 18
+
+  return (
+    <div className="outline-draft-transition" aria-live="polite">
+      <div className="outline-draft-panel">
+        <div className="outline-draft-kicker">大纲已确认</div>
+        <div className="outline-draft-title">正在把结构转成全文写作计划</div>
+        <div className="outline-draft-subtitle">
+          {title || '未命名论文'} · {total > 0 ? `准备生成 ${total} 章正文` : '正在读取大纲结构'}
+        </div>
+
+        <div className="outline-draft-flow" aria-hidden="true">
+          <div className="outline-draft-node is-source">大纲节点</div>
+          <div className="outline-draft-stream">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="outline-draft-node is-plan">全文计划</div>
+          <div className="outline-draft-stream">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="outline-draft-node is-draft">逐章正文</div>
+        </div>
+
+        <div className="outline-draft-progress">
+          <div style={{ width: `${progress}%` }} />
+        </div>
+        <div className="outline-draft-status">
+          {total > 0 && current > 0 ? `正在生成第 ${current} / ${total} 章…` : '正在整理章节论点、承接关系和引用策略…'}
+        </div>
+      </div>
+
+      <style>{`
+        .outline-draft-transition {
+          position: absolute;
+          inset: 0;
+          z-index: 240;
+          display: grid;
+          place-items: center;
+          background: rgba(250, 249, 245, 0.88);
+          backdrop-filter: blur(8px);
+          animation: outline-fade-in 0.18s ease-out both;
+        }
+
+        .outline-draft-panel {
+          width: min(640px, calc(100vw - 48px));
+          border: 1px solid rgba(45, 90, 61, 0.18);
+          border-radius: 8px;
+          background: #fff;
+          box-shadow: 0 24px 60px rgba(38, 32, 24, 0.16);
+          padding: 30px 34px;
+          font-family: var(--font-sans);
+        }
+
+        .outline-draft-kicker {
+          color: var(--color-accent);
+          font-size: 12px;
+          font-weight: 650;
+          letter-spacing: 0.08em;
+        }
+
+        .outline-draft-title {
+          margin-top: 8px;
+          color: var(--color-ink);
+          font-size: 22px;
+          font-weight: 700;
+        }
+
+        .outline-draft-subtitle {
+          margin-top: 8px;
+          color: var(--color-ink-3);
+          font-size: 13px;
+        }
+
+        .outline-draft-flow {
+          margin-top: 28px;
+          display: grid;
+          grid-template-columns: 1fr 72px 1fr 72px 1fr;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .outline-draft-node {
+          height: 74px;
+          border: 1px solid var(--color-border);
+          border-radius: 8px;
+          display: grid;
+          place-items: center;
+          color: var(--color-ink-2);
+          background: var(--color-bg);
+          font-size: 13px;
+          font-weight: 650;
+        }
+
+        .outline-draft-node.is-plan {
+          background: var(--color-accent-light);
+          color: var(--color-accent);
+          border-color: rgba(45, 90, 61, 0.18);
+        }
+
+        .outline-draft-node.is-draft {
+          background: var(--color-accent);
+          color: #fff;
+          border-color: var(--color-accent);
+          box-shadow: 0 10px 26px rgba(45, 90, 61, 0.18);
+        }
+
+        .outline-draft-stream {
+          display: flex;
+          justify-content: center;
+          gap: 5px;
+          overflow: hidden;
+        }
+
+        .outline-draft-stream span {
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          background: var(--color-accent);
+          opacity: 0.2;
+          animation: outline-pulse 1.1s ease-in-out infinite;
+        }
+
+        .outline-draft-stream span:nth-child(2) { animation-delay: 0.16s; }
+        .outline-draft-stream span:nth-child(3) { animation-delay: 0.32s; }
+
+        .outline-draft-progress {
+          margin-top: 28px;
+          height: 5px;
+          border-radius: 999px;
+          background: #E8E2D8;
+          overflow: hidden;
+        }
+
+        .outline-draft-progress div {
+          height: 100%;
+          border-radius: inherit;
+          background: var(--color-accent);
+          transition: width 0.35s ease;
+        }
+
+        .outline-draft-status {
+          margin-top: 10px;
+          color: var(--color-ink-3);
+          font-size: 12px;
+          text-align: right;
+        }
+
+        @keyframes outline-fade-in {
+          from { opacity: 0; transform: scale(0.99); }
+          to { opacity: 1; transform: scale(1); }
+        }
+
+        @keyframes outline-pulse {
+          0%, 100% { opacity: 0.2; transform: translateX(-6px) scale(0.82); }
+          50% { opacity: 1; transform: translateX(6px) scale(1); }
+        }
+      `}</style>
+    </div>
+  )
 }
 
 function normalizeSectionTitle(title: string): string {
@@ -199,6 +375,7 @@ function buildFinishSections(result: string, projectId: string): DocSection[] {
 
 export default function Stage3() {
   const navigate = useNavigate()
+  const location = useLocation()
   const params = useParams()
   const project = projectStore.ensure(params.projectId)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -223,10 +400,28 @@ export default function Stage3() {
   const [isAdjusting, setIsAdjusting] = useState(false)
   const [projectTitle, setProjectTitle] = useState(project.title)
   const [mentions, setMentions] = useState<MentionRef[]>([])
+  const [showOutlineTransition, setShowOutlineTransition] = useState(() => {
+    const key = `outline_to_draft_transition_${project.id}`
+    const markedAt = Number(sessionStorage.getItem(key) ?? 0)
+    const state = location.state as { fromOutline?: boolean } | null
+    const search = new URLSearchParams(location.search)
+    return Boolean(state?.fromOutline || search.get('transition') === 'outline' || (markedAt && Date.now() - markedAt < 30_000))
+  })
 
   const academicLevel = normalizeAcademicLevel(project.context.academicLevel)
   const footnoteCount = useMemo(() => getAllFootnotes(sections).length, [sections])
   const bibliographyContent = useMemo(() => buildBibliographyContent(sections), [sections])
+
+  useEffect(() => {
+    if (!showOutlineTransition) return
+    const key = `outline_to_draft_transition_${project.id}`
+    sessionStorage.removeItem(key)
+    if (new URLSearchParams(location.search).get('transition') === 'outline') {
+      window.history.replaceState(window.history.state, '', location.pathname)
+    }
+    const timer = window.setTimeout(() => setShowOutlineTransition(false), OUTLINE_TRANSITION_MS)
+    return () => window.clearTimeout(timer)
+  }, [location.pathname, location.search, project.id, showOutlineTransition])
 
   const persistSections = useCallback((next: DocSection[], snapshotLabel?: string) => {
     sectionStore.saveForProject(project.id, next)
@@ -1012,6 +1207,14 @@ export default function Stage3() {
             </div>
           }
         />
+
+        {showOutlineTransition && (
+          <OutlineToDraftTransition
+            title={projectTitle}
+            current={generatingProgress.current}
+            total={generatingProgress.total}
+          />
+        )}
 
         {isGeneratingFull && (
           <div style={{ position: 'absolute', top: 52, left: 0, right: 0, zIndex: 100, background: 'var(--color-accent-light)', borderBottom: '1px solid var(--color-border)', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 12 }}>

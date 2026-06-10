@@ -808,7 +808,8 @@ export default function Stage2() {
   const confirmOutline = () => {
     if (!hasOutlineContent(outline)) return
     outlineStore.confirm(project.id)
-    navigate(`/projects/${project.id}/stage3`)
+    sessionStorage.setItem(`outline_to_draft_transition_${project.id}`, String(Date.now()))
+    navigate(`/projects/${project.id}/stage3?transition=outline`, { state: { fromOutline: true } })
   }
 
   const handleRegenerate = () => {
