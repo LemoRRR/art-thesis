@@ -1,9 +1,9 @@
 import { Router } from 'express'
 import multer from 'multer'
-import { extractDimensions } from '../lib/extract'
-import { parseFile } from '../lib/parser'
-import { createUserClient } from '../lib/supabase'
-import { requireAuth, type AuthRequest } from '../middleware/auth'
+import { extractDimensions } from '../lib/extract.js'
+import { parseFile } from '../lib/parser.js'
+import { createUserClient } from '../lib/supabase.js'
+import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
 router.use(requireAuth)

@@ -1,16 +1,16 @@
 import cors from 'cors'
 import express from 'express'
 import helmet from 'helmet'
-import aiRouter from './routes/ai'
-import authRouter from './routes/auth'
-import chatRouter from './routes/chat'
-import filesRouter from './routes/files'
-import libraryRouter from './routes/library'
-import outlinesRouter from './routes/outlines'
-import projectsRouter from './routes/projects'
-import referencesRouter from './routes/references'
-import sectionsRouter from './routes/sections'
-import versionsRouter from './routes/versions'
+import aiRouter from './routes/ai.js'
+import authRouter from './routes/auth.js'
+import chatRouter from './routes/chat.js'
+import filesRouter from './routes/files.js'
+import libraryRouter from './routes/library.js'
+import outlinesRouter from './routes/outlines.js'
+import projectsRouter from './routes/projects.js'
+import referencesRouter from './routes/references.js'
+import sectionsRouter from './routes/sections.js'
+import versionsRouter from './routes/versions.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -23,7 +23,7 @@ const allowedOrigins = new Set([
 app.use(helmet())
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin)) {
+    if (!origin || allowedOrigins.has(origin) || origin.endsWith('.vercel.app')) {
       callback(null, true)
       return
     }

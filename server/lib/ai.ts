@@ -1,4 +1,4 @@
-import './env'
+import './env.js'
 
 interface AIConfig {
   baseURL: string

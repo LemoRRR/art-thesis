@@ -1,5 +1,5 @@
-import { callAIOnce, type Message } from './ai'
-import { createUserClient, supabase } from './supabase'
+import { callAIOnce, type Message } from './ai.js'
+import { createUserClient, supabase } from './supabase.js'
 
 function buildExtractPrompt(text: string): Message[] {
   return [

@@ -1,6 +1,6 @@
 import { Router } from 'express'
-import { createUserClient } from '../lib/supabase'
-import { requireAuth, type AuthRequest } from '../middleware/auth'
+import { createUserClient } from '../lib/supabase.js'
+import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
 router.use(requireAuth)
