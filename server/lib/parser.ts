@@ -1,12 +1,21 @@
 import mammoth from 'mammoth'
 import { createRequire } from 'node:module'
 
-const require = createRequire(import.meta.url)
-const { PDFParse } = require('pdf-parse') as {
+type PDFParseConstructor = new (input: { data: Buffer }) => {
+  getText: () => Promise<{ text: string }>
+  destroy: () => Promise<void>
+}
+
+const requirePdfParse = createRequire(import.meta.url)
+
+function loadPdfParser(): PDFParseConstructor {
+  const { PDFParse } = requirePdfParse('pdf-parse') as {
   PDFParse: new (input: { data: Buffer }) => {
     getText: () => Promise<{ text: string }>
     destroy: () => Promise<void>
   }
+}
+  return PDFParse
 }
 
 function cleanParsedText(text: string): string {
@@ -22,6 +31,7 @@ export async function parseFile(buffer: Buffer, fileName: string): Promise<strin
 
   try {
     if (ext === 'pdf') {
+      const PDFParse = loadPdfParser()
       const parser = new PDFParse({ data: buffer })
       try {
         const result = await parser.getText()
