@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import FootnoteEditor from './FootnoteEditor'
 import PaperEditor from './PaperEditor'
 import type { PaperEditorDoc } from '../lib/editorDocument'
@@ -43,6 +43,8 @@ export default function DocArea({
   const [editingFootnote, setEditingFootnote] = useState<SectionFootnote | null>(null)
   const [footnoteDraft, setFootnoteDraft] = useState('')
   const [footnoteEditorPos, setFootnoteEditorPos] = useState({ top: 0, left: 0 })
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [pageCount, setPageCount] = useState(1)
 
   const openFootnoteEditor = useCallback((footnote: SectionFootnote, clientX: number, clientY: number) => {
     if (!onUpdateFootnote && !onDeleteFootnote) return
@@ -50,6 +52,29 @@ export default function DocArea({
     setFootnoteDraft(footnote.noteText)
     setFootnoteEditorPos({ top: clientY + 8, left: clientX - 120 })
   }, [onDeleteFootnote, onUpdateFootnote])
+
+  const footnotes = sections
+    .flatMap(section => section.footnotes ?? [])
+    .sort((a, b) => a.number - b.number)
+
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content) return
+
+    const updatePageCount = () => {
+      const height = Math.max(content.scrollHeight, content.offsetHeight, A4_MIN_HEIGHT)
+      setPageCount(Math.max(1, Math.ceil(height / A4_MIN_HEIGHT)))
+    }
+
+    updatePageCount()
+    const observer = new ResizeObserver(updatePageCount)
+    observer.observe(content)
+    window.addEventListener('resize', updatePageCount)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', updatePageCount)
+    }
+  }, [paperTitle, sections])
 
   if (sections.length === 0) {
     return (
@@ -63,55 +88,66 @@ export default function DocArea({
     )
   }
 
-  const footnotes = sections
-    .flatMap(section => section.footnotes ?? [])
-    .sort((a, b) => a.number - b.number)
-
   return (
     <div className="doc-area-root">
       <div id="doc-scroll-area" className="doc-scroll-area">
-        <article className="doc-page doc-page-continuous">
-          <div className="doc-page-number">编辑预览</div>
-
-          <div className="paper-title-block">
-            <textarea
-              value={paperTitle}
-              onChange={event => onPaperTitleChange(event.target.value.replace(/\n/g, ' '))}
-              placeholder="请输入论文标题"
-              rows={2}
-            />
-          </div>
-
-          <div className="paper-editor-stack">
-            {sections.map(section => (
-              <PaperEditor
-                key={section.id}
-                projectId={projectId}
-                section={section}
-                allSections={sections}
-                active={section.id === activeSectionId}
-                onActivate={() => onSectionClick(section.id)}
-                onChange={onSectionChange}
-                onOpenFootnote={openFootnoteEditor}
-                onGenerateSection={onGenerateSection}
-              />
+        <article
+          className="doc-page doc-page-continuous"
+          style={{ minHeight: pageCount * A4_MIN_HEIGHT }}
+        >
+          <div className="paper-page-guides" aria-hidden="true">
+            {Array.from({ length: pageCount }).map((_, index) => (
+              <div
+                key={index}
+                className="paper-page-guide"
+                style={{ top: index * A4_MIN_HEIGHT }}
+              >
+                <span>第 {index + 1} 页</span>
+              </div>
             ))}
           </div>
 
-          {footnotes.length > 0 && (
-            <div className="paper-footnote-list">
-              {footnotes.map(footnote => (
-                <button
-                  key={footnote.id}
-                  type="button"
-                  onClick={event => openFootnoteEditor(footnote, event.clientX, event.clientY)}
-                >
-                  <sup>[{footnote.number}]</sup>
-                  <span>{footnote.noteText}</span>
-                </button>
+          <div ref={contentRef} className="paper-continuous-content">
+            <div className="paper-title-block">
+              <textarea
+                value={paperTitle}
+                onChange={event => onPaperTitleChange(event.target.value.replace(/\n/g, ' '))}
+                placeholder="请输入论文标题"
+                rows={2}
+              />
+            </div>
+
+            <div className="paper-editor-stack">
+              {sections.map(section => (
+                <PaperEditor
+                  key={section.id}
+                  projectId={projectId}
+                  section={section}
+                  allSections={sections}
+                  active={section.id === activeSectionId}
+                  onActivate={() => onSectionClick(section.id)}
+                  onChange={onSectionChange}
+                  onOpenFootnote={openFootnoteEditor}
+                  onGenerateSection={onGenerateSection}
+                />
               ))}
             </div>
-          )}
+
+            {footnotes.length > 0 && (
+              <div className="paper-footnote-list">
+                {footnotes.map(footnote => (
+                  <button
+                    key={footnote.id}
+                    type="button"
+                    onClick={event => openFootnoteEditor(footnote, event.clientX, event.clientY)}
+                  >
+                    <sup>[{footnote.number}]</sup>
+                    <span>{footnote.noteText}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </article>
         <div style={{ height: 80 }} />
       </div>
@@ -175,15 +211,47 @@ export default function DocArea({
           border: 1px solid #D8D2C8;
           background: #fff;
           box-shadow: 0 16px 38px rgba(38, 32, 24, 0.14);
-          padding: ${PAGE_VERTICAL_PADDING}px ${PAGE_HORIZONTAL_PADDING}px;
         }
 
         .doc-page-continuous {
           height: auto;
-          overflow: visible;
+          overflow: hidden;
+          background:
+            linear-gradient(#fff, #fff) padding-box,
+            repeating-linear-gradient(
+              to bottom,
+              transparent 0,
+              transparent ${A4_MIN_HEIGHT - 1}px,
+              rgba(192, 177, 156, 0.55) ${A4_MIN_HEIGHT - 1}px,
+              rgba(192, 177, 156, 0.55) ${A4_MIN_HEIGHT}px
+            );
         }
 
-        .doc-page-number {
+        .paper-continuous-content {
+          position: relative;
+          z-index: 1;
+          min-height: ${A4_MIN_HEIGHT}px;
+          box-sizing: border-box;
+          padding: ${PAGE_VERTICAL_PADDING}px ${PAGE_HORIZONTAL_PADDING}px ${PAGE_VERTICAL_PADDING + 28}px;
+        }
+
+        .paper-page-guides {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          z-index: 0;
+        }
+
+        .paper-page-guide {
+          position: absolute;
+          left: 0;
+          right: 0;
+          height: ${A4_MIN_HEIGHT}px;
+          border-bottom: 1px dashed rgba(174, 158, 135, 0.5);
+          box-shadow: inset 0 -16px 26px -28px rgba(38, 32, 24, 0.45);
+        }
+
+        .paper-page-guide span {
           position: absolute;
           top: 32px;
           right: ${PAGE_HORIZONTAL_PADDING}px;
