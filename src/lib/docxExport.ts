@@ -16,6 +16,34 @@ import type { DocSection } from './storage'
 const FONT = '宋体'
 const FILE_SAFE_PATTERN = /[\\/:*?"<>|]/g
 
+function editorAlignment(value: unknown) {
+  if (value === 'center') return AlignmentType.CENTER
+  if (value === 'right') return AlignmentType.RIGHT
+  if (value === 'left') return AlignmentType.LEFT
+  return AlignmentType.JUSTIFIED
+}
+
+function fontSizeToHalfPoints(value: unknown) {
+  if (typeof value !== 'string') return 24
+  const numeric = Number.parseFloat(value)
+  if (!Number.isFinite(numeric) || numeric <= 0) return 24
+  if (value.endsWith('px')) return Math.round(numeric * 1.5)
+  if (value.endsWith('pt')) return Math.round(numeric * 2)
+  return Math.round(numeric)
+}
+
+function runStyleFromMarks(marks: PaperEditorMark[]) {
+  const textStyle = [...marks].reverse().find(mark => mark.type === 'textStyle')
+  const attrs = textStyle?.attrs ?? {}
+  return {
+    bold: marks.some(mark => mark.type === 'bold') || undefined,
+    italics: marks.some(mark => mark.type === 'italic') || undefined,
+    underline: marks.some(mark => mark.type === 'underline') ? {} : undefined,
+    font: typeof attrs.fontFamily === 'string' ? attrs.fontFamily : FONT,
+    size: fontSizeToHalfPoints(attrs.fontSize),
+  }
+}
+
 function createTitleParagraph(title: string) {
   return new Paragraph({
     alignment: AlignmentType.CENTER,
@@ -98,7 +126,7 @@ function runsFromEditorNode(node: PaperEditorNode) {
   walkEditorText(node.content, (text, marks) => {
     if (!text) return
     const number = footnoteNumberFromMarks(marks)
-    children.push(new TextRun({ text, font: FONT, size: 24 }))
+    children.push(new TextRun({ text, ...runStyleFromMarks(marks) }))
     if (number) children.push(new FootnoteReferenceRun(number))
   })
 
@@ -115,8 +143,8 @@ function plainTextFromEditorNode(node: PaperEditorNode) {
 
 function createBodyParagraphFromEditorNode(node: PaperEditorNode) {
   return new Paragraph({
-    alignment: AlignmentType.JUSTIFIED,
-    indent: { firstLine: 480 },
+    alignment: editorAlignment(node.attrs?.textAlign),
+    indent: node.attrs?.textAlign === 'center' || node.attrs?.textAlign === 'right' ? undefined : { firstLine: 480 },
     spacing: { line: 360, after: 160 },
     children: runsFromEditorNode(node),
   })

@@ -4,6 +4,9 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
+import TextAlign from '@tiptap/extension-text-align'
+import { FontFamily, FontSize, TextStyle } from '@tiptap/extension-text-style'
+import Underline from '@tiptap/extension-underline'
 import { Mark, mergeAttributes } from '@tiptap/core'
 import type { Editor, JSONContent } from '@tiptap/core'
 import { BookOpen, Check, Maximize2, Minimize2, Quote, Sparkles, Wand2, X } from 'lucide-react'
@@ -13,6 +16,7 @@ import { editorDocToPlainText, ensurePaperEditorDoc, type PaperEditorDoc } from 
 import { nextFootnoteNumber } from '../lib/footnotes'
 import { promptQuickAction, promptRewriteSelection, type QuickAction } from '../lib/prompts'
 import { revisionStore, type DocSection, type SectionFootnote } from '../lib/storage'
+import { PAPER_EDITOR_TOOLBAR_EVENT, type PaperEditorToolbarCommand } from './DocumentToolbar'
 
 interface PaperEditorProps {
   projectId: string
@@ -148,6 +152,15 @@ export default function PaperEditor({
       StarterKit.configure({
         heading: { levels: [2, 3] },
       }),
+      TextStyle,
+      FontFamily.configure({ types: ['textStyle'] }),
+      FontSize.configure({ types: ['textStyle'] }),
+      Underline,
+      TextAlign.configure({
+        types: ['heading', 'paragraph'],
+        alignments: ['left', 'center', 'right', 'justify'],
+        defaultAlignment: null,
+      }),
       Placeholder.configure({
         placeholder: '点击此处直接输入正文，或使用左侧对话让 AI 生成。',
       }),
@@ -197,6 +210,26 @@ export default function PaperEditor({
     if (!editor) return
     removeDeletedFootnoteMarks(editor, section.footnotes)
   }, [editor, section.footnotes])
+
+  useEffect(() => {
+    if (!editor || !active) return
+
+    const runToolbarCommand = (event: Event) => {
+      const command = (event as CustomEvent<PaperEditorToolbarCommand>).detail
+      if (!command) return
+
+      const chain = editor.chain().focus()
+      if (command.type === 'toggleBold') chain.toggleBold().run()
+      if (command.type === 'toggleItalic') chain.toggleItalic().run()
+      if (command.type === 'toggleUnderline') chain.toggleUnderline().run()
+      if (command.type === 'setTextAlign') chain.setTextAlign(command.value).run()
+      if (command.type === 'setFontFamily') chain.setFontFamily(command.value).run()
+      if (command.type === 'setFontSize') chain.setFontSize(command.value).run()
+    }
+
+    window.addEventListener(PAPER_EDITOR_TOOLBAR_EVENT, runToolbarCommand)
+    return () => window.removeEventListener(PAPER_EDITOR_TOOLBAR_EVENT, runToolbarCommand)
+  }, [active, editor])
 
   useEffect(() => () => {
     if (saveTimer.current) clearTimeout(saveTimer.current)

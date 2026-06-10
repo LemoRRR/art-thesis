@@ -358,6 +358,11 @@ export default function DocArea({
           text-indent: 2em;
         }
 
+        .paper-editor-content p[style*="text-align: center"],
+        .paper-editor-content p[style*="text-align: right"] {
+          text-indent: 0;
+        }
+
         .paper-editor-content h2,
         .paper-editor-content h3 {
           color: var(--color-ink);
