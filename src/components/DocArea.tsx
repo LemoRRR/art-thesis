@@ -38,6 +38,7 @@ const PAGE_CONTENT_HEIGHT = A4_MIN_HEIGHT - PAGE_VERTICAL_PADDING * 2 - PAGE_FOO
 const TITLE_AREA_HEIGHT = 108
 const PREVIEW_UNITS_PER_LINE = 72
 const PARAGRAPH_LINE_HEIGHT = 31
+const EMPTY_PARAGRAPH = '\u200B'
 
 interface FlowBlock {
   id: string
@@ -137,6 +138,10 @@ function cloneParagraphBlock(block: FlowBlock, text: string, suffix: string): Fl
     previousText: text,
     height: estimateBlockHeight(text, block.type),
   }
+}
+
+function visibleBlockText(text: string): string {
+  return text === EMPTY_PARAGRAPH ? '' : text
 }
 
 function isKeepWithNextBlock(block: FlowBlock): boolean {
@@ -469,6 +474,65 @@ export default function DocArea({
     return true
   }, [getPointInBlock, onSectionClick, persistSectionContent, projectId, pushUndoState, sections])
 
+  const placeCaretAtBlockStart = useCallback((sectionId: string, blockIndex: number) => {
+    window.setTimeout(() => {
+      const selector = `[data-section-id="${sectionId}"][data-block-index="${blockIndex}"]`
+      const element = containerRef.current?.querySelector<HTMLElement>(selector)
+      if (!element) return
+      element.focus()
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      range.collapse(true)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+    }, 0)
+  }, [])
+
+  const splitBlockAtCaret = useCallback(() => {
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return false
+
+    const range = selection.getRangeAt(0)
+    const point = getPointInBlock(range.startContainer, range.startOffset)
+    if (!point) return false
+
+    const section = sections.find(item => item.id === point.sectionId)
+    if (!section) return false
+
+    const blocks = parsePaperBlocks(section.content)
+    const block = blocks[point.blockIndex]
+    if (!block) return false
+
+    const splitOffset = Math.max(0, Math.min(block.text.length, point.textStart + point.offset))
+    const beforeText = block.text.slice(0, splitOffset).trim()
+    const afterText = block.text.slice(splitOffset).trim()
+
+    const nextBlocks = [...blocks]
+    nextBlocks.splice(
+      point.blockIndex,
+      1,
+      { ...block, text: beforeText || EMPTY_PARAGRAPH },
+      { type: 'paragraph' as const, text: afterText || EMPTY_PARAGRAPH }
+    )
+
+    Object.values(debounceTimers.current).forEach(timer => clearTimeout(timer))
+    debounceTimers.current = {}
+    if (snapshotTimers.current[point.sectionId]) clearTimeout(snapshotTimers.current[point.sectionId])
+    if (undoDebounceTimers.current[point.sectionId]) clearTimeout(undoDebounceTimers.current[point.sectionId])
+
+    pushUndoState(point.sectionId, section.content)
+    onSectionClick(point.sectionId)
+    setEditingSectionId(point.sectionId)
+    persistSectionContent(
+      point.sectionId,
+      nextBlocks.map(item => item.text).join('\n\n')
+    )
+    versionStore.snapshot(`手动编辑：段落换行`, projectId)
+    placeCaretAtBlockStart(point.sectionId, point.blockIndex + 1)
+    return true
+  }, [getPointInBlock, onSectionClick, persistSectionContent, placeCaretAtBlockStart, projectId, pushUndoState, sections])
+
   const handleDocKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
     const isUndo = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.shiftKey
     if (isUndo) {
@@ -490,10 +554,17 @@ export default function DocArea({
       return
     }
 
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      if (splitBlockAtCaret()) {
+        event.preventDefault()
+        return
+      }
+    }
+
     if ((event.key === 'Backspace' || event.key === 'Delete') && replaceStructuredSelection('', '手动删除：跨段文本')) {
       event.preventDefault()
     }
-  }, [editingSectionId, findEditableBlock, onSectionClick, persistSectionContent, replaceStructuredSelection])
+  }, [editingSectionId, findEditableBlock, onSectionClick, persistSectionContent, replaceStructuredSelection, splitBlockAtCaret])
 
   const handleEditablePaste = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -787,7 +858,11 @@ export default function DocArea({
                     onClick={() => onSectionClick(block.sectionId)}
                     onFocus={() => setEditingSectionId(block.sectionId)}
                     style={{
-                      minHeight: block.type === 'placeholder' ? 42 : undefined,
+                      minHeight: block.type === 'placeholder'
+                        ? 42
+                        : block.text === EMPTY_PARAGRAPH
+                          ? PARAGRAPH_LINE_HEIGHT
+                          : undefined,
                       margin: block.type === 'heading2' ? '18px 0 10px' : block.type === 'heading3' ? '14px 0 8px' : '0 0 12px',
                       fontSize: block.type === 'heading2' ? 15.5 : block.type === 'heading3' ? 14.5 : 14.5,
                       lineHeight: block.type === 'paragraph' ? 2 : 1.8,
@@ -804,9 +879,9 @@ export default function DocArea({
                     }}
                   >
                     {editingSectionId === block.sectionId && isEditable
-                      ? block.text
+                      ? visibleBlockText(block.text)
                       : <FootnoteText
-                          text={block.text}
+                          text={visibleBlockText(block.text)}
                           footnotes={blockFootnotes}
                           onFootnoteClick={(footnote, event) => openFootnoteEditor(footnote, event.clientX, event.clientY)}
                         />}
