@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase.js'
 const router = Router()
 
 router.post('/register', async (req, res) => {
-  const { email, password, displayName } = req.body
+  const { email, password, displayName } = req.body ?? {}
   if (!email || !password) {
     res.status(400).json({ error: '邮箱和密码必填' })
     return
@@ -27,7 +27,12 @@ router.post('/register', async (req, res) => {
 })
 
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body
+  const { email, password } = req.body ?? {}
+  if (!email || !password) {
+    res.status(400).json({ error: '邮箱和密码必填' })
+    return
+  }
+
   const { data, error } = await supabase.auth.signInWithPassword({ email, password })
   if (error) {
     res.status(401).json({ error: '邮箱或密码错误' })
