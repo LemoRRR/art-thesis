@@ -1394,11 +1394,12 @@ export default function Stage3() {
                 sections={sections}
                 activeSectionId={activeSectionId}
                 onSectionClick={id => setActiveSectionId(id)}
-                onSectionChange={(id, content, editorDoc, footnotes, snapshotLabel) => {
+                onSectionChange={(id, content, editorDoc, footnotes, snapshotLabel, title) => {
                   setSections(prev => persistSections(prev.map(section =>
                     section.id === id
                       ? {
                           ...section,
+                          title: title?.trim() || section.title,
                           content,
                           editorDoc: editorDoc ?? section.editorDoc,
                           footnotes: footnotes ?? section.footnotes,

@@ -29,7 +29,8 @@ interface PaperEditorProps {
     content: string,
     editorDoc: PaperEditorDoc,
     footnotes?: SectionFootnote[],
-    snapshotLabel?: string
+    snapshotLabel?: string,
+    title?: string
   ) => void
   onOpenFootnote: (footnote: SectionFootnote, clientX: number, clientY: number) => void
   onGenerateSection: (title: string) => void
@@ -78,6 +79,43 @@ function uid() {
 
 function editorJson(editor: Editor): PaperEditorDoc {
   return editor.getJSON() as PaperEditorDoc
+}
+
+function nodeText(node: JSONContent | undefined): string {
+  if (!node) return ''
+  if (node.type === 'text') return node.text ?? ''
+  return (node.content ?? []).map(nodeText).join('')
+}
+
+function sectionTitleFromDoc(doc: PaperEditorDoc, fallbackTitle: string): string {
+  const firstNode = doc.content?.[0]
+  if (firstNode?.type !== 'heading') return fallbackTitle
+  return nodeText(firstNode as JSONContent).trim() || fallbackTitle
+}
+
+function sectionContentFromDoc(doc: PaperEditorDoc): string {
+  return editorDocToPlainText({
+    ...doc,
+    content: doc.content?.slice(1) ?? [],
+  })
+}
+
+function sectionEditorDoc(sectionTitle: string, content: string, editorDoc?: unknown): PaperEditorDoc {
+  const doc = ensurePaperEditorDoc(content, editorDoc)
+  const firstNode = doc.content?.[0]
+  if (firstNode?.type === 'heading' && nodeText(firstNode as JSONContent).trim() === sectionTitle.trim()) return doc
+
+  return {
+    ...doc,
+    content: [
+      {
+        type: 'heading',
+        attrs: { level: 2, textAlign: 'center', sectionTitle: true },
+        content: sectionTitle ? [{ type: 'text', text: sectionTitle }] : undefined,
+      },
+      ...(doc.content ?? []),
+    ],
+  }
 }
 
 function selectedText(editor: Editor): string {
@@ -143,8 +181,8 @@ export default function PaperEditor({
   const lastExternalDoc = useRef('')
 
   const initialDoc = useMemo(
-    () => ensurePaperEditorDoc(section.content, section.editorDoc),
-    [section.content, section.editorDoc]
+    () => sectionEditorDoc(section.title, section.content, section.editorDoc),
+    [section.content, section.editorDoc, section.title]
   )
 
   const editor = useEditor({
@@ -185,26 +223,27 @@ export default function PaperEditor({
     onFocus: onActivate,
     onUpdate: ({ editor: nextEditor }) => {
       const nextDoc = editorJson(nextEditor)
-      const nextContent = editorDocToPlainText(nextDoc)
+      const nextTitle = sectionTitleFromDoc(nextDoc, section.title)
+      const nextContent = sectionContentFromDoc(nextDoc)
       const usedFootnoteIds = activeFootnoteIds(nextEditor)
       const nextFootnotes = (section.footnotes ?? []).filter(footnote => usedFootnoteIds.has(footnote.id))
       if (saveTimer.current) clearTimeout(saveTimer.current)
       saveTimer.current = setTimeout(() => {
-        onChange(section.id, nextContent, nextDoc, nextFootnotes)
+        onChange(section.id, nextContent, nextDoc, nextFootnotes, undefined, nextTitle)
       }, 650)
     },
   })
 
   useEffect(() => {
     if (!editor) return
-    const nextDoc = ensurePaperEditorDoc(section.content, section.editorDoc)
+    const nextDoc = sectionEditorDoc(section.title, section.content, section.editorDoc)
     const nextSerialized = JSON.stringify(nextDoc)
     if (nextSerialized === lastExternalDoc.current) return
     const currentSerialized = JSON.stringify(editor.getJSON())
     if (currentSerialized === nextSerialized) return
     lastExternalDoc.current = nextSerialized
     editor.commands.setContent(nextDoc as JSONContent, { emitUpdate: false })
-  }, [editor, section.content, section.editorDoc])
+  }, [editor, section.content, section.editorDoc, section.title])
 
   useEffect(() => {
     if (!editor) return
@@ -310,7 +349,8 @@ export default function PaperEditor({
       .run()
 
     const nextDoc = editorJson(editor)
-    const nextContent = editorDocToPlainText(nextDoc)
+    const nextContent = sectionContentFromDoc(nextDoc)
+    const nextTitle = sectionTitleFromDoc(nextDoc, section.title)
     const revision = revisionStore.add({
       projectId,
       sectionId: section.id,
@@ -320,7 +360,7 @@ export default function PaperEditor({
       instruction: pendingRevision.instruction,
     })
     revisionStore.accept(revision.id)
-    onChange(section.id, nextContent, nextDoc, section.footnotes, `AI 修改：${section.title.slice(0, 16)}`)
+    onChange(section.id, nextContent, nextDoc, section.footnotes, `AI 修改：${section.title.slice(0, 16)}`, nextTitle)
     setPendingRevision(null)
   }, [editor, onChange, pendingRevision, projectId, section])
 
@@ -346,13 +386,15 @@ export default function PaperEditor({
       .run()
 
     const nextDoc = editorJson(editor)
-    const nextContent = editorDocToPlainText(nextDoc)
+    const nextContent = sectionContentFromDoc(nextDoc)
+    const nextTitle = sectionTitleFromDoc(nextDoc, section.title)
     onChange(
       section.id,
       nextContent,
       nextDoc,
       [...(section.footnotes ?? []), footnote],
-      `添加脚注：${anchorText.slice(0, 12)}`
+      `添加脚注：${anchorText.slice(0, 12)}`,
+      nextTitle
     )
     setFootnoteInput('')
     setShowFootnoteInput(false)
@@ -370,7 +412,6 @@ export default function PaperEditor({
       data-active={active ? 'true' : 'false'}
     >
       <div className="paper-section-heading">
-        <h2>{section.title}</h2>
         {!hasContent && (
           <button
             type="button"

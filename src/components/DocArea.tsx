@@ -15,7 +15,8 @@ interface DocAreaProps {
     content: string,
     editorDoc?: PaperEditorDoc,
     footnotes?: SectionFootnote[],
-    snapshotLabel?: string
+    snapshotLabel?: string,
+    title?: string
   ) => void
   onPaperTitleChange: (title: string) => void
   onGenerateSection: (title: string) => void
@@ -289,18 +290,15 @@ export default function DocArea({
 
         .paper-section-heading {
           position: relative;
-          margin: 8px 0 14px;
-          padding: 0 82px;
-          text-align: center;
+          min-height: 0;
         }
 
-        .paper-section-heading h2 {
-          margin: 0;
-          font-family: var(--font-serif);
+        .paper-editor-content > h2:first-child {
+          margin: 8px 82px 18px;
+          text-align: center;
           font-size: 20px;
           font-weight: 700;
           line-height: 1.6;
-          color: var(--color-ink);
         }
 
         .paper-generate-button {
