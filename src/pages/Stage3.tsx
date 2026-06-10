@@ -788,8 +788,9 @@ export default function Stage3() {
   }, [activeSectionId, buildCitationAwareContext, project.context.bannedPhrases, project.id, saveStageMessages, sections])
 
   const sendMessage = useCallback(async () => {
-    const text = inputText.trim()
-    if (!text || isLoading) return
+    const rawText = inputText.trim()
+    if ((!rawText && mentions.length === 0) || isLoading) return
+    const text = rawText || `请结合 ${mentions.map(item => `@${item.title}`).join('、')} 为当前章节补充可引用论据，并按 [1]、[2] 的参考文献格式插入引用。`
     setInputText('')
     const mentionContext = buildMentionContext(mentions)
     const mentionItemIds = mentions.map(item => item.itemId)
@@ -1105,8 +1106,8 @@ export default function Stage3() {
                   />
                   <button
                     onClick={sendMessage}
-                    disabled={!allGenerated || isLoading || !inputText.trim()}
-                    style={{ width: '100%', padding: '8px', borderRadius: 'var(--radius-sm)', border: 'none', background: allGenerated && !isLoading && inputText.trim() ? 'var(--color-accent)' : 'var(--color-border)', color: '#fff', fontSize: 13, fontWeight: 500, cursor: allGenerated && !isLoading && inputText.trim() ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                    disabled={!allGenerated || isLoading || (!inputText.trim() && mentions.length === 0)}
+                    style={{ width: '100%', padding: '8px', borderRadius: 'var(--radius-sm)', border: 'none', background: allGenerated && !isLoading && (inputText.trim() || mentions.length > 0) ? 'var(--color-accent)' : 'var(--color-border)', color: '#fff', fontSize: 13, fontWeight: 500, cursor: allGenerated && !isLoading && (inputText.trim() || mentions.length > 0) ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
                   >
                     {isLoading ? <><Sparkles size={13} /> 修改中…</> : <><Send size={13} /> 提交修改</>}
                   </button>

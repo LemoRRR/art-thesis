@@ -144,10 +144,10 @@ export function collectBibliographyEntries(sections: DocSection[]): Bibliography
     const key = footnote.noteText.trim()
     if (!key || seen.has(key)) return
     seen.add(key)
-    entries.push({ number: entries.length + 1, noteText: key })
+    entries.push({ number: footnote.number, noteText: key })
   })
 
-  return entries
+  return entries.sort((a, b) => a.number - b.number)
 }
 
 export function buildBibliographyContent(sections: DocSection[]): string {

@@ -46,12 +46,14 @@ export function formatCitableSourcesForPrompt(sources: CitableSource[]): string 
 
 export function getCitationPromptRules(hasSources: boolean): string {
   if (!hasSources) {
-    return '- 当前没有可引用文献清单，不要编造引用、文献或脚注标记'
+    return '- 当前没有可引用文献清单，不要编造引用、文献或脚注标记。'
   }
-  return `- 使用“可引用文献清单”中的观点、概念、数据或案例时，在对应句末插入引用标记：{{cite:S1}}；同一句可引用多篇：{{cite:S1,S2}}
-- 只能使用清单里的 S 编号，不要写 [1]，不要在正文末尾自行生成参考文献列表
-- 没有依据的句子不要加引用标记，不要编造作者、年份、页码或来源
-- 每段 1-3 处引用即可，优先放在核心判断、定义、案例或数据之后`
+
+  return `- 使用“可引用文献清单”中的观点、概念、数据或案例时，在对应句末插入内部引用标记：{{cite:S1}}；同一句可引用多篇：{{cite:S1,S2}}。
+- 只能使用清单里的 S 编号，不要编造作者、年份、页码或来源。
+- 不要直接手写 [1]、[2]。系统会把 {{cite:S1}} 自动转换成正文可见的 [1]，并在参考文献中生成对应的 [1] 条目；同一份资料反复引用时始终使用同一个编号。
+- 没有依据的句子不要加引用标记。
+- 每段 1-3 处引用即可，优先放在核心判断、定义、案例或数据之后。`
 }
 
 export function stripCitationMarkers(content: string): string {
@@ -67,8 +69,8 @@ function findAnchorRange(textBeforeMarker: string): { start: number; end: number
     trimmed.lastIndexOf('。'),
     trimmed.lastIndexOf('；'),
     trimmed.lastIndexOf(';'),
-    trimmed.lastIndexOf('！'),
-    trimmed.lastIndexOf('？'),
+    trimmed.lastIndexOf('，'),
+    trimmed.lastIndexOf(','),
     trimmed.lastIndexOf('. '),
   )
 
@@ -77,6 +79,11 @@ function findAnchorRange(textBeforeMarker: string): { start: number; end: number
     : Math.max(0, end - 10)
   const anchorText = trimmed.slice(start, end).trim() || trimmed.slice(Math.max(0, end - 6), end)
   return { start, end, anchorText }
+}
+
+function citationNumberForKey(key: string, fallbackNumber: number): number {
+  const match = key.match(/^S(\d+)$/)
+  return match ? Number.parseInt(match[1], 10) : fallbackNumber
 }
 
 export function applyCitationsToContent(
@@ -108,14 +115,14 @@ export function applyCitationsToContent(
         if (!source || !anchorText) return
         footnotes.push({
           id: uid(),
-          number: footnoteNumber,
+          number: citationNumberForKey(key, footnoteNumber),
           blockIndex,
           start,
           end,
           anchorText,
           noteText: source.noteText,
         })
-        footnoteNumber += 1
+        if (!/^S\d+$/.test(key)) footnoteNumber += 1
       })
 
       text = `${text.slice(0, markerIndex)}${text.slice(markerIndex + marker.length)}`.trimEnd()
@@ -152,7 +159,7 @@ export function finalizeSectionWithCitations(
   const cleared = sections.map(section =>
     section.id === sectionId ? { ...section, footnotes: [] } : section
   )
-  const renumbered = renumberAllFootnotes(cleared)
+  const renumbered = sources.length > 0 ? cleared : renumberAllFootnotes(cleared)
   const startNumber = nextFootnoteNumber(renumbered)
   const { content, footnotes } = applyCitationsToContent(rawContent, sources, startNumber)
 

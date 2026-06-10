@@ -72,7 +72,15 @@ export default function MentionInput({
     if (!selectedKeys.has(item.id)) {
       onMentionsChange([...mentions, { itemId: item.id, title: item.title }])
     }
+    const mentionText = `@${item.title} `
+    const atIndex = value.lastIndexOf('@')
+    if (atIndex >= 0) {
+      onChange(`${value.slice(0, atIndex)}${mentionText}`)
+    } else if (!value.includes(mentionText)) {
+      onChange(`${value}${value && !value.endsWith(' ') ? ' ' : ''}${mentionText}`)
+    }
     setOpen(false)
+    setQuery('')
   }
 
   return (
