@@ -1036,6 +1036,38 @@ export const projectStore = {
     }
     remoteTask(() => projectsAPI.delete(id))
   },
+  isEmptyDraft: (project: Project) => {
+    const unnamed = !project.title || project.title === '未命名论文' || project.title === '未命名论文对话'
+    if (!unnamed) return false
+    if (project.currentStage !== 'stage1') return false
+    if (project.libraryItemIds.length > 0) return false
+    const context = project.context ?? createEmptyProjectContext()
+    const hasContext = Boolean(
+      context.researchObject?.trim()
+      || context.writingBoundary?.trim()
+      || context.stylePreference?.trim()
+      || context.rawSummary?.trim()
+      || context.writingRequirements?.length
+    )
+    if (hasContext) return false
+    if (chatStore.getByProject(project.id).some(message => message.role === 'user')) return false
+    if (sectionStore.getByProject(project.id).some(section => section.title.trim() || section.content.trim() || section.editorDoc)) return false
+    const outline = outlineStore.get(project.id)
+    if (outline?.sections?.length) return false
+    if (versionStore.getByProject(project.id).some(snapshot => snapshot.projectId === project.id)) return false
+    if (referenceStore.getAll().some(selection =>
+      selection.projectId === project.id && (selection.libraryItemIds.length > 0 || selection.sectionIds.length > 0)
+    )) return false
+    return true
+  },
+  pruneEmptyDrafts: (exceptId?: string) => {
+    const emptyIds = projectStore
+      .getAll()
+      .filter(project => project.id !== exceptId && projectStore.isEmptyDraft(project))
+      .map(project => project.id)
+    emptyIds.forEach(id => projectStore.remove(id))
+    return emptyIds.length
+  },
   bindLibraryItem: (projectId: string, itemId: string) => {
     const project = projectStore.get(projectId)
     if (!project || project.libraryItemIds.includes(itemId)) return

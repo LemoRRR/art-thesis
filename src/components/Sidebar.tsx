@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   BookOpen,
@@ -72,12 +72,20 @@ function Sidebar() {
   const location = useLocation()
   const projects = projectStore.getAll()
   const recentProjects = useMemo(
-    () => projects.slice().sort((a, b) => b.updatedAt - a.updatedAt),
+    () => projects
+      .filter(project => !projectStore.isEmptyDraft(project))
+      .slice()
+      .sort((a, b) => b.updatedAt - a.updatedAt),
     [projects]
   )
   const activeProjectId = projectStore.getActiveId()
   const [loggedIn, setLoggedIn] = useState(() => auth.isLoggedIn())
   const userLabel = getUserLabel()
+
+  useEffect(() => {
+    const keepActiveEmpty = location.pathname.startsWith(`/projects/${activeProjectId}`)
+    projectStore.pruneEmptyDrafts(keepActiveEmpty ? activeProjectId : undefined)
+  }, [activeProjectId, location.pathname])
 
   const openConversation = (projectId: string) => {
     projectStore.setActiveId(projectId)
@@ -85,6 +93,7 @@ function Sidebar() {
   }
 
   const startNewConversation = () => {
+    projectStore.pruneEmptyDrafts()
     const project = projectStore.add('未命名论文对话', '从一次材料理解对话开始的新项目')
     projectStore.resetWorkspace(project.id)
     chatStore.saveForProject(project.id, 'stage1', [createWelcomeMessage(project.id)])
