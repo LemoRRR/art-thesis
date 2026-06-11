@@ -220,6 +220,7 @@ export default function StyleProfiles() {
     if (isExtracting) return
     setIsModalOpen(false)
     setNotice('')
+    setUploadStatus('')
   }
 
   const saveProfile = () => {
@@ -247,6 +248,9 @@ export default function StyleProfiles() {
       setNotice('风格档案已保存。')
     }
     refresh()
+    setIsModalOpen(false)
+    setNotice('')
+    setUploadStatus('')
   }
 
   const deleteProfile = (profile: StyleProfile) => {
@@ -333,13 +337,6 @@ export default function StyleProfiles() {
       setIsExtracting(false)
       if (resetBeforeUpload) setIsUploadLoading(false)
     }
-  }
-
-  const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-    await uploadFile(file)
   }
 
   const handleNewProfileFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -542,14 +539,6 @@ export default function StyleProfiles() {
                         <input value={draft.studentName} onChange={event => setDraft({ ...draft, studentName: event.target.value })} placeholder="例如：张同学" style={inputStyle} />
                       </label>
                     </div>
-
-                    <label style={{ border: '1px dashed var(--color-border-strong)', borderRadius: 8, padding: 14, background: 'var(--color-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <Upload size={18} color="var(--color-accent)" />
-                      <span style={{ fontSize: 13, color: 'var(--color-ink-2)' }}>
-                        {isExtracting ? (uploadStatus || '正在提取风格画像…') : '上传参考文档并追加到当前档案（Word/PDF/TXT，单次最多使用前 10000 字）'}
-                      </span>
-                      <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" onChange={handleFile} disabled={isExtracting} style={{ display: 'none' }} />
-                    </label>
 
                     {uploadStatus && (
                       <div style={{ fontSize: 12, color: uploadStatus.startsWith('处理失败') ? '#C0392B' : 'var(--color-accent)', background: uploadStatus.startsWith('处理失败') ? '#FFF4F2' : 'var(--color-accent-light)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '8px 10px' }}>
