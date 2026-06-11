@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { AtSign, Search, Type } from 'lucide-react'
 import { libraryAPI } from '../lib/api'
 import { auth } from '../lib/auth'
@@ -40,6 +40,7 @@ export default function MentionInput({
   selectedStyleProfileId = '',
   onStyleProfileSelect,
 }: MentionInputProps) {
+  const rootRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [styleOpen, setStyleOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -74,6 +75,19 @@ export default function MentionInput({
     return list.slice(0, 8)
   }, [availableStyleProfiles, styleQuery])
 
+  const closePickers = () => {
+    setOpen(false)
+    setStyleOpen(false)
+  }
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) closePickers()
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [])
+
   const runSearch = async (nextQuery: string) => {
     setQuery(nextQuery)
     const local = libraryStore.getAll().filter(item =>
@@ -103,7 +117,17 @@ export default function MentionInput({
       setOpen(false)
       setStyleOpen(true)
       setStyleQuery('')
+    } else {
+      closePickers()
     }
+  }
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Escape') {
+      closePickers()
+      return
+    }
+    onKeyDown?.(event)
   }
 
   const addMention = (item: LibraryItem) => {
@@ -138,12 +162,15 @@ export default function MentionInput({
     setStyleQuery('')
   }
 
+  const showLibraryPicker = open && value.endsWith('@')
+  const showStylePicker = styleOpen && value.endsWith('/')
+
   return (
-    <div style={{ position: 'relative', ...style }}>
+    <div ref={rootRef} style={{ position: 'relative', ...style }}>
       <textarea
         value={value}
         onChange={event => handleTextChange(event.target.value)}
-        onKeyDown={onKeyDown}
+        onKeyDown={handleKeyDown}
         placeholder={placeholder}
         disabled={disabled}
         rows={rows}
@@ -209,7 +236,7 @@ export default function MentionInput({
         </div>
       )}
 
-      {open && (
+      {showLibraryPicker && (
         <div style={{
           position: 'absolute',
           left: 0,
@@ -269,7 +296,7 @@ export default function MentionInput({
         </div>
       )}
 
-      {styleOpen && (
+      {showStylePicker && (
         <div style={{
           position: 'absolute',
           left: 0,
