@@ -160,6 +160,10 @@ export const referencesAPI = {
 
 export const filesAPI = {
   upload: async (file: File) => {
+    const maxServerUploadSize = 4 * 1024 * 1024
+    if (file.size > maxServerUploadSize && !file.type.startsWith('text/') && !file.name.toLowerCase().endsWith('.txt')) {
+      throw new Error('文件较大，线上上传可能被网关拦截。请先压缩到 4MB 以内，或转为 TXT 后上传。')
+    }
     const token = getToken()
     const formData = new FormData()
     formData.append('file', file)
@@ -171,12 +175,16 @@ export const filesAPI = {
       body: formData,
     })
     if (!res.ok) {
-      const error = await res.json().catch(() => ({ error: '文件上传失败' }))
+      const error = await res.json().catch(() => ({
+        error: res.status === 413
+          ? '文件超过线上上传限制。请先压缩到 4MB 以内，或转为 TXT 后上传。'
+          : '文件上传失败',
+      }))
       if (res.status === 401) {
         localStorage.removeItem('access_token')
         localStorage.removeItem('auth_user')
       }
-      throw new Error(error.error ?? '文件上传失败')
+      throw new Error(error.error ?? `文件上传失败（HTTP ${res.status}）`)
     }
     return res.json()
   },

@@ -2,7 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import { extractDimensions } from '../lib/extract.js'
 import { parseFile } from '../lib/parser.js'
-import { createUserClient } from '../lib/supabase.js'
+import { createUserClient, supabase } from '../lib/supabase.js'
 import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
@@ -40,7 +40,7 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res) => {
   const db = createUserClient(req.accessToken!)
   const originalFileName = decodeUploadFileName(file.originalname)
   const fileName = buildStorageKey(req.userId!, originalFileName)
-  const { error: uploadError } = await db.storage
+  const { error: uploadError } = await supabase.storage
     .from('library-files')
     .upload(fileName, file.buffer, { contentType: file.mimetype })
 
@@ -50,7 +50,7 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res) => {
     return
   }
 
-  const { data: signedUrlData } = await db.storage
+  const { data: signedUrlData } = await supabase.storage
     .from('library-files')
     .createSignedUrl(fileName, 60 * 60)
 
