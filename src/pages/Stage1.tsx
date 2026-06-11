@@ -11,7 +11,7 @@ import MentionInput, { type MentionRef } from '../components/MentionInput'
 import { callDoubao, callGPT } from '../lib/ai'
 import { filesAPI, libraryAPI } from '../lib/api'
 import { buildAIContext, buildMentionContext } from '../lib/context'
-import { promptChatFollowup } from '../lib/prompts'
+import { promptChatFollowup, type AcademicLevel } from '../lib/prompts'
 import {
   chatStore,
   createEmptyProjectContext,
@@ -25,6 +25,8 @@ import type { Message } from '../lib/ai'
 
 type ChatModel = 'gpt' | 'doubao'
 type Stage1UploadStatus = 'uploading' | 'ready' | 'failed'
+const ACADEMIC_LEVELS: AcademicLevel[] = ['本科', '硕士', '期刊']
+const LEVEL_REQUIREMENT_PREFIX = '论文规格：'
 
 interface ParsedComprehension {
   paperTitle?: string
@@ -73,6 +75,21 @@ function formatList(items?: string[]): string {
   return items?.map(item => item.trim()).filter(Boolean).join('；') ?? ''
 }
 
+function getSelectedAcademicLevel(requirements: string[] = []): AcademicLevel | '' {
+  const stored = requirements
+    .find(item => item.startsWith(LEVEL_REQUIREMENT_PREFIX))
+    ?.replace(LEVEL_REQUIREMENT_PREFIX, '')
+    .trim()
+  return stored === '本科' || stored === '硕士' || stored === '期刊' ? stored : ''
+}
+
+function withSelectedAcademicLevel(requirements: string[] = [], level: AcademicLevel): string[] {
+  return [
+    ...requirements.filter(item => !item.startsWith(LEVEL_REQUIREMENT_PREFIX)),
+    `${LEVEL_REQUIREMENT_PREFIX}${level}`,
+  ]
+}
+
 function buildComprehensionModel(parsed: ParsedComprehension): ComprehensionModel {
   const topic = parsed.materialTopic || parsed.researchObject || ''
   const possibleDirections = formatList(parsed.possibleDirections)
@@ -85,13 +102,13 @@ function buildComprehensionModel(parsed: ParsedComprehension): ComprehensionMode
     possibleDirections ? `可写方向：${possibleDirections}` : '',
     keyArguments ? `可展开论点：${keyArguments}` : '',
     risks ? `材料缺口/风险：${risks}` : '',
-    `建议难度：${parsed.difficulty || parsed.academicLevel || '本科'}`,
+    `建议难度：${parsed.difficulty || '待选择论文规格后细化'}`,
   ].filter(Boolean).join('\n')
 
   return {
     researchObject: topic,
     writingBoundary: parsed.writingBoundary || risks || '可在大纲阶段继续收束研究范围。',
-    academicLevel: parsed.academicLevel || parsed.difficulty || '本科',
+    academicLevel: '待选择',
     rawSummary,
   }
 }
@@ -128,7 +145,7 @@ function formatComprehensionReply(content: string, parsed: ParsedComprehension):
     argumentsText ? `可展开论点：${argumentsText}` : '',
     risks ? `材料缺口/风险：${risks}` : '',
     `推荐题目：${titles}`,
-    `建议难度：${parsed.difficulty || parsed.academicLevel || '本科'}`,
+    `建议难度：${parsed.difficulty || '待选择论文规格后细化'}`,
   ].filter(Boolean).join('\n')
 }
 
@@ -167,6 +184,7 @@ export default function Stage1() {
   const navigate = useNavigate()
   const params = useParams()
   const project = projectStore.ensure(params.projectId)
+  const writingRequirementsKey = project.context.writingRequirements.join('\u0001')
   const bottomRef = useRef<HTMLDivElement>(null)
   const abortRef  = useRef<AbortController | null>(null)
 
@@ -180,6 +198,9 @@ export default function Stage1() {
   const [selectedModel, setSelectedModel] = useState<ChatModel>('gpt')
   const [comprehension, setComprehension] = useState<ComprehensionModel | null>(null)
   const [mentions, setMentions] = useState<MentionRef[]>([])
+  const [selectedLevel, setSelectedLevel] = useState<AcademicLevel | ''>(() =>
+    getSelectedAcademicLevel(project.context.writingRequirements)
+  )
 
   // 初始化：从 localStorage 读取历史记录
   useEffect(() => {
@@ -195,14 +216,17 @@ export default function Stage1() {
       setIsLoading(false)
       setStreamingId(null)
       setMentions([])
+      const currentProject = projectStore.ensure(project.id)
+      const storedLevel = getSelectedAcademicLevel(currentProject.context.writingRequirements)
+      setSelectedLevel(storedLevel)
 
       const saved = chatStore.getByProject(project.id, 'stage1')
-      const savedComprehension = project.context.rawSummary
+      const savedComprehension = currentProject.context.rawSummary
         ? {
-            researchObject: project.context.researchObject,
-            writingBoundary: project.context.writingBoundary,
-            academicLevel: project.context.academicLevel,
-            rawSummary: project.context.rawSummary,
+            researchObject: currentProject.context.researchObject,
+            writingBoundary: currentProject.context.writingBoundary,
+            academicLevel: storedLevel || '待选择',
+            rawSummary: currentProject.context.rawSummary,
           }
         : null
 
@@ -237,6 +261,7 @@ export default function Stage1() {
     project.context.researchObject,
     project.context.writingBoundary,
     project.id,
+    writingRequirementsKey,
   ])
 
   // 自动滚动到底部
@@ -333,18 +358,22 @@ export default function Stage1() {
             if (parsedComprehension) {
               const model = buildComprehensionModel(parsedComprehension)
               const paperTitle = inferPaperTitle(parsedComprehension)
+              const modelForDisplay = {
+                ...model,
+                academicLevel: selectedLevel || '待选择',
+              }
               projectStore.update(project.id, {
                 title: paperTitle,
                 context: {
                   ...project.context,
                   researchObject: model.researchObject,
                   writingBoundary: model.writingBoundary,
-                  academicLevel: model.academicLevel,
+                  academicLevel: selectedLevel || '',
                   rawSummary: model.rawSummary,
                 },
-                currentStage: 'stage2',
+                currentStage: selectedLevel ? 'stage2' : 'stage1',
               })
-              setComprehension(model)
+              setComprehension(modelForDisplay)
             }
           }
         },
@@ -362,7 +391,7 @@ export default function Stage1() {
       },
       abort.signal
     )
-  }, [inputText, isLoading, mentions, messages, project.context, project.id, selectedModel, uploadedFile])
+  }, [inputText, isLoading, mentions, messages, project.context, project.id, selectedLevel, selectedModel, uploadedFile])
 
   // 文件上传处理
   const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -408,6 +437,22 @@ export default function Stage1() {
     }
   }
 
+  const handleLevelSelect = (level: AcademicLevel) => {
+    const currentProject = projectStore.ensure(project.id)
+    setSelectedLevel(level)
+    setComprehension(current =>
+      current ? { ...current, academicLevel: level } : current
+    )
+    projectStore.update(project.id, {
+      context: {
+        ...currentProject.context,
+        academicLevel: level,
+        writingRequirements: withSelectedAcademicLevel(currentProject.context.writingRequirements, level),
+      },
+      currentStage: isCompleted ? 'stage2' : currentProject.currentStage,
+    })
+  }
+
   // 重新开始
   const handleReset = () => {
     if (!confirm('确认重新开始？当前所有记录将清空。')) return
@@ -422,6 +467,7 @@ export default function Stage1() {
     setUploadedFile(null)
     setIsLoading(false)
     setStreamingId(null)
+    setSelectedLevel('')
   }
 
   return (
@@ -528,7 +574,7 @@ export default function Stage1() {
                   { label: '推荐题目', value: projectStore.ensure(project.id).title },
                   { label: '主题判断', value: comprehension.researchObject },
                   { label: '材料建议', value: comprehension.rawSummary },
-                  { label: '难度判断', value: comprehension.academicLevel },
+                  { label: '论文规格', value: selectedLevel || '待选择' },
                 ].map(item => (
                   <div key={item.label} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                     <span
@@ -551,6 +597,40 @@ export default function Stage1() {
                     </span>
                   </div>
                 ))}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', paddingTop: 2 }}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--color-ink-3)',
+                      fontWeight: 500,
+                      marginRight: 2,
+                    }}
+                  >
+                    请选择后续生成规格
+                  </span>
+                  {ACADEMIC_LEVELS.map(level => {
+                    const active = selectedLevel === level
+                    return (
+                      <button
+                        key={level}
+                        type="button"
+                        onClick={() => handleLevelSelect(level)}
+                        style={{
+                          padding: '5px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          border: `1px solid ${active ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                          background: active ? 'var(--color-accent)' : 'var(--color-surface)',
+                          color: active ? '#fff' : 'var(--color-ink-2)',
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          fontFamily: 'var(--font-sans)',
+                        }}
+                      >
+                        {level}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             )}
 
@@ -575,11 +655,12 @@ export default function Stage1() {
                 材料理解完成 ✓
               </span>
               <span style={{ fontSize: 12, color: 'var(--color-ink-3)', marginLeft: 10 }}>
-                可以进入大纲撰写了
+                {selectedLevel ? '可以进入大纲撰写了' : '请先选择本科、硕士或期刊'}
               </span>
             </div>
             <button
               onClick={() => navigate(`/projects/${project.id}/stage2`)}
+              disabled={!selectedLevel}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -587,17 +668,21 @@ export default function Stage1() {
                 padding: '8px 18px',
                 borderRadius: 'var(--radius-md)',
                 border: 'none',
-                background: 'var(--color-accent)',
+                background: selectedLevel ? 'var(--color-accent)' : 'var(--color-border)',
                 color: '#fff',
                 fontSize: 13,
                 fontWeight: 500,
-                cursor: 'pointer',
+                cursor: selectedLevel ? 'pointer' : 'not-allowed',
                 fontFamily: 'var(--font-sans)',
                 boxShadow: 'var(--shadow-sm)',
                 transition: 'background 0.15s',
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-accent-hover)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'var(--color-accent)')}
+              onMouseEnter={e => {
+                if (selectedLevel) e.currentTarget.style.background = 'var(--color-accent-hover)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = selectedLevel ? 'var(--color-accent)' : 'var(--color-border)'
+              }}
             >
               进入大纲撰写
               <ArrowRight size={14} />
