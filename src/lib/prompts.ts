@@ -72,16 +72,18 @@ export function promptChatFollowup(
 
 工作方式：
 - 不要强行要求用户补充研究对象或写作边界；这些可以由你根据材料先做建议判断
-- 不要替用户决定论文规格；本科、硕士、期刊会由界面单独询问用户选择
+- 你需要给出学段建议和理由，但最终学段由用户确认
+- 如果用户上传或粘贴的是已有论文，只理解研究对象、核心论点和结构，不要学习语言风格
+- 如果用户只提供题目、大纲或想法，判断为从 0 生成路径
 - 不要模仿上传材料的语言风格，不要改写原文
-- 重点整理：主题判断、材料可写方向、可展开论点、材料缺口/风险、推荐题目、建议写作难度
+- 重点整理：路径类型、输入类型、主题判断、材料可写方向、可展开论点、材料缺口/风险、推荐题目、学段建议
 - 不需要输出“大纲生成建议”
 - 只要材料或输入已经足够形成初步理解，就输出“【理解完成】”和 JSON，让界面可以进入论文规格选择
 - 如果信息非常少，也先给出谨慎建议，并在风险里说明缺口，不要卡住流程
 ${referenceContext ? `\n用户已提供的材料信息：\n${referenceContext}\n` : ''}
 回复先用简短自然语言说明你读到了什么，再在末尾另起一行输出以下内容（不要加代码块）：
 【理解完成】
-{"paperTitle":"最推荐的论文题目","recommendedTitles":["题目1","题目2","题目3"],"materialTopic":"材料主题或研究对象","possibleDirections":["可写方向1","可写方向2","可写方向3"],"keyArguments":["可展开论点1","可展开论点2","可展开论点3"],"risks":["材料缺口或风险1","材料缺口或风险2"],"academicLevel":"待用户选择","difficulty":"建议写作难度","coreSummary":"对材料和写作可能性的总结，两到三句话"}`,
+{"paperTitle":"最推荐的论文题目","recommendedTitles":["题目1","题目2","题目3"],"pathType":"existing_paper_revision|from_scratch_generation","inputType":"paper|outline|topic|mixed_material","hasDetectedOutline":true,"hasDetectedDraft":true,"materialTopic":"材料主题或研究对象","researchObject":"研究对象","writingBoundary":"写作边界","possibleDirections":["可写方向1","可写方向2","可写方向3"],"keyArguments":["核心论点1","核心论点2","核心论点3"],"coreArguments":["核心论点1","核心论点2","核心论点3"],"risks":["材料缺口或风险1","材料缺口或风险2"],"academicLevelSuggestion":"本科|硕士|期刊|其他","academicLevelReason":"学段建议理由","academicLevel":"待用户确认","difficulty":"建议写作难度","outlineSummary":"如果识别到大纲，概括大纲结构；没有则为空","draftSummary":"如果识别到正文，概括正文内容；没有则为空","nextStepRecommendation":"generate_outline|confirm_detected_outline|revise_existing_draft|write_from_outline","coreSummary":"对材料和写作可能性的总结，两到三句话"}`,
     },
     ...history,
     { role: 'user', content: userInput },
@@ -116,6 +118,24 @@ export function promptExtractStyle(articleText: string): Message[] {
 - 总字数控制在150字以内`,
     },
     { role: 'user', content: articleText.slice(0, 4000) },
+  ]
+}
+
+export function promptExtractStyleProfile(articleText: string): Message[] {
+  return [
+    {
+      role: 'system',
+      content: `你是语言风格分析助手。请从参考文章中提取“语言水平与表达方式画像”，用于后续写作时约束表达风格。
+
+重要边界：
+- 只分析语言水平、句式、段落组织、论证节奏和过渡方式
+- 不提取、复述或保存具体观点、案例、材料、结论和原句
+- 不模仿具体内容，不输出可直接复用的原文表达
+
+请只输出 JSON，不要加代码块：
+{"writingLevel":"语言水平与学术化程度","sentenceStyle":"句式特征","paragraphLogic":"段落组织方式","argumentStyle":"论证节奏与分析方式","transitionStyle":"过渡和衔接方式","vocabularyStyle":"词汇与术语使用习惯","avoidContentReuseNotice":"不得复用原文观点、案例、素材、原句或具体内容","editableSummary":"可人工编辑的风格画像总结，150-220字"}`,
+    },
+    { role: 'user', content: articleText.slice(0, 10000) },
   ]
 }
 

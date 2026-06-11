@@ -26,6 +26,7 @@ const KEYS = {
   REFERENCES:    'pai_reference_selections',
   OUTLINE:       'pai_outline',
   REVISIONS:     'pai_revision_changes',
+  STYLE_PROFILES:'pai_style_profiles',
 } as const
 
 // ── 通用读写 ──────────────────────────────────────────────────
@@ -133,6 +134,16 @@ export interface ComprehensionModel {
   writingBoundary: string
   academicLevel: string
   rawSummary: string   // 给 Prompt 用的自然语言描述
+  pathType?: 'existing_paper_revision' | 'from_scratch_generation'
+  inputType?: 'paper' | 'outline' | 'topic' | 'mixed_material'
+  hasDetectedOutline?: boolean
+  hasDetectedDraft?: boolean
+  academicLevelSuggestion?: string
+  academicLevelReason?: string
+  coreArguments?: string[]
+  outlineSummary?: string
+  draftSummary?: string
+  nextStepRecommendation?: 'generate_outline' | 'confirm_detected_outline' | 'revise_existing_draft' | 'write_from_outline'
 }
 
 export interface LibraryItem {
@@ -159,10 +170,39 @@ export interface ProjectContext {
   researchObject: string
   writingBoundary: string
   academicLevel: string
+  pathType?: 'existing_paper_revision' | 'from_scratch_generation'
+  inputType?: 'paper' | 'outline' | 'topic' | 'mixed_material'
+  hasDetectedOutline?: boolean
+  hasDetectedDraft?: boolean
+  academicLevelSuggestion?: string
+  academicLevelReason?: string
+  coreArguments?: string[]
+  outlineSummary?: string
+  draftSummary?: string
+  nextStepRecommendation?: 'generate_outline' | 'confirm_detected_outline' | 'revise_existing_draft' | 'write_from_outline'
   writingRequirements: string[]
   bannedPhrases: string[]
   stylePreference: string
   rawSummary: string
+}
+
+export interface StyleProfile {
+  id: string
+  userId?: string
+  studentName: string
+  profileName: string
+  sourceFileName?: string
+  sourceTextLength: number
+  writingLevel: string
+  sentenceStyle: string
+  paragraphLogic: string
+  argumentStyle: string
+  transitionStyle: string
+  vocabularyStyle: string
+  avoidContentReuseNotice: string
+  editableSummary: string
+  createdAt: number
+  updatedAt: number
 }
 
 export interface Project {
@@ -825,6 +865,33 @@ export const styleStore = {
   get:   () => read<string>(KEYS.STYLE),
   save:  (summary: string) => write(KEYS.STYLE, summary),
   clear: () => localStorage.removeItem(KEYS.STYLE),
+}
+
+export const styleProfileStore = {
+  getAll: (): StyleProfile[] => read<StyleProfile[]>(KEYS.STYLE_PROFILES) ?? [],
+  save: (profiles: StyleProfile[]) => write(KEYS.STYLE_PROFILES, profiles),
+  get: (id: string): StyleProfile | null => styleProfileStore.getAll().find(profile => profile.id === id) ?? null,
+  add: (profile: Omit<StyleProfile, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const now = Date.now()
+    const next: StyleProfile = {
+      ...profile,
+      id: uid('style_profile'),
+      createdAt: now,
+      updatedAt: now,
+    }
+    styleProfileStore.save([next, ...styleProfileStore.getAll()].slice(0, 50))
+    return next
+  },
+  update: (id: string, patch: Partial<StyleProfile>) => {
+    const nextProfiles = styleProfileStore.getAll().map(profile =>
+      profile.id === id ? { ...profile, ...patch, updatedAt: Date.now() } : profile
+    )
+    styleProfileStore.save(nextProfiles)
+  },
+  remove: (id: string) => {
+    styleProfileStore.save(styleProfileStore.getAll().filter(profile => profile.id !== id))
+  },
+  clear: () => localStorage.removeItem(KEYS.STYLE_PROFILES),
 }
 
 // ── 文档标题 ──────────────────────────────────────────────────

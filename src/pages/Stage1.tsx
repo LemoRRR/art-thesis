@@ -31,16 +31,26 @@ const LEVEL_REQUIREMENT_PREFIX = '论文规格：'
 interface ParsedComprehension {
   paperTitle?: string
   recommendedTitles?: string[]
+  pathType?: 'existing_paper_revision' | 'from_scratch_generation'
+  inputType?: 'paper' | 'outline' | 'topic' | 'mixed_material'
+  hasDetectedOutline?: boolean
+  hasDetectedDraft?: boolean
   materialTopic?: string
   researchObject?: string
   possibleDirections?: string[]
   keyArguments?: string[]
+  coreArguments?: string[]
   risks?: string[]
   writingBoundary?: string
   academicLevel?: string
+  academicLevelSuggestion?: string
+  academicLevelReason?: string
   difficulty?: string
   coreSummary?: string
   coreClaims?: string
+  outlineSummary?: string
+  draftSummary?: string
+  nextStepRecommendation?: 'generate_outline' | 'confirm_detected_outline' | 'revise_existing_draft' | 'write_from_outline'
 }
 
 interface Stage1UploadedFile {
@@ -75,6 +85,25 @@ function formatList(items?: string[]): string {
   return items?.map(item => item.trim()).filter(Boolean).join('；') ?? ''
 }
 
+const PATH_LABELS: Record<string, string> = {
+  existing_paper_revision: '已有论文修改',
+  from_scratch_generation: '从 0 生成',
+}
+
+const INPUT_LABELS: Record<string, string> = {
+  paper: '已有论文',
+  outline: '大纲',
+  topic: '题目/想法',
+  mixed_material: '混合材料',
+}
+
+const NEXT_STEP_LABELS: Record<string, string> = {
+  generate_outline: '生成大纲',
+  confirm_detected_outline: '确认识别到的大纲',
+  revise_existing_draft: '修改已有正文',
+  write_from_outline: '按大纲写作',
+}
+
 function getSelectedAcademicLevel(requirements: string[] = []): AcademicLevel | '' {
   const stored = requirements
     .find(item => item.startsWith(LEVEL_REQUIREMENT_PREFIX))
@@ -93,14 +122,24 @@ function withSelectedAcademicLevel(requirements: string[] = [], level: AcademicL
 function buildComprehensionModel(parsed: ParsedComprehension): ComprehensionModel {
   const topic = parsed.materialTopic || parsed.researchObject || ''
   const possibleDirections = formatList(parsed.possibleDirections)
-  const keyArguments = formatList(parsed.keyArguments)
+  const coreArguments = parsed.coreArguments?.length ? parsed.coreArguments : parsed.keyArguments
+  const keyArguments = formatList(coreArguments)
   const risks = formatList(parsed.risks)
   const summary = parsed.coreSummary || parsed.coreClaims || ''
   const rawSummary = [
+    parsed.pathType ? `路径判断：${PATH_LABELS[parsed.pathType] ?? parsed.pathType}` : '',
+    parsed.inputType ? `输入类型：${INPUT_LABELS[parsed.inputType] ?? parsed.inputType}` : '',
+    `识别到大纲：${parsed.hasDetectedOutline ? '是' : '否'}`,
+    `识别到正文：${parsed.hasDetectedDraft ? '是' : '否'}`,
     topic ? `材料主题：${topic}` : '',
     summary ? `材料理解：${summary}` : '',
     possibleDirections ? `可写方向：${possibleDirections}` : '',
-    keyArguments ? `可展开论点：${keyArguments}` : '',
+    keyArguments ? `核心论点：${keyArguments}` : '',
+    parsed.academicLevelSuggestion ? `AI 学段建议：${parsed.academicLevelSuggestion}` : '',
+    parsed.academicLevelReason ? `建议理由：${parsed.academicLevelReason}` : '',
+    parsed.outlineSummary ? `大纲识别：${parsed.outlineSummary}` : '',
+    parsed.draftSummary ? `正文识别：${parsed.draftSummary}` : '',
+    parsed.nextStepRecommendation ? `建议下一步：${NEXT_STEP_LABELS[parsed.nextStepRecommendation] ?? parsed.nextStepRecommendation}` : '',
     risks ? `材料缺口/风险：${risks}` : '',
     `建议难度：${parsed.difficulty || '待选择论文规格后细化'}`,
   ].filter(Boolean).join('\n')
@@ -110,6 +149,16 @@ function buildComprehensionModel(parsed: ParsedComprehension): ComprehensionMode
     writingBoundary: parsed.writingBoundary || risks || '可在大纲阶段继续收束研究范围。',
     academicLevel: '待选择',
     rawSummary,
+    pathType: parsed.pathType,
+    inputType: parsed.inputType,
+    hasDetectedOutline: parsed.hasDetectedOutline,
+    hasDetectedDraft: parsed.hasDetectedDraft,
+    academicLevelSuggestion: parsed.academicLevelSuggestion,
+    academicLevelReason: parsed.academicLevelReason,
+    coreArguments,
+    outlineSummary: parsed.outlineSummary,
+    draftSummary: parsed.draftSummary,
+    nextStepRecommendation: parsed.nextStepRecommendation,
   }
 }
 
@@ -131,7 +180,7 @@ function formatComprehensionReply(content: string, parsed: ParsedComprehension):
   const paperTitle = inferPaperTitle(parsed)
   const topic = parsed.materialTopic || parsed.researchObject || '未明确'
   const directions = formatList(parsed.possibleDirections)
-  const argumentsText = formatList(parsed.keyArguments)
+  const argumentsText = formatList(parsed.coreArguments?.length ? parsed.coreArguments : parsed.keyArguments)
   const risks = formatList(parsed.risks)
   const summary = parsed.coreSummary || parsed.coreClaims
   const titles = parsed.recommendedTitles?.length ? parsed.recommendedTitles.join('；') : paperTitle
@@ -139,10 +188,17 @@ function formatComprehensionReply(content: string, parsed: ParsedComprehension):
     lead || '我已经读取并整理了你提供的材料，可以进入下一步。',
     '',
     '【理解完成】',
+    parsed.pathType ? `路径判断：${PATH_LABELS[parsed.pathType] ?? parsed.pathType}` : '',
+    parsed.inputType ? `输入类型：${INPUT_LABELS[parsed.inputType] ?? parsed.inputType}` : '',
+    `识别到大纲：${parsed.hasDetectedOutline ? '是' : '否'}`,
+    `识别到正文：${parsed.hasDetectedDraft ? '是' : '否'}`,
     `主题判断：${topic}`,
     summary ? `材料理解：${summary}` : '',
     directions ? `可写方向：${directions}` : '',
-    argumentsText ? `可展开论点：${argumentsText}` : '',
+    argumentsText ? `核心论点：${argumentsText}` : '',
+    parsed.academicLevelSuggestion ? `AI 学段建议：${parsed.academicLevelSuggestion}` : '',
+    parsed.academicLevelReason ? `建议理由：${parsed.academicLevelReason}` : '',
+    parsed.nextStepRecommendation ? `建议下一步：${NEXT_STEP_LABELS[parsed.nextStepRecommendation] ?? parsed.nextStepRecommendation}` : '',
     risks ? `材料缺口/风险：${risks}` : '',
     `推荐题目：${titles}`,
     `建议难度：${parsed.difficulty || '待选择论文规格后细化'}`,
@@ -227,6 +283,16 @@ export default function Stage1() {
             writingBoundary: currentProject.context.writingBoundary,
             academicLevel: storedLevel || '待选择',
             rawSummary: currentProject.context.rawSummary,
+            pathType: currentProject.context.pathType,
+            inputType: currentProject.context.inputType,
+            hasDetectedOutline: currentProject.context.hasDetectedOutline,
+            hasDetectedDraft: currentProject.context.hasDetectedDraft,
+            academicLevelSuggestion: currentProject.context.academicLevelSuggestion,
+            academicLevelReason: currentProject.context.academicLevelReason,
+            coreArguments: currentProject.context.coreArguments,
+            outlineSummary: currentProject.context.outlineSummary,
+            draftSummary: currentProject.context.draftSummary,
+            nextStepRecommendation: currentProject.context.nextStepRecommendation,
           }
         : null
 
@@ -370,6 +436,16 @@ export default function Stage1() {
                   writingBoundary: model.writingBoundary,
                   academicLevel: selectedLevel || '',
                   rawSummary: model.rawSummary,
+                  pathType: model.pathType,
+                  inputType: model.inputType,
+                  hasDetectedOutline: model.hasDetectedOutline,
+                  hasDetectedDraft: model.hasDetectedDraft,
+                  academicLevelSuggestion: model.academicLevelSuggestion,
+                  academicLevelReason: model.academicLevelReason,
+                  coreArguments: model.coreArguments,
+                  outlineSummary: model.outlineSummary,
+                  draftSummary: model.draftSummary,
+                  nextStepRecommendation: model.nextStepRecommendation,
                 },
                 currentStage: selectedLevel ? 'stage2' : 'stage1',
               })
@@ -572,10 +648,16 @@ export default function Stage1() {
                 </div>
                 {[
                   { label: '推荐题目', value: projectStore.ensure(project.id).title },
+                  { label: '路径判断', value: comprehension.pathType ? PATH_LABELS[comprehension.pathType] : '' },
+                  { label: '输入类型', value: comprehension.inputType ? INPUT_LABELS[comprehension.inputType] : '' },
+                  { label: '大纲/正文', value: `大纲：${comprehension.hasDetectedOutline ? '已识别' : '未识别'}；正文：${comprehension.hasDetectedDraft ? '已识别' : '未识别'}` },
                   { label: '主题判断', value: comprehension.researchObject },
+                  { label: '核心论点', value: formatList(comprehension.coreArguments) },
+                  { label: 'AI 学段建议', value: [comprehension.academicLevelSuggestion, comprehension.academicLevelReason].filter(Boolean).join('：') },
+                  { label: '建议下一步', value: comprehension.nextStepRecommendation ? NEXT_STEP_LABELS[comprehension.nextStepRecommendation] : '' },
                   { label: '材料建议', value: comprehension.rawSummary },
                   { label: '论文规格', value: selectedLevel || '待选择' },
-                ].map(item => (
+                ].filter(item => item.value).map(item => (
                   <div key={item.label} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                     <span
                       style={{

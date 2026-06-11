@@ -12,12 +12,14 @@ import {
   Plus,
   Shapes,
   Trash2,
+  Type,
 } from 'lucide-react'
 import { chatStore, projectStore, type ChatMessage } from '../lib/storage'
 import { auth } from '../lib/auth'
 
 const NAV_ITEMS = [
   { label: '库', icon: BookOpen, path: '/library' },
+  { label: '风格档案', icon: Type, path: '/style-profiles' },
   { label: '项目', icon: Folder, path: '/projects' },
   { label: '应用', icon: Shapes, path: '/projects' },
   { label: '更多', icon: MoreHorizontal, path: '/projects' },
@@ -223,6 +225,7 @@ function Sidebar() {
           const Icon = item.icon
           const active =
             (item.label === '库' && location.pathname.startsWith('/library')) ||
+            (item.label === '风格档案' && location.pathname.startsWith('/style-profiles')) ||
             (item.label === '项目' && location.pathname.startsWith('/projects'))
 
           return (

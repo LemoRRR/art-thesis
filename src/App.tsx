@@ -8,6 +8,7 @@ import Projects from './pages/Projects'
 import Stage1 from './pages/Stage1'
 import Stage2 from './pages/Stage2'
 import Stage3 from './pages/Stage3'
+import StyleProfiles from './pages/StyleProfiles'
 import { projectStore, syncRemoteData } from './lib/storage'
 
 function DefaultConversationRedirect() {
@@ -88,6 +89,7 @@ export default function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<DefaultConversationRedirect />} />
             <Route path="/library" element={<Library />} />
+            <Route path="/style-profiles" element={<StyleProfiles />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/:projectId" element={<ProjectHome />} />
             <Route path="/projects/:projectId/stage1" element={<Stage1 />} />

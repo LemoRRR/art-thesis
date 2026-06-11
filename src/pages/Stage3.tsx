@@ -38,10 +38,12 @@ import {
   outlineStore,
   projectStore,
   sectionStore,
+  styleProfileStore,
   versionStore,
   type ChatMessage,
   type DocSection,
   type OutlineSection,
+  type StyleProfile,
 } from '../lib/storage'
 
 type Mode = 'revise' | 'finish'
@@ -105,6 +107,31 @@ function ensureFrontMatterOutlineSection(sections: OutlineSection[]): OutlineSec
 
 function outlineChildrenSignature(section: OutlineSection): string {
   return outlineToText(section.children ?? [])
+}
+
+function findOutlineSectionById(sections: OutlineSection[], id?: string): OutlineSection | null {
+  if (!id) return null
+  for (const section of sections) {
+    if (section.id === id) return section
+    const child = section.children ? findOutlineSectionById(section.children, id) : null
+    if (child) return child
+  }
+  return null
+}
+
+function formatStyleProfileForPrompt(profile?: StyleProfile | null): string | undefined {
+  if (!profile) return undefined
+  return [
+    `学生风格档案：${profile.profileName}（${profile.studentName}）`,
+    `语言水平：${profile.writingLevel}`,
+    `句式特征：${profile.sentenceStyle}`,
+    `段落组织：${profile.paragraphLogic}`,
+    `论证方式：${profile.argumentStyle}`,
+    `过渡方式：${profile.transitionStyle}`,
+    `词汇风格：${profile.vocabularyStyle}`,
+    `风格画像：${profile.editableSummary}`,
+    `边界：${profile.avoidContentReuseNotice || '只参考表达方式，不复用参考文章内容。'}`,
+  ].filter(Boolean).join('\n')
 }
 
 function OutlineToDraftTransition({
@@ -430,6 +457,7 @@ export default function Stage3() {
   const [isAdjusting, setIsAdjusting] = useState(false)
   const [projectTitle, setProjectTitle] = useState(project.title)
   const [mentions, setMentions] = useState<MentionRef[]>([])
+  const [selectedStyleProfileId, setSelectedStyleProfileId] = useState('')
   const [showOutlineTransition, setShowOutlineTransition] = useState(() => {
     const key = `outline_to_draft_transition_${project.id}`
     const markedAt = Number(sessionStorage.getItem(key) ?? 0)
@@ -439,6 +467,15 @@ export default function Stage3() {
   })
 
   const academicLevel = normalizeAcademicLevel(project.context.academicLevel)
+  const styleProfiles = useMemo(() => styleProfileStore.getAll(), [])
+  const selectedStyleProfile = useMemo(
+    () => styleProfiles.find(profile => profile.id === selectedStyleProfileId) ?? null,
+    [selectedStyleProfileId, styleProfiles]
+  )
+  const activeStyleGuide = useMemo(() => {
+    const profileGuide = formatStyleProfileForPrompt(selectedStyleProfile)
+    return [project.context.stylePreference, profileGuide].filter(Boolean).join('\n\n') || undefined
+  }, [project.context.stylePreference, selectedStyleProfile])
   const footnoteCount = useMemo(() => getAllFootnotes(sections).length, [sections])
   const bibliographyContent = useMemo(() => buildBibliographyContent(sections), [sections])
 
@@ -546,7 +583,7 @@ export default function Stage3() {
     const fullOutlineSummary = outlineToText(outlineSections)
     const comprehensionSummary = currentProject.context.rawSummary ?? ''
     const bannedPhrases = currentProject.context.bannedPhrases ?? []
-    const styleGuide = currentProject.context.stylePreference || undefined
+    const styleGuide = activeStyleGuide
     const generatedSections: DocSection[] = []
     let paperPlan: string
     const chapterSummaries: string[] = []
@@ -693,7 +730,7 @@ export default function Stage3() {
       saveStageMessages(next)
       return next
     })
-  }, [academicLevel, buildCitationAwareContext, project.id, saveStageMessages])
+  }, [academicLevel, activeStyleGuide, buildCitationAwareContext, project.id, saveStageMessages])
 
   const generateAdditionalSections = useCallback(async (
     newOutlineSections: OutlineSection[],
@@ -713,7 +750,7 @@ export default function Stage3() {
     const fullOutlineSummary = outlineToText(allOutlineSections)
     const comprehensionSummary = currentProject.context.rawSummary ?? ''
     const bannedPhrases = currentProject.context.bannedPhrases ?? []
-    const styleGuide = currentProject.context.stylePreference || undefined
+    const styleGuide = activeStyleGuide
     const nextSections = [...existingSections]
     const paperPlan = existingSections.find(section => section.generationPlan)?.generationPlan ?? ''
     const chapterSummaries = existingSections
@@ -835,7 +872,7 @@ export default function Stage3() {
     setIsGeneratingFull(false)
     setAllGenerated(nextSections.every(section => section.status === 'done'))
     sectionStore.saveForProject(project.id, nextSections)
-  }, [academicLevel, buildCitationAwareContext, project.id, saveStageMessages])
+  }, [academicLevel, activeStyleGuide, buildCitationAwareContext, project.id, saveStageMessages])
 
   useEffect(() => {
     const savedMessages = chatStore.getByProject(project.id, 'stage3')
@@ -1192,6 +1229,114 @@ export default function Stage3() {
     startFullGeneration(ensureFrontMatterOutlineSection(outline.sections))
   }
 
+  const generateActiveSectionOnly = async () => {
+    const targetSection = sections.find(section => section.id === activeSectionId) ?? sections[0]
+    if (!targetSection || isGeneratingFull || isLoading) {
+      alert('请先选择要生成或重写的小节。')
+      return
+    }
+
+    const outline = outlineStore.get(project.id)
+    if (!outline?.sections?.length) {
+      alert('请先在阶段二确认大纲。')
+      return
+    }
+
+    if (targetSection.content.trim() && !confirm(`确认重写「${targetSection.title}」？只会替换当前小节，不影响其他内容。`)) return
+
+    const outlineSections = ensureFrontMatterOutlineSection(outline.sections)
+    const outlineNode = findOutlineSectionById(outlineSections, targetSection.outlineNodeId)
+    const chapterTitle = outlineNode ? outlineSectionTitle(outlineNode) : targetSection.title
+    const chapterOutline = outlineNode ? chapterChildrenToText(outlineNode) : targetSection.title
+    const currentProject = projectStore.ensure(project.id)
+    const { citationContext, citableSources } = buildCitationAwareContext(
+      buildAIContext({
+        projectId: project.id,
+        stage: 'stage3',
+        currentSectionId: targetSection.id,
+      })
+    )
+    const fullOutlineSummary = outlineToText(outlineSections)
+    const comprehensionSummary = currentProject.context.rawSummary ?? ''
+    const bannedPhrases = currentProject.context.bannedPhrases ?? []
+    const previousChapterSummaries = sections
+      .filter(section => section.id !== targetSection.id && section.generatedSummary)
+      .map(section => `${section.title}：${section.generatedSummary}`)
+      .join('\n\n')
+
+    setIsGeneratingFull(true)
+    setGeneratingProgress({ current: 1, total: 1 })
+    setSections(prev => prev.map(section =>
+      section.id === targetSection.id ? { ...section, content: '', status: 'generating' } : section
+    ))
+
+    const abort = new AbortController()
+    abortRef.current = abort
+    try {
+      const fullContent = await streamGPTText(
+        promptGenerateChapter(
+          chapterTitle,
+          chapterOutline,
+          fullOutlineSummary,
+          comprehensionSummary,
+          citationContext,
+          bannedPhrases,
+          academicLevel,
+          activeStyleGuide,
+          undefined,
+          targetSection.generationPlan,
+          previousChapterSummaries,
+          undefined
+        ),
+        abort.signal,
+        streamed => {
+          setSections(prev => prev.map(section =>
+            section.id === targetSection.id ? { ...section, content: stripCitationMarkers(streamed) } : section
+          ))
+        }
+      )
+
+      let chapterSummary = ''
+      try {
+        chapterSummary = await streamGPTText(promptSummarizeGeneratedChapter(chapterTitle, stripCitationMarkers(fullContent)))
+      } catch {
+        chapterSummary = stripCitationMarkers(fullContent).slice(0, 220)
+      }
+
+      setSections(prev => {
+        const finalized = finalizeSectionWithCitations(
+          prev,
+          targetSection.id,
+          fullContent,
+          citableSources
+        ).map(section =>
+          section.id === targetSection.id
+            ? {
+                ...section,
+                title: chapterTitle,
+                outlineNodeId: targetSection.outlineNodeId,
+                outlineOrder: targetSection.outlineOrder,
+                outlineChildrenSignature: targetSection.outlineChildrenSignature,
+                generatedSummary: chapterSummary,
+                editorDoc: paperTextToEditorDoc(section.content),
+                status: 'done' as const,
+                lastModified: Date.now(),
+              }
+            : section
+        )
+        return persistSections(finalized, `生成当前小节：${chapterTitle}`)
+      })
+    } catch (error) {
+      setSections(prev => prev.map(section =>
+        section.id === targetSection.id ? { ...section, status: 'pending' } : section
+      ))
+      alert(`生成当前小节失败：${error instanceof Error ? error.message : '请稍后重试'}`)
+    } finally {
+      setIsGeneratingFull(false)
+      setGeneratingProgress({ current: 0, total: 0 })
+    }
+  }
+
   const syncSectionsToCloud = async () => {
     try {
       const cachedSections = sectionStore.getByProject(project.id)
@@ -1225,6 +1370,19 @@ export default function Stage3() {
           currentStep={2}
           right={
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {styleProfiles.length > 0 && (
+                <select
+                  value={selectedStyleProfileId}
+                  onChange={event => setSelectedStyleProfileId(event.target.value)}
+                  title="选择语言风格档案"
+                  style={{ height: 28, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'transparent', color: 'var(--color-ink-2)', fontSize: 12, padding: '0 8px', fontFamily: 'var(--font-sans)' }}
+                >
+                  <option value="">不使用风格档案</option>
+                  {styleProfiles.map(profile => (
+                    <option key={profile.id} value={profile.id}>{profile.studentName} · {profile.profileName}</option>
+                  ))}
+                </select>
+              )}
               <button
                 onClick={() => setShowReferences(value => !value)}
                 style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: `1px solid ${showReferences ? 'var(--color-accent)' : 'var(--color-border)'}`, background: showReferences ? 'var(--color-accent-light)' : 'transparent', color: showReferences ? 'var(--color-accent)' : 'var(--color-ink-3)', fontSize: 12, cursor: 'pointer' }}
@@ -1254,6 +1412,14 @@ export default function Stage3() {
               >
                 <RefreshCw size={13} />
                 重新生成全文
+              </button>
+              <button
+                onClick={() => void generateActiveSectionOnly()}
+                disabled={isGeneratingFull || !activeSectionId}
+                style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'transparent', color: isGeneratingFull || !activeSectionId ? 'var(--color-ink-3)' : 'var(--color-accent)', fontSize: 12, cursor: isGeneratingFull || !activeSectionId ? 'not-allowed' : 'pointer' }}
+              >
+                <Sparkles size={13} />
+                生成当前小节
               </button>
               <button
                 onClick={syncSectionsToCloud}
