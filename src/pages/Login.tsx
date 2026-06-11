@@ -1,22 +1,22 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { authAPI } from '../lib/api'
 import { auth } from '../lib/auth'
+import { createNewConversationProject } from '../lib/conversation'
 
 export default function Login() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
   const [tab, setTab] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const redirectTo = (() => {
-    const value = searchParams.get('redirect')
-    return value?.startsWith('/') && !value.startsWith('/login') ? value : '/'
-  })()
+  const goToNewConversation = () => {
+    const project = createNewConversationProject()
+    navigate(`/projects/${project.id}/stage1`, { replace: true })
+  }
 
   const handleLogin = async () => {
     if (loading) return
@@ -32,7 +32,7 @@ export default function Login() {
     setError('')
     try {
       await auth.login(email, password)
-      navigate(redirectTo)
+      goToNewConversation()
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败')
     } finally {
@@ -64,8 +64,10 @@ export default function Login() {
       if (data.session?.access_token) {
         localStorage.setItem('access_token', data.session.access_token)
         localStorage.setItem('auth_user', JSON.stringify(data.user))
+        goToNewConversation()
+      } else {
+        navigate('/login', { replace: true })
       }
-      navigate(redirectTo)
     } catch (err) {
       setError(err instanceof Error ? err.message : '注册失败')
     } finally {
