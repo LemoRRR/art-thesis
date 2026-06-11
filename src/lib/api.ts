@@ -118,6 +118,17 @@ export const libraryAPI = {
   delete: (id: string) => request(`/api/library/${id}`, { method: 'DELETE' }),
 }
 
+export const styleProfilesAPI = {
+  list: () => request('/api/style-profiles'),
+  search: (query: string) => request(`/api/style-profiles?search=${encodeURIComponent(query)}`),
+  get: (id: string) => request(`/api/style-profiles/${id}`),
+  create: (data: unknown) =>
+    request('/api/style-profiles', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: unknown) =>
+    request(`/api/style-profiles/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  delete: (id: string) => request(`/api/style-profiles/${id}`, { method: 'DELETE' }),
+}
+
 export const chatAPI = {
   listByProjectStage: (projectId: string, stage: string) =>
     request(`/api/chat/project/${projectId}/${stage}`),

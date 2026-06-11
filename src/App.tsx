@@ -29,6 +29,7 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
   const location = useLocation()
   const [ready, setReady] = useState(!auth.isLoggedIn())
   const [error, setError] = useState('')
+  const [redirectToLogin, setRedirectToLogin] = useState(false)
   const syncedRef = useRef(false)
 
   useEffect(() => {
@@ -40,6 +41,7 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
 
     setReady(false)
     setError('')
+    setRedirectToLogin(false)
     Promise.race([
       syncRemoteData(),
       new Promise<void>((resolve) => {
@@ -52,6 +54,9 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
       })
       .finally(() => {
         if (!cancelled) {
+          if (auth.isAuthRequired() && !auth.isLoggedIn() && location.pathname !== '/login') {
+            setRedirectToLogin(true)
+          }
           syncedRef.current = true
           setReady(true)
         }
@@ -61,6 +66,11 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
       cancelled = true
     }
   }, [location.pathname])
+
+  if (redirectToLogin) {
+    const redirect = `${location.pathname}${location.search}${location.hash}`
+    return <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />
+  }
 
   if (!ready) {
     return (

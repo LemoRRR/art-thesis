@@ -4,6 +4,7 @@ import {
   projectStore,
   referenceStore,
   sectionStore,
+  styleProfileStore,
   type WorkflowStage,
 } from './storage'
 import type { MentionRef } from '../components/MentionInput'
@@ -59,13 +60,34 @@ function getMentionContent(itemId: string) {
   return parts.length > 0 ? parts.join('\n\n') : item.summary || item.text
 }
 
+function getStyleProfileMentionContent(profileId: string) {
+  const profile = styleProfileStore.get(profileId)
+  if (!profile) return ''
+  return [
+    `学生：${profile.studentName || profile.profileName}`,
+    profile.writingLevel ? `语言水平：${profile.writingLevel}` : '',
+    profile.sentenceStyle ? `句式特征：${profile.sentenceStyle}` : '',
+    profile.paragraphLogic ? `段落逻辑：${profile.paragraphLogic}` : '',
+    profile.argumentStyle ? `论证方式：${profile.argumentStyle}` : '',
+    profile.transitionStyle ? `衔接方式：${profile.transitionStyle}` : '',
+    profile.vocabularyStyle ? `词汇偏好：${profile.vocabularyStyle}` : '',
+    profile.editableSummary ? `可复制写法范式：\n${profile.editableSummary}` : '',
+    profile.avoidContentReuseNotice ? `限制：${profile.avoidContentReuseNotice}` : '只模仿语言水平和表达方式，不提取或复用具体内容。',
+  ].filter(Boolean).join('\n')
+}
+
 export function buildMentionContext(mentions: MentionRef[]): string {
   if (mentions.length === 0) return ''
   const parts = mentions
     .map((mention, index) => {
-      const content = getMentionContent(mention.itemId)
+      const isStyleProfile = mention.kind === 'styleProfile' || Boolean(mention.styleProfileId)
+      const content = isStyleProfile && mention.styleProfileId
+        ? getStyleProfileMentionContent(mention.styleProfileId)
+        : mention.itemId
+          ? getMentionContent(mention.itemId)
+          : ''
       if (!content.trim()) return ''
-      return `${index + 1}. @${mention.title}\n${clip(content, 1400)}`
+      return `${index + 1}. ${isStyleProfile ? '/' : '@'}${mention.title}\n${clip(content, 1400)}`
     })
     .filter(Boolean)
 

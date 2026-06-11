@@ -90,13 +90,7 @@ router.patch('/:id', async (req: AuthRequest, res) => {
 router.put('/project/:projectId', async (req: AuthRequest, res) => {
   const db = createUserClient(req.accessToken!)
   const { sections = [] } = req.body
-  console.log('[sections:saveAll]', {
-    projectId: req.params.projectId,
-    userId: req.userId,
-    count: sections.length,
-    firstId: sections[0]?.id,
-  })
-  await db.from('sections').delete().eq('project_id', req.params.projectId)
+  const projectId = req.params.projectId
 
   if (sections.length > 0) {
     const rows = sections.map((section: Record<string, unknown>, index: number) => ({
@@ -105,14 +99,31 @@ router.put('/project/:projectId', async (req: AuthRequest, res) => {
         content: section.content ?? '',
         content_doc: section.content_doc,
         status: section.status ?? 'pending',
-        project_id: req.params.projectId,
+        project_id: projectId,
         sort_order: index,
       })).map(removeUndefined)
-    let { error } = await db.from('sections').insert(rows)
+    let { error } = await db.from('sections').upsert(rows, { onConflict: 'id' })
     if (isMissingContentDocColumn(error)) {
-      const retry = await db.from('sections').insert(rows.map(withoutContentDoc))
+      const retry = await db.from('sections').upsert(rows.map(withoutContentDoc), { onConflict: 'id' })
       error = retry.error
     }
+    if (error) {
+      console.error('[sections:saveAll:error]', error.message)
+      res.status(500).json({ error: error.message })
+      return
+    }
+
+    const incomingIds = rows.map(row => row.id).filter(Boolean)
+    const staleDelete = incomingIds.length > 0
+      ? await db.from('sections').delete().eq('project_id', projectId).not('id', 'in', `(${incomingIds.join(',')})`)
+      : await db.from('sections').delete().eq('project_id', projectId)
+    if (staleDelete.error) {
+      console.error('[sections:saveAll:error]', staleDelete.error.message)
+      res.status(500).json({ error: staleDelete.error.message })
+      return
+    }
+  } else {
+    const { error } = await db.from('sections').delete().eq('project_id', projectId)
     if (error) {
       console.error('[sections:saveAll:error]', error.message)
       res.status(500).json({ error: error.message })

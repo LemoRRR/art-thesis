@@ -2,11 +2,13 @@ import { useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react
 import { AtSign, Search, Type } from 'lucide-react'
 import { libraryAPI } from '../lib/api'
 import { auth } from '../lib/auth'
-import { libraryStore, type LibraryItem, type StyleProfile } from '../lib/storage'
+import { libraryStore, styleProfileStore, type LibraryItem, type StyleProfile } from '../lib/storage'
 
 export interface MentionRef {
-  itemId: string
+  itemId?: string
+  styleProfileId?: string
   title: string
+  kind?: 'library' | 'styleProfile'
 }
 
 interface MentionInputProps {
@@ -34,7 +36,7 @@ export default function MentionInput({
   rows = 3,
   style,
   onKeyDown,
-  styleProfiles = [],
+  styleProfiles,
   selectedStyleProfileId = '',
   onStyleProfileSelect,
 }: MentionInputProps) {
@@ -43,26 +45,34 @@ export default function MentionInput({
   const [query, setQuery] = useState('')
   const [styleQuery, setStyleQuery] = useState('')
   const [results, setResults] = useState<LibraryItem[]>(() => libraryStore.getAll().slice(0, 8))
+  const availableStyleProfiles = useMemo(
+    () => styleProfiles ?? styleProfileStore.getAll(),
+    [styleProfiles]
+  )
 
   const selectedKeys = useMemo(
-    () => new Set(mentions.map(item => item.itemId)),
+    () => new Set(mentions.map(item => item.itemId).filter((id): id is string => Boolean(id))),
+    [mentions]
+  )
+  const selectedStyleKeys = useMemo(
+    () => new Set(mentions.map(item => item.styleProfileId).filter((id): id is string => Boolean(id))),
     [mentions]
   )
   const selectedStyleProfile = useMemo(
-    () => styleProfiles.find(profile => profile.id === selectedStyleProfileId) ?? null,
-    [selectedStyleProfileId, styleProfiles]
+    () => availableStyleProfiles.find(profile => profile.id === selectedStyleProfileId) ?? null,
+    [availableStyleProfiles, selectedStyleProfileId]
   )
   const filteredStyleProfiles = useMemo(() => {
     const keyword = styleQuery.trim().toLowerCase()
     const list = keyword
-      ? styleProfiles.filter(profile =>
-          profile.studentName.toLowerCase().includes(keyword)
-          || profile.editableSummary.toLowerCase().includes(keyword)
-          || profile.writingLevel.toLowerCase().includes(keyword)
+      ? availableStyleProfiles.filter(profile =>
+          profile.studentName.toLowerCase().includes(keyword) ||
+          profile.editableSummary.toLowerCase().includes(keyword) ||
+          profile.writingLevel.toLowerCase().includes(keyword)
         )
-      : styleProfiles
+      : availableStyleProfiles
     return list.slice(0, 8)
-  }, [styleProfiles, styleQuery])
+  }, [availableStyleProfiles, styleQuery])
 
   const runSearch = async (nextQuery: string) => {
     setQuery(nextQuery)
@@ -78,7 +88,7 @@ export default function MentionInput({
         const remote = (rows as unknown[]).map(row => libraryStore.upsertRemote(row))
         setResults(remote.slice(0, 8))
       } catch {
-        // 本地资料库已经可用，远端搜索失败时不阻塞输入。
+        // 本地资料库可用即可，远程搜索失败时不阻塞输入。
       }
     }
   }
@@ -89,7 +99,7 @@ export default function MentionInput({
       setStyleOpen(false)
       setOpen(true)
       void runSearch('')
-    } else if (next.endsWith('/') && styleProfiles.length > 0 && onStyleProfileSelect) {
+    } else if (next.endsWith('/') && availableStyleProfiles.length > 0) {
       setOpen(false)
       setStyleOpen(true)
       setStyleQuery('')
@@ -98,7 +108,7 @@ export default function MentionInput({
 
   const addMention = (item: LibraryItem) => {
     if (!selectedKeys.has(item.id)) {
-      onMentionsChange([...mentions, { itemId: item.id, title: item.title }])
+      onMentionsChange([...mentions, { itemId: item.id, title: item.title, kind: 'library' }])
     }
     const mentionText = `@${item.title} `
     const atIndex = value.lastIndexOf('@')
@@ -112,8 +122,11 @@ export default function MentionInput({
   }
 
   const addStyleProfile = (profile: StyleProfile) => {
-    onStyleProfileSelect?.(profile.id)
     const label = profile.studentName || profile.profileName || '风格档案'
+    onStyleProfileSelect?.(profile.id)
+    if (!selectedStyleKeys.has(profile.id)) {
+      onMentionsChange([...mentions, { styleProfileId: profile.id, title: label, kind: 'styleProfile' }])
+    }
     const mentionText = `/${label} `
     const slashIndex = value.lastIndexOf('/')
     if (slashIndex >= 0) {
@@ -151,28 +164,32 @@ export default function MentionInput({
 
       {mentions.length > 0 && (
         <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {mentions.map(item => (
-            <button
-              key={item.itemId}
-              type="button"
-              onClick={() => onMentionsChange(mentions.filter(ref => ref.itemId !== item.itemId))}
-              style={{
-                border: '1px solid var(--color-border)',
-                borderRadius: 999,
-                background: 'var(--color-accent-light)',
-                color: 'var(--color-accent)',
-                padding: '4px 9px',
-                fontSize: 11,
-                cursor: 'pointer',
-              }}
-            >
-              @{item.title} ×
-            </button>
-          ))}
+          {mentions.map(item => {
+            const key = item.itemId ?? item.styleProfileId ?? item.title
+            const isStyleProfile = item.kind === 'styleProfile' || Boolean(item.styleProfileId)
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => onMentionsChange(mentions.filter(ref => (ref.itemId ?? ref.styleProfileId ?? ref.title) !== key))}
+                style={{
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 999,
+                  background: isStyleProfile ? 'var(--color-bg)' : 'var(--color-accent-light)',
+                  color: isStyleProfile ? 'var(--color-ink-2)' : 'var(--color-accent)',
+                  padding: '4px 9px',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                }}
+              >
+                {isStyleProfile ? '/' : '@'}{item.title} x
+              </button>
+            )
+          })}
         </div>
       )}
 
-      {selectedStyleProfile && (
+      {selectedStyleProfile && !selectedStyleKeys.has(selectedStyleProfile.id) && (
         <div style={{ marginTop: mentions.length > 0 ? 6 : 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           <button
             type="button"
@@ -187,7 +204,7 @@ export default function MentionInput({
               cursor: 'pointer',
             }}
           >
-            /{selectedStyleProfile.studentName || selectedStyleProfile.profileName} ×
+            /{selectedStyleProfile.studentName || selectedStyleProfile.profileName} x
           </button>
         </div>
       )}
@@ -211,7 +228,7 @@ export default function MentionInput({
             <input
               value={query}
               onChange={event => void runSearch(event.target.value)}
-            placeholder="搜索资料库"
+              placeholder="搜索资料库"
               autoFocus
               style={{ flex: 1, border: 'none', outline: 'none', fontSize: 12, fontFamily: 'var(--font-sans)' }}
             />
@@ -288,7 +305,7 @@ export default function MentionInput({
                   width: '100%',
                   border: 'none',
                   borderBottom: '1px solid var(--color-border)',
-                  background: profile.id === selectedStyleProfileId ? 'var(--color-accent-light)' : 'transparent',
+                  background: profile.id === selectedStyleProfileId || selectedStyleKeys.has(profile.id) ? 'var(--color-accent-light)' : 'transparent',
                   padding: 10,
                   textAlign: 'left',
                   cursor: 'pointer',

@@ -24,7 +24,7 @@ export const auth = {
       return null
     }
   },
-  isLoggedIn: () => Boolean(localStorage.getItem('access_token')),
+  isLoggedIn: () => Boolean(localStorage.getItem('access_token') && auth.getUser()),
   clearSession: () => {
     localStorage.removeItem('access_token')
     localStorage.removeItem('auth_user')

@@ -1,4 +1,4 @@
-// AI 调用核心文件：前端只请求自己的后端代理，不暴露模型密钥。
+// Frontend AI calls always go through our own backend proxy, so model keys are not exposed.
 export interface Message {
   role: 'system' | 'user' | 'assistant'
   content: string
@@ -11,6 +11,8 @@ export interface StreamCallbacks {
 }
 
 const BASE_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_BASE_URL || '')
+const STREAM_STALL_TIMEOUT_MS = 90_000
+const STREAM_TOTAL_TIMEOUT_MS = 8 * 60_000
 
 function getToken(): string | null {
   return localStorage.getItem('access_token')
@@ -23,6 +25,48 @@ function streamViaServer(
   signal?: AbortSignal
 ) {
   const token = getToken()
+  const controller = new AbortController()
+  let timedOut: 'stall' | 'total' | null = null
+  let settled = false
+  let stallTimer: number | undefined
+
+  const cleanup = () => {
+    settled = true
+    window.clearTimeout(stallTimer)
+    window.clearTimeout(totalTimer)
+    signal?.removeEventListener('abort', handleExternalAbort)
+  }
+
+  const fail = (error: Error) => {
+    if (settled) return
+    cleanup()
+    callbacks.onError(error)
+  }
+
+  const done = () => {
+    if (settled) return
+    cleanup()
+    callbacks.onDone()
+  }
+
+  const resetStallTimer = () => {
+    window.clearTimeout(stallTimer)
+    stallTimer = window.setTimeout(() => {
+      timedOut = 'stall'
+      controller.abort()
+    }, STREAM_STALL_TIMEOUT_MS)
+  }
+
+  const handleExternalAbort = () => controller.abort()
+  signal?.addEventListener('abort', handleExternalAbort, { once: true })
+
+  const totalTimer = window.setTimeout(() => {
+    timedOut = 'total'
+    controller.abort()
+  }, STREAM_TOTAL_TIMEOUT_MS)
+
+  resetStallTimer()
+
   fetch(`${BASE_URL}/api/ai/stream`, {
     method: 'POST',
     headers: {
@@ -30,17 +74,18 @@ function streamViaServer(
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ messages, model }),
-    signal,
+    signal: controller.signal,
   }).then(async res => {
+    resetStallTimer()
     if (!res.ok || !res.body) {
       if (res.status === 401) {
         localStorage.removeItem('access_token')
         localStorage.removeItem('auth_user')
-        callbacks.onError(new Error('登录已过期，请重新登录后再试。'))
+        fail(new Error('登录已过期，请重新登录后再试。'))
         return
       }
       const detail = await res.text().catch(() => '')
-      callbacks.onError(new Error(detail || 'AI 调用失败，请稍后再试。'))
+      fail(new Error(detail || 'AI 调用失败，请稍后再试。'))
       return
     }
 
@@ -49,8 +94,9 @@ function streamViaServer(
     let buffer = ''
 
     while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+      const { done: streamDone, value } = await reader.read()
+      resetStallTimer()
+      if (streamDone) break
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
@@ -60,11 +106,11 @@ function streamViaServer(
         if (!trimmed.startsWith('data: ')) continue
         const data = trimmed.slice(6)
         if (data === '[DONE]') {
-          callbacks.onDone()
+          done()
           return
         }
         if (data.startsWith('[ERROR]')) {
-          callbacks.onError(new Error(data.replace('[ERROR]', '').trim() || 'AI 调用失败'))
+          fail(new Error(data.replace('[ERROR]', '').trim() || 'AI 调用失败'))
           return
         }
         try {
@@ -77,14 +123,23 @@ function streamViaServer(
       }
     }
 
-    callbacks.onDone()
+    done()
   }).catch(error => {
-    if (error instanceof Error && error.name === 'AbortError') return
-    callbacks.onError(error instanceof Error ? error : new Error(String(error)))
+    if (error instanceof Error && error.name === 'AbortError') {
+      if (timedOut === 'stall') {
+        fail(new Error('AI 生成超过 90 秒没有新内容，已自动停止。请稍后重试或单独生成当前章节。'))
+      } else if (timedOut === 'total') {
+        fail(new Error('AI 生成时间超过 8 分钟，已自动停止。建议拆分章节后重试。'))
+      } else {
+        cleanup()
+      }
+      return
+    }
+    fail(error instanceof Error ? error : new Error(String(error)))
   })
 }
 
-// GPT：用于材料理解、写新内容、语言风格提取。
+// GPT: material understanding, new content generation, style extraction.
 export function callGPT(
   messages: Message[],
   callbacks: StreamCallbacks,
@@ -93,7 +148,7 @@ export function callGPT(
   return streamViaServer('gpt', messages, callbacks, signal)
 }
 
-// 豆包：用于段落修改、框选改写、缩短、扩写、学术化。
+// Doubao: paragraph revision, selection rewrite, shorten, expand, academicize.
 export function callDoubao(
   messages: Message[],
   callbacks: StreamCallbacks,

@@ -71,12 +71,13 @@ function Sidebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const projects = projectStore.getAll()
+  const draftSnapshots = projectStore.getDraftSnapshots()
   const recentProjects = useMemo(
     () => projects
-      .filter(project => !projectStore.isEmptyDraft(project))
+      .filter(project => !projectStore.isEmptyDraft(project, draftSnapshots))
       .slice()
       .sort((a, b) => b.updatedAt - a.updatedAt),
-    [projects]
+    [draftSnapshots, projects]
   )
   const activeProjectId = projectStore.getActiveId()
   const [loggedIn, setLoggedIn] = useState(() => auth.isLoggedIn())

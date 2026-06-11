@@ -8,6 +8,7 @@ import {
   projectsAPI,
   referencesAPI,
   sectionsAPI,
+  styleProfilesAPI,
   versionsAPI,
 } from './api'
 import { auth } from './auth'
@@ -239,6 +240,14 @@ export interface ReferenceSelection {
   updatedAt: number
 }
 
+interface DraftSnapshots {
+  chats: ChatMessage[]
+  sections: DocSection[]
+  outlines: Outline[]
+  versions: VersionSnapshot[]
+  references: ReferenceSelection[]
+}
+
 const uid = (prefix?: string) => {
   void prefix
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
@@ -452,10 +461,12 @@ function normalizeLocalIdsForRemote() {
   const chats = read<ChatMessage[]>(KEYS.CHAT) ?? []
   const versions = read<VersionSnapshot[]>(KEYS.VERSIONS) ?? []
   const refs = read<ReferenceSelection[]>(KEYS.REFERENCES) ?? []
+  const styleProfiles = read<StyleProfile[]>(KEYS.STYLE_PROFILES) ?? []
 
   const projectIdMap = new Map(projects.map(project => [project.id, ensureUuid(project.id)]))
   const libraryIdMap = new Map(libraryItems.map(item => [item.id, ensureUuid(item.id)]))
   const sectionIdMap = new Map(sections.map(section => [section.id, ensureUuid(section.id)]))
+  const styleProfileIdMap = new Map(styleProfiles.map(profile => [profile.id, ensureUuid(profile.id)]))
 
   const mapProjectId = (id?: string) => id ? projectIdMap.get(id) ?? id : id
   const mapLibraryId = (id: string) => libraryIdMap.get(id) ?? id
@@ -467,6 +478,10 @@ function normalizeLocalIdsForRemote() {
     libraryItemIds: project.libraryItemIds.map(mapLibraryId),
   }))
   const nextLibrary = libraryItems.map(item => ({ ...item, id: mapLibraryId(item.id) }))
+  const nextStyleProfiles = styleProfiles.map(profile => ({
+    ...profile,
+    id: styleProfileIdMap.get(profile.id) ?? profile.id,
+  }))
   const nextSections = sections.map(section => ({
     ...section,
     id: mapSectionId(section.id),
@@ -498,6 +513,7 @@ function normalizeLocalIdsForRemote() {
 
   write(KEYS.PROJECTS, nextProjects)
   write(KEYS.LIBRARY, nextLibrary)
+  write(KEYS.STYLE_PROFILES, nextStyleProfiles)
   write(KEYS.SECTIONS, nextSections)
   write(KEYS.OUTLINE, nextOutlines)
   write(KEYS.CHAT, nextChats)
@@ -509,7 +525,7 @@ function normalizeLocalIdsForRemote() {
     write(KEYS.ACTIVE_PROJECT, projectIdMap.get(activeId))
   }
 
-  return { projects: nextProjects, libraryItems: nextLibrary, sections: nextSections, outlines: nextOutlines, chats: nextChats, versions: nextVersions, refs: nextRefs }
+  return { projects: nextProjects, libraryItems: nextLibrary, styleProfiles: nextStyleProfiles, sections: nextSections, outlines: nextOutlines, chats: nextChats, versions: nextVersions, refs: nextRefs }
 }
 
 async function pushLocalDataToRemote() {
@@ -517,6 +533,10 @@ async function pushLocalDataToRemote() {
 
   for (const item of local.libraryItems) {
     await libraryAPI.create(toApiLibraryItem(item))
+  }
+
+  for (const profile of local.styleProfiles) {
+    await styleProfilesAPI.create(toApiStyleProfile(profile))
   }
 
   for (const project of local.projects) {
@@ -545,6 +565,7 @@ export async function syncRemoteData(): Promise<void> {
   if (!canUseRemote()) return
 
   const localProjectsBeforeSync = read<Project[]>(KEYS.PROJECTS) ?? []
+  const localStyleProfilesBeforeSync = read<StyleProfile[]>(KEYS.STYLE_PROFILES) ?? []
   const localSectionsBeforeSync = read<DocSection[]>(KEYS.SECTIONS) ?? []
   const localOutlinesBeforeSync = read<Outline[]>(KEYS.OUTLINE) ?? []
   const localChatsBeforeSync = read<ChatMessage[]>(KEYS.CHAT) ?? []
@@ -556,8 +577,9 @@ export async function syncRemoteData(): Promise<void> {
     return
   }
 
-  const [remoteLibrary, projectPayloads] = await Promise.all([
+  const [remoteLibrary, remoteStyleProfiles, projectPayloads] = await Promise.all([
     libraryAPI.list().then(rows => (rows as any[]).map(fromApiLibraryItem)),
+    styleProfilesAPI.list().then(rows => (rows as any[]).map(fromApiStyleProfile)),
     Promise.all(remoteProjects.map(async project => {
       const [sections, outline, versions, chatGroups, refs] = await Promise.all([
         sectionsAPI.listByProject(project.id).then(rows => (rows as any[]).map(fromApiSection)),
@@ -610,6 +632,7 @@ export async function syncRemoteData(): Promise<void> {
 
   write(KEYS.PROJECTS, mergedProjects)
   write(KEYS.LIBRARY, remoteLibrary)
+  write(KEYS.STYLE_PROFILES, mergeById(localStyleProfilesBeforeSync, remoteStyleProfiles))
   write(KEYS.SECTIONS, mergeById(localSectionsBeforeSync, mergedSections))
   write(KEYS.OUTLINE, protectedOutlines)
   write(KEYS.VERSIONS, mergeById(localVersionsBeforeSync, projectPayloads.flatMap(item => item.versions)))
@@ -688,7 +711,8 @@ export const sectionStore = {
     return sections.filter(section => section.projectId === projectId)
   },
   save:   (sections: DocSection[]) => write(KEYS.SECTIONS, sections),
-  saveForProject: (projectId: string, sections: DocSection[]) => {
+  saveForProject: (projectId: string, sections: DocSection[], options: { syncRemote?: boolean } = {}) => {
+    const { syncRemote = true } = options
     const other = sectionStore.getAll().filter(section => section.projectId !== projectId && section.projectId)
     const scoped = sections.map((section, index) => ({
       ...section,
@@ -697,7 +721,9 @@ export const sectionStore = {
       order: section.order ?? index,
     }))
     sectionStore.save([...other, ...scoped])
-    remoteTask(() => sectionsAPI.saveAll(projectId, scoped.map(toApiSection)))
+    if (syncRemote) {
+      remoteTask(() => sectionsAPI.saveAll(projectId, scoped.map(toApiSection)))
+    }
   },
   syncProject: async (projectId: string): Promise<number> => {
     const sections = sectionStore.getByProject(projectId)
@@ -886,6 +912,7 @@ export const styleProfileStore = {
       updatedAt: now,
     }
     styleProfileStore.save([next, ...styleProfileStore.getAll()].slice(0, 50))
+    remoteTask(() => styleProfilesAPI.create(toApiStyleProfile(next)))
     return next
   },
   update: (id: string, patch: Partial<StyleProfile>) => {
@@ -893,9 +920,12 @@ export const styleProfileStore = {
       profile.id === id ? { ...profile, ...patch, updatedAt: Date.now() } : profile
     )
     styleProfileStore.save(nextProfiles)
+    const next = nextProfiles.find(profile => profile.id === id)
+    if (next) remoteTask(() => styleProfilesAPI.update(id, toApiStyleProfile(next)))
   },
   remove: (id: string) => {
     styleProfileStore.save(styleProfileStore.getAll().filter(profile => profile.id !== id))
+    remoteTask(() => styleProfilesAPI.delete(id))
   },
   clear: () => localStorage.removeItem(KEYS.STYLE_PROFILES),
 }
@@ -954,6 +984,57 @@ export const libraryStore = {
 }
 
 // ── 项目 ──────────────────────────────────────────────────────
+function createDraftSnapshots(): DraftSnapshots {
+  return {
+    chats: chatStore.getAll(),
+    sections: sectionStore.getAll(),
+    outlines: outlineStore.getAll(),
+    versions: versionStore.getAll(),
+    references: referenceStore.getAll(),
+  }
+}
+
+function fromApiStyleProfile(row: any): StyleProfile {
+  return {
+    id: row.id,
+    userId: row.user_id ?? undefined,
+    studentName: row.student_name ?? '',
+    profileName: row.profile_name ?? '',
+    sourceFileName: row.source_file_name ?? undefined,
+    sourceDocuments: row.source_documents ?? [],
+    sourceTextLength: row.source_text_length ?? 0,
+    writingLevel: row.writing_level ?? '',
+    sentenceStyle: row.sentence_style ?? '',
+    paragraphLogic: row.paragraph_logic ?? '',
+    argumentStyle: row.argument_style ?? '',
+    transitionStyle: row.transition_style ?? '',
+    vocabularyStyle: row.vocabulary_style ?? '',
+    avoidContentReuseNotice: row.avoid_content_reuse_notice ?? '',
+    editableSummary: row.editable_summary ?? '',
+    createdAt: toTime(row.created_at),
+    updatedAt: toTime(row.updated_at),
+  }
+}
+
+function toApiStyleProfile(profile: StyleProfile) {
+  return {
+    id: profile.id,
+    student_name: profile.studentName,
+    profile_name: profile.profileName,
+    source_file_name: profile.sourceFileName,
+    source_documents: profile.sourceDocuments ?? [],
+    source_text_length: profile.sourceTextLength,
+    writing_level: profile.writingLevel,
+    sentence_style: profile.sentenceStyle,
+    paragraph_logic: profile.paragraphLogic,
+    argument_style: profile.argumentStyle,
+    transition_style: profile.transitionStyle,
+    vocabulary_style: profile.vocabularyStyle,
+    avoid_content_reuse_notice: profile.avoidContentReuseNotice,
+    editable_summary: profile.editableSummary,
+  }
+}
+
 export const projectStore = {
   getAll: (): Project[] => {
     const projects = read<Project[]>(KEYS.PROJECTS) ?? []
@@ -1036,10 +1117,10 @@ export const projectStore = {
     }
     remoteTask(() => projectsAPI.delete(id))
   },
-  isEmptyDraft: (project: Project) => {
+  getDraftSnapshots: createDraftSnapshots,
+  isEmptyDraft: (project: Project, snapshots: DraftSnapshots = createDraftSnapshots()) => {
     const unnamed = !project.title || project.title === '未命名论文' || project.title === '未命名论文对话'
     if (!unnamed) return false
-    if (project.currentStage !== 'stage1') return false
     if (project.libraryItemIds.length > 0) return false
     const context = project.context ?? createEmptyProjectContext()
     const hasContext = Boolean(
@@ -1050,20 +1131,23 @@ export const projectStore = {
       || context.writingRequirements?.length
     )
     if (hasContext) return false
-    if (chatStore.getByProject(project.id).some(message => message.role === 'user')) return false
-    if (sectionStore.getByProject(project.id).some(section => section.title.trim() || section.content.trim() || section.editorDoc)) return false
-    const outline = outlineStore.get(project.id)
+    if (snapshots.chats.some(message => message.projectId === project.id && message.role === 'user')) return false
+    if (snapshots.sections.some(section =>
+      section.projectId === project.id && (section.title.trim() || section.content.trim() || section.editorDoc)
+    )) return false
+    const outline = snapshots.outlines.find(item => item.projectId === project.id)
     if (outline?.sections?.length) return false
-    if (versionStore.getByProject(project.id).some(snapshot => snapshot.projectId === project.id)) return false
-    if (referenceStore.getAll().some(selection =>
+    if (snapshots.versions.some(snapshot => snapshot.projectId === project.id)) return false
+    if (snapshots.references.some(selection =>
       selection.projectId === project.id && (selection.libraryItemIds.length > 0 || selection.sectionIds.length > 0)
     )) return false
     return true
   },
   pruneEmptyDrafts: (exceptId?: string) => {
+    const snapshots = createDraftSnapshots()
     const emptyIds = projectStore
       .getAll()
-      .filter(project => project.id !== exceptId && projectStore.isEmptyDraft(project))
+      .filter(project => project.id !== exceptId && projectStore.isEmptyDraft(project, snapshots))
       .map(project => project.id)
     emptyIds.forEach(id => projectStore.remove(id))
     return emptyIds.length

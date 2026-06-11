@@ -194,6 +194,7 @@ export default function PaperEditor({
     extensions: [
       StarterKit.configure({
         heading: { levels: [2, 3] },
+        underline: false,
       }),
       TextStyle,
       FontFamily.configure({ types: ['textStyle'] }),

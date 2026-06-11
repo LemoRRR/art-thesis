@@ -703,7 +703,7 @@ export default function Stage3() {
         }
         generatedSections[index] = doneSection
         setSections(prev => prev.map(item => item.id === section.id ? doneSection : item))
-        sectionStore.saveForProject(project.id, generatedSections)
+        sectionStore.saveForProject(project.id, generatedSections, { syncRemote: false })
         versionStore.snapshot(`AI 生成：${chapter.title}`, project.id)
       } catch {
         const failedSection = { ...section, status: 'pending' as const, lastModified: Date.now() }
@@ -852,7 +852,7 @@ export default function Stage3() {
               const currentIndex = nextSections.findIndex(item => item.id === section.id)
               if (currentIndex !== -1) nextSections[currentIndex] = doneSection
               setSections([...nextSections])
-              sectionStore.saveForProject(project.id, nextSections)
+              sectionStore.saveForProject(project.id, nextSections, { syncRemote: false })
               versionStore.snapshot(`AI 生成新增章节：${chapter.title}`, project.id)
               resolve()
             },
@@ -987,10 +987,10 @@ export default function Stage3() {
   }, [messages])
 
   useEffect(() => {
-    if (sections.length > 0) {
+    if (sections.length > 0 && !isGeneratingFull) {
       sectionStore.saveForProject(project.id, sections)
     }
-  }, [project.id, sections])
+  }, [isGeneratingFull, project.id, sections])
 
   const handleReviseMode = useCallback(async (
     opinion: string,
@@ -1094,10 +1094,10 @@ export default function Stage3() {
   const sendMessage = useCallback(async () => {
     const rawText = inputText.trim()
     if ((!rawText && mentions.length === 0) || isLoading) return
-    const text = rawText || `请结合 ${mentions.map(item => `@${item.title}`).join('、')} 为当前章节补充可引用论据，并按 [1]、[2] 的参考文献格式插入引用。`
+    const text = rawText || `请结合 ${mentions.map(item => `${item.styleProfileId ? '/' : '@'}${item.title}`).join('、')} 为当前章节补充可引用论据，并按 [1]、[2] 的参考文献格式插入引用。`
     setInputText('')
     const mentionContext = buildMentionContext(mentions)
-    const mentionItemIds = mentions.map(item => item.itemId)
+    const mentionItemIds = mentions.map(item => item.itemId).filter((id): id is string => Boolean(id))
     setMentions([])
 
     const userMsg: ChatMessage = {
@@ -1180,6 +1180,10 @@ export default function Stage3() {
   }
 
   const exportWord = async () => {
+    if (isGeneratingFull) {
+      alert('正文还在生成中，请等生成完成后再导出 Word。')
+      return
+    }
     const exportSections = buildCompleteSections()
     if (exportSections.length === 0) return
     try {

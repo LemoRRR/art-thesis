@@ -78,6 +78,90 @@ function countSections(sections: OutlineSection[]): number {
   return sections.reduce((total, section) => total + 1 + (section.children ? countSections(section.children) : 0), 0)
 }
 
+function stripOutlineTitle(raw: string): string {
+  return raw
+    .replace(/^[\s:：、.．)）-]+/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function parseExistingOutlineFromText(text: string): OutlineSection[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+  const roots: OutlineSection[] = []
+  const stack: OutlineSection[] = []
+
+  const pushNode = (level: 1 | 2 | 3, title: string) => {
+    const cleanTitle = stripOutlineTitle(title)
+    if (!cleanTitle || /^(摘要|关键词|关键字|Abstract|Keywords?)[:：]?/i.test(cleanTitle)) return
+
+    const node: OutlineSection = {
+      id: uid(),
+      level,
+      order: '',
+      title: cleanTitle,
+      children: [],
+    }
+    stack[level - 1] = node
+    stack.length = level
+
+    if (level === 1) {
+      roots.push(node)
+      return
+    }
+
+    const parent = stack[level - 2]
+    if (!parent) {
+      roots.push({ ...node, level: 1 })
+      stack[0] = roots[roots.length - 1]
+      return
+    }
+    parent.children = [...(parent.children ?? []), node]
+  }
+
+  lines.forEach(line => {
+    const normalized = line.replace(/^\s*[-*•]\s*/, '')
+    const numericMatch = normalized.match(/^(\d+(?:\.\d+){0,2})[、.．\s]+(.+)$/)
+    if (numericMatch) {
+      const order = numericMatch[1]
+      const level = Math.min(order.split('.').length, 3) as 1 | 2 | 3
+      pushNode(level, numericMatch[2])
+      return
+    }
+
+    const chineseRoot = normalized.match(/^[一二三四五六七八九十]+[、.．]\s*(.+)$/)
+    if (chineseRoot) {
+      pushNode(1, chineseRoot[1])
+      return
+    }
+
+    const bracketSecond = normalized.match(/^[（(][一二三四五六七八九十]+[）)]\s*(.+)$/)
+    if (bracketSecond) {
+      pushNode(2, bracketSecond[1])
+    }
+  })
+
+  const prune = (sections: OutlineSection[]): OutlineSection[] => sections
+    .filter(section => section.title.trim())
+    .map(section => ({
+      ...section,
+      children: section.children?.length ? prune(section.children) : undefined,
+    }))
+
+  const parsed = prune(roots)
+  return countSections(parsed) >= 3 ? parsed : []
+}
+
+function getStage1OutlineText(projectId: string): string {
+  return chatStore
+    .getByProject(projectId, 'stage1')
+    .filter(message => message.role === 'user')
+    .map(message => message.content)
+    .join('\n\n')
+}
+
 function isAbstractOutlineSection(section: OutlineSection): boolean {
   return section.order === '0' || /^(摘要|abstract|中英文摘要)/i.test(section.title.trim())
 }
@@ -539,6 +623,33 @@ export default function Stage2() {
 
     const source = getOutlineSource(projectStore.ensure(project.id))
     const comprehensionSummary = source.summary
+    const detectedOutlineSections = parseExistingOutlineFromText(getStage1OutlineText(project.id))
+    if (detectedOutlineSections.length > 0) {
+      const newOutline: Outline = {
+        projectId: project.id,
+        sections: ensureAbstractOutlineSection(detectedOutlineSections),
+        updatedAt: Date.now(),
+      }
+      setOutline(newOutline)
+      outlineStore.save(newOutline)
+      versionStore.snapshotOutline('套用用户提供的大纲', newOutline)
+      const doneMsg: ChatMessage = {
+        id: `s2_${uid()}`,
+        role: 'ai',
+        content: `我识别到你已经提供了完整大纲，已直接套用到右侧结构中，共 ${countSections(newOutline.sections)} 个标题节点。\n\n你可以继续手动编辑标题，或点击「进入全文生成」。`,
+        timestamp: Date.now(),
+        projectId: project.id,
+        stage: 'stage2',
+        flow: 'outline',
+      }
+      setMessages(prev => {
+        const next = [...prev, doneMsg]
+        saveStageMessages(next)
+        return next
+      })
+      return
+    }
+
     if (!comprehensionSummary || isGenerating) {
       if (!comprehensionSummary) {
         const errMsg: ChatMessage = {
@@ -930,7 +1041,7 @@ export default function Stage2() {
                 mentions={mentions}
                 onMentionsChange={setMentions}
                 onKeyDown={handleKeyDown}
-                placeholder="如：第二章加一节关于 TAM 模型，或输入 @ 调用资料库…"
+                placeholder="如：第二章加一节关于 TAM 模型；@ 调用资料库，/ 调用风格档案…"
                 rows={3}
                 disabled={isLoading || isGenerating || !outline}
               />
