@@ -110,6 +110,14 @@ export default function Stage1() {
 
   // 初始化：从 localStorage 读取历史记录
   useEffect(() => {
+    setIsCompleted(false)
+    setComprehension(null)
+    setInputText('')
+    setUploadedFile(null)
+    setIsLoading(false)
+    setStreamingId(null)
+    setMentions([])
+
     const saved = chatStore.getByProject(project.id, 'stage1')
     const savedComprehension = project.context.rawSummary
       ? {
