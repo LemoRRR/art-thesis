@@ -19,6 +19,7 @@ interface StyleProfileJson {
 }
 
 type DraftProfile = Omit<StyleProfile, 'id' | 'createdAt' | 'updatedAt'>
+const maxDocumentsPerProfile = 3
 
 const emptyDraft: DraftProfile = {
   studentName: '',
@@ -265,7 +266,27 @@ export default function StyleProfiles() {
     setUploadStatus('')
   }
 
-  const uploadFile = async (file: File, resetBeforeUpload = false) => {
+  const uploadFiles = async (fileList: FileList | File[], resetBeforeUpload = false) => {
+    const incomingFiles = Array.from(fileList).slice(0, maxDocumentsPerProfile)
+    if (incomingFiles.length === 0) return
+    let uploadNotice = ''
+    if (fileList.length > maxDocumentsPerProfile) {
+      uploadNotice = `每张风格名片最多选择 ${maxDocumentsPerProfile} 个参考文档，本次只处理前 ${maxDocumentsPerProfile} 个。`
+    }
+
+    const existingCount = resetBeforeUpload ? 0 : (draft.sourceDocuments?.length ?? 0)
+    const remainingSlots = Math.max(0, maxDocumentsPerProfile - existingCount)
+    if (remainingSlots <= 0) {
+      setNotice(`这张风格名片已经有 ${maxDocumentsPerProfile} 个参考文档，不能继续添加。`)
+      setUploadStatus(`处理失败：这张风格名片最多 ${maxDocumentsPerProfile} 个参考文档。`)
+      return
+    }
+
+    const files = incomingFiles.slice(0, remainingSlots)
+    if (incomingFiles.length > remainingSlots) {
+      uploadNotice = `这张名片还可添加 ${remainingSlots} 个参考文档，本次只处理前 ${remainingSlots} 个。`
+    }
+
     if (resetBeforeUpload) {
       setActiveId(null)
       setDraft(emptyDraft)
@@ -275,59 +296,63 @@ export default function StyleProfiles() {
       setIsUploadLoading(true)
     }
     setIsExtracting(true)
-    setNotice('')
-    setUploadStatus(`已选择：${file.name}，正在准备解析…`)
+    setNotice(uploadNotice)
+
     try {
-      let text = ''
-      if (file.type.startsWith('text/') || file.name.toLowerCase().endsWith('.txt')) {
-        setUploadStatus(`正在读取文本：${file.name}`)
-        text = await file.text()
-      } else {
-        setUploadStatus(`正在上传并解析：${file.name}`)
-        setNotice('Word/PDF 会先上传到解析服务；解析出的正文只用于生成风格画像。')
-        const row = await filesAPI.upload(file)
-        const item = libraryStore.upsertRemote(row)
-        setUploadStatus('文件已上传，正在等待正文解析结果…')
-        const parsedItem = await waitForParsedLibraryItem(item.id)
-        if (parsedItem.extractStatus === 'failed') {
-          throw new Error('文件解析失败，请换一个文档或先转为 TXT 再上传。')
+      for (const [index, file] of files.entries()) {
+        const prefix = files.length > 1 ? `(${index + 1}/${files.length}) ` : ''
+        let text = ''
+        setUploadStatus(`${prefix}已选择：${file.name}，正在准备解析…`)
+        if (file.type.startsWith('text/') || file.name.toLowerCase().endsWith('.txt')) {
+          setUploadStatus(`${prefix}正在读取文本：${file.name}`)
+          text = await file.text()
+        } else {
+          setUploadStatus(`${prefix}正在上传并解析：${file.name}`)
+          setNotice('Word/PDF 会先上传到解析服务；解析出的正文只用于生成风格画像。')
+          const row = await filesAPI.upload(file)
+          const item = libraryStore.upsertRemote(row)
+          setUploadStatus(`${prefix}文件已上传，正在等待正文解析结果…`)
+          const parsedItem = await waitForParsedLibraryItem(item.id)
+          if (parsedItem.extractStatus === 'failed') {
+            throw new Error('文件解析失败，请换一个文档或先转为 TXT 再上传。')
+          }
+          text = parsedItem.text || parsedItem.summary || ''
         }
-        text = parsedItem.text || parsedItem.summary || ''
-      }
 
-      const clipped = text.trim().slice(0, 10000)
-      if (!clipped) throw new Error('没有解析到可用于提取风格的正文')
+        const clipped = text.trim().slice(0, 10000)
+        if (!clipped) throw new Error('没有解析到可用于提取风格的正文')
 
-      setUploadStatus(`已读取 ${clipped.length} 字，正在生成风格画像…`)
-      const extracted = await streamStyleProfile(clipped)
-      const documentRecord = {
-        id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        fileName: file.name,
-        textLength: clipped.length,
-        extractedAt: Date.now(),
-      }
-
-      setDraft(prev => {
-        const base = resetBeforeUpload ? emptyDraft : prev
-        const guessedStudentName = base.studentName || guessStudentNameFromFileName(file.name)
-        return {
-          ...base,
-          studentName: guessedStudentName,
-          profileName: guessedStudentName ? `${guessedStudentName}风格档案` : '',
-          sourceFileName: file.name,
-          sourceTextLength: (base.sourceTextLength ?? 0) + clipped.length,
-          sourceDocuments: [...(base.sourceDocuments ?? []), documentRecord],
-          writingLevel: mergeStyleText(base.writingLevel, extracted.writingLevel),
-          sentenceStyle: mergeStyleText(base.sentenceStyle, extracted.sentenceStyle),
-          paragraphLogic: mergeStyleText(base.paragraphLogic, extracted.paragraphLogic),
-          argumentStyle: mergeStyleText(base.argumentStyle, extracted.argumentStyle),
-          transitionStyle: mergeStyleText(base.transitionStyle, extracted.transitionStyle),
-          vocabularyStyle: mergeStyleText(base.vocabularyStyle, extracted.vocabularyStyle),
-          avoidContentReuseNotice: extracted.avoidContentReuseNotice || base.avoidContentReuseNotice,
-          editableSummary: mergeStyleText(base.editableSummary, extracted.editableSummary),
+        setUploadStatus(`${prefix}已读取 ${clipped.length} 字，正在生成风格画像…`)
+        const extracted = await streamStyleProfile(clipped)
+        const documentRecord = {
+          id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          fileName: file.name,
+          textLength: clipped.length,
+          extractedAt: Date.now(),
         }
-      })
-      setUploadStatus(`已添加参考文档：${file.name}`)
+
+        setDraft(prev => {
+          const base = resetBeforeUpload && index === 0 ? emptyDraft : prev
+          const guessedStudentName = base.studentName || guessStudentNameFromFileName(file.name)
+          return {
+            ...base,
+            studentName: guessedStudentName,
+            profileName: guessedStudentName ? `${guessedStudentName}风格档案` : '',
+            sourceFileName: file.name,
+            sourceTextLength: (base.sourceTextLength ?? 0) + clipped.length,
+            sourceDocuments: [...(base.sourceDocuments ?? []), documentRecord].slice(0, maxDocumentsPerProfile),
+            writingLevel: mergeStyleText(base.writingLevel, extracted.writingLevel),
+            sentenceStyle: mergeStyleText(base.sentenceStyle, extracted.sentenceStyle),
+            paragraphLogic: mergeStyleText(base.paragraphLogic, extracted.paragraphLogic),
+            argumentStyle: mergeStyleText(base.argumentStyle, extracted.argumentStyle),
+            transitionStyle: mergeStyleText(base.transitionStyle, extracted.transitionStyle),
+            vocabularyStyle: mergeStyleText(base.vocabularyStyle, extracted.vocabularyStyle),
+            avoidContentReuseNotice: extracted.avoidContentReuseNotice || base.avoidContentReuseNotice,
+            editableSummary: mergeStyleText(base.editableSummary, extracted.editableSummary),
+          }
+        })
+      }
+      setUploadStatus(`已添加 ${files.length} 个参考文档。`)
       if (resetBeforeUpload) setIsModalOpen(true)
     } catch (error) {
       const message = error instanceof Error ? error.message : '风格提取失败'
@@ -343,10 +368,10 @@ export default function StyleProfiles() {
   }
 
   const handleNewProfileFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
+    const files = event.target.files
     event.target.value = ''
-    if (!file) return
-    await uploadFile(file, true)
+    if (!files?.length) return
+    await uploadFiles(files, true)
   }
 
   const handleAddDragOver = (event: DragEvent<HTMLElement>) => {
@@ -364,16 +389,16 @@ export default function StyleProfiles() {
     event.preventDefault()
     setIsAddDragActive(false)
     if (isExtracting) return
-    const file = event.dataTransfer.files?.[0]
-    if (!file) return
-    await uploadFile(file, true)
+    const files = event.dataTransfer.files
+    if (!files?.length) return
+    await uploadFiles(files, true)
   }
 
   const handleModalProfileFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
+    const files = event.target.files
     event.target.value = ''
-    if (!file) return
-    await uploadFile(file, false)
+    if (!files?.length) return
+    await uploadFiles(files, false)
   }
 
   const handleModalDragOver = (event: DragEvent<HTMLElement>) => {
@@ -391,9 +416,9 @@ export default function StyleProfiles() {
     event.preventDefault()
     setIsModalDragActive(false)
     if (isExtracting) return
-    const file = event.dataTransfer.files?.[0]
-    if (!file) return
-    await uploadFile(file, false)
+    const files = event.dataTransfer.files
+    if (!files?.length) return
+    await uploadFiles(files, false)
   }
 
   return (
@@ -439,15 +464,15 @@ export default function StyleProfiles() {
                 <div>
                   <h2 style={{ margin: 0, fontSize: 18, color: 'var(--color-ink)' }}>添加风格档案</h2>
                   <p style={{ margin: '8px 0 0', maxWidth: 540, fontSize: 13, lineHeight: 1.7, color: 'var(--color-ink-3)' }}>
-                    {isAddDragActive ? '松开文件后自动上传解析，并打开风格档案弹窗。' : '拖拽文件到这里，系统会自动上传识别；也可以直接上传参考文档，或先填写档案信息。'}
+                    {isAddDragActive ? '松开文件后自动上传解析，并打开风格档案弹窗。' : `拖拽文件到这里，系统会自动上传识别；也可以一次选择最多 ${maxDocumentsPerProfile} 个参考文档，或先填写档案信息。`}
                   </p>
                 </div>
               </button>
               <div style={{ width: 210, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 10, flexShrink: 0 }}>
                 <label style={{ ...primaryButtonStyle, justifyContent: 'center', cursor: isExtracting ? 'not-allowed' : 'pointer' }}>
                   <Upload size={13} />
-                  直接上传文档
-                  <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" onChange={handleNewProfileFile} disabled={isExtracting} style={{ display: 'none' }} />
+                  批量上传文档
+                  <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" multiple onChange={handleNewProfileFile} disabled={isExtracting} style={{ display: 'none' }} />
                 </label>
                 <button onClick={startNew} disabled={isExtracting} style={{ ...secondaryButtonStyle, justifyContent: 'center' }}>
                   <Plus size={13} />
@@ -597,14 +622,14 @@ export default function StyleProfiles() {
                             {isEditing ? '继续给这张名片添加参考文档' : '给新名片添加参考文档'}
                           </div>
                           <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.6, color: 'var(--color-ink-3)' }}>
-                            支持拖拽或选择 Word / PDF / TXT。新文档会追加分析，不会覆盖已有风格画像。
+                            支持拖拽或选择 Word / PDF / TXT。每张名片最多 {maxDocumentsPerProfile} 个文档，新文档会追加分析，不会覆盖已有风格画像。
                           </div>
                         </div>
                       </div>
                       <label style={{ ...secondaryButtonStyle, justifyContent: 'center', cursor: isExtracting ? 'not-allowed' : 'pointer', flexShrink: 0 }}>
                         <Upload size={13} />
-                        选择文档
-                        <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" onChange={handleModalProfileFile} disabled={isExtracting} style={{ display: 'none' }} />
+                        多选文档
+                        <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" multiple onChange={handleModalProfileFile} disabled={isExtracting} style={{ display: 'none' }} />
                       </label>
                     </section>
 
