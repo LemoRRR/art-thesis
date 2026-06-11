@@ -1,10 +1,12 @@
+import { memo } from 'react'
+
 interface ChatBubbleProps {
   role: 'ai' | 'user'
   content: string
   isStreaming?: boolean   // AI 正在输出时显示光标动画
 }
 
-export default function ChatBubble({ role, content, isStreaming }: ChatBubbleProps) {
+function ChatBubble({ role, content, isStreaming }: ChatBubbleProps) {
   const isAI = role === 'ai'
 
   return (
@@ -74,3 +76,5 @@ export default function ChatBubble({ role, content, isStreaming }: ChatBubblePro
     </div>
   )
 }
+
+export default memo(ChatBubble)

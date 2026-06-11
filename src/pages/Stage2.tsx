@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent, KeyboardEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowRight, BookOpen, ChevronDown, ChevronRight, Edit2, GripVertical, History, Plus, RefreshCw, Send, Trash2 } from 'lucide-react'
@@ -261,7 +261,7 @@ function getOutlineSource(project: Project): {
   }
 }
 
-function OutlineNode({
+const OutlineNode = memo(function OutlineNode({
   section,
   onEdit,
   onDelete,
@@ -437,7 +437,7 @@ function OutlineNode({
       )}
     </div>
   )
-}
+})
 
 export default function Stage2() {
   const navigate = useNavigate()
@@ -465,6 +465,15 @@ export default function Stage2() {
     project.title,
   ])
   const canGenerateOutline = Boolean(outlineSource.summary)
+  const outlineNodeCount = useMemo(
+    () => hasOutlineContent(outline) ? countSections(outline.sections) : 0,
+    [outline]
+  )
+  const outlinePreview = useMemo(() => {
+    if (!hasOutlineContent(outline)) return ''
+    const text = outlineToText(outline.sections)
+    return `${text.slice(0, 90)}${text.length > 90 ? '…' : ''}`
+  }, [outline])
 
   const saveStageMessages = useCallback((nextMessages: ChatMessage[]) => {
     chatStore.saveForProject(project.id, 'stage2', nextMessages.map(message => ({
@@ -727,7 +736,7 @@ export default function Stage2() {
     )
   }, [inputText, isLoading, mentions, messages, outline, project.context.rawSummary, project.id, saveStageMessages])
 
-  const saveOutline = (nextSections: OutlineSection[], description = '手动编辑大纲') => {
+  const saveOutline = useCallback((nextSections: OutlineSection[], description = '手动编辑大纲') => {
     if (!outline) return
     const updated = {
       ...outline,
@@ -737,9 +746,9 @@ export default function Stage2() {
     setOutline(updated)
     outlineStore.save(updated)
     versionStore.snapshotOutline(description, updated)
-  }
+  }, [outline])
 
-  const handleEditTitle = (id: string, newTitle: string) => {
+  const handleEditTitle = useCallback((id: string, newTitle: string) => {
     if (!outline) return
     const editNode = (sections: OutlineSection[]): OutlineSection[] => {
       return sections.map(section => {
@@ -749,9 +758,9 @@ export default function Stage2() {
       })
     }
     saveOutline(editNode(outline.sections), '修改大纲标题')
-  }
+  }, [outline, saveOutline])
 
-  const handleDeleteNode = (id: string) => {
+  const handleDeleteNode = useCallback((id: string) => {
     if (!outline) return
     if (!confirm('确认删除这个大纲标题及其子标题？')) return
     const deleteNode = (sections: OutlineSection[]): OutlineSection[] => {
@@ -760,9 +769,9 @@ export default function Stage2() {
         .map(section => section.children ? { ...section, children: deleteNode(section.children) } : section)
     }
     saveOutline(deleteNode(outline.sections), '删除大纲标题')
-  }
+  }, [outline, saveOutline])
 
-  const handleAddChild = (parentId: string) => {
+  const handleAddChild = useCallback((parentId: string) => {
     if (!outline) return
     const addChild = (sections: OutlineSection[]): OutlineSection[] => {
       return sections.map(section => {
@@ -781,9 +790,9 @@ export default function Stage2() {
       })
     }
     saveOutline(addChild(outline.sections), '新增子标题')
-  }
+  }, [outline, saveOutline])
 
-  const handleMoveNode = (dragId: string, targetId: string, position: DropPosition) => {
+  const handleMoveNode = useCallback((dragId: string, targetId: string, position: DropPosition) => {
     if (!outline) return
     const result = moveOutlineNode(outline.sections, dragId, targetId, position)
     if (result.error) {
@@ -791,7 +800,7 @@ export default function Stage2() {
       return
     }
     saveOutline(result.sections, '拖拽调整大纲结构')
-  }
+  }, [outline, saveOutline])
 
   const handleAddRootSection = () => {
     if (!outline) return
@@ -919,7 +928,7 @@ export default function Stage2() {
                 }}
               />
               <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>
-                {hasOutlineContent(outline) ? `共 ${outline.sections.length} 章 · ${countSections(outline.sections)} 个标题节点` : isGenerating ? '生成中…' : '尚未生成大纲'}
+                {hasOutlineContent(outline) ? `共 ${outline.sections.length} 章 · ${outlineNodeCount} 个标题节点` : isGenerating ? '生成中…' : '尚未生成大纲'}
               </div>
             </div>
 
@@ -972,7 +981,7 @@ export default function Stage2() {
 
             <div style={{ padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <span style={{ fontSize: 12, color: 'var(--color-ink-3)', whiteSpace: 'pre-wrap' }}>
-                {hasOutlineContent(outline) ? `确认大纲后，AI 将按大纲逐章生成正文。\n${outlineToText(outline.sections).slice(0, 90)}${outlineToText(outline.sections).length > 90 ? '…' : ''}` : '等待大纲生成'}
+                {hasOutlineContent(outline) ? `确认大纲后，AI 将按大纲逐章生成正文。\n${outlinePreview}` : '等待大纲生成'}
               </span>
               <button
                 onClick={confirmOutline}

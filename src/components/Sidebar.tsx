@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   BookOpen,
@@ -65,10 +65,14 @@ function getInitials(label: string) {
   return clean.slice(0, 1)
 }
 
-export default function Sidebar() {
+function Sidebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const projects = projectStore.getAll()
+  const recentProjects = useMemo(
+    () => projects.slice().sort((a, b) => b.updatedAt - a.updatedAt),
+    [projects]
+  )
   const activeProjectId = projectStore.getActiveId()
   const [loggedIn, setLoggedIn] = useState(() => auth.isLoggedIn())
   const userLabel = getUserLabel()
@@ -265,10 +269,7 @@ export default function Sidebar() {
           className="sidebar-recent-list"
           style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4, paddingRight: 2 }}
         >
-          {projects
-            .slice()
-            .sort((a, b) => b.updatedAt - a.updatedAt)
-            .map((project) => (
+          {recentProjects.map((project) => (
             <div
               key={project.id}
               className="sidebar-project-row"
@@ -452,3 +453,5 @@ export default function Sidebar() {
     </aside>
   )
 }
+
+export default memo(Sidebar)

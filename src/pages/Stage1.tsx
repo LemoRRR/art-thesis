@@ -9,18 +9,22 @@ import ChatBubble from '../components/ChatBubble'
 import ModelTag from '../components/ModelTag'
 import MentionInput, { type MentionRef } from '../components/MentionInput'
 import { callDoubao, callGPT } from '../lib/ai'
+import { filesAPI, libraryAPI } from '../lib/api'
 import { buildAIContext, buildMentionContext } from '../lib/context'
 import { promptChatFollowup } from '../lib/prompts'
 import {
   chatStore,
   createEmptyProjectContext,
+  libraryStore,
   projectStore,
   type ChatMessage,
   type ComprehensionModel,
+  type LibraryItem,
 } from '../lib/storage'
 import type { Message } from '../lib/ai'
 
 type ChatModel = 'gpt' | 'doubao'
+type Stage1UploadStatus = 'uploading' | 'ready' | 'failed'
 
 interface ParsedComprehension {
   paperTitle?: string
@@ -28,6 +32,13 @@ interface ParsedComprehension {
   writingBoundary?: string
   academicLevel?: string
   coreClaims?: string
+}
+
+interface Stage1UploadedFile {
+  fileName: string
+  status: Stage1UploadStatus
+  item?: LibraryItem
+  error?: string
 }
 
 // AI 第一句话
@@ -90,6 +101,43 @@ function formatComprehensionReply(content: string, parsed: ParsedComprehension):
   ].filter(Boolean).join('\n')
 }
 
+function clipStage1Material(text: string, max = 7000): string {
+  const clean = text.trim()
+  if (clean.length <= max) return clean
+  return `${clean.slice(0, max).trim()}\n……（附件正文较长，已截取前 ${max} 字用于本轮材料理解）`
+}
+
+function buildUploadedFileContext(uploadedFile: Stage1UploadedFile | null): string {
+  const item = uploadedFile?.item
+  if (!item) return ''
+
+  return [
+    '【本轮上传并解析的附件】',
+    `文件名：${item.fileName ?? uploadedFile.fileName}`,
+    `资料标题：${item.title}`,
+    item.summary ? `解析摘要：${item.summary}` : '',
+    item.structureExtract ? `结构提取：\n${item.structureExtract}` : '',
+    item.styleExtract ? `写法范式：\n${item.styleExtract}` : '',
+    item.viewpointsExtract ? `观点与使用方式：\n${item.viewpointsExtract}` : '',
+    item.casesExtract ? `案例与引用线索：\n${item.casesExtract}` : '',
+    item.text ? `正文摘录：\n${clipStage1Material(item.text)}` : '',
+  ].filter(Boolean).join('\n\n')
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => window.setTimeout(resolve, ms))
+}
+
+async function pollExtractedLibraryItem(itemId: string): Promise<LibraryItem | null> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await sleep(1200)
+    const row = await libraryAPI.get(itemId)
+    const item = libraryStore.upsertRemote(row)
+    if (item.extractStatus === 'done' || item.extractStatus === 'failed') return item
+  }
+  return libraryStore.get(itemId)
+}
+
 export default function Stage1() {
   const navigate = useNavigate()
   const params = useParams()
@@ -102,7 +150,7 @@ export default function Stage1() {
   const [isLoading,    setIsLoading]    = useState(false)
   const [streamingId,  setStreamingId]  = useState<string | null>(null)
   const [isCompleted,  setIsCompleted]  = useState(false)
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null)
+  const [uploadedFile, setUploadedFile] = useState<Stage1UploadedFile | null>(null)
   const [showReferences, setShowReferences] = useState(false)
   const [selectedModel, setSelectedModel] = useState<ChatModel>('gpt')
   const [comprehension, setComprehension] = useState<ComprehensionModel | null>(null)
@@ -158,9 +206,11 @@ export default function Stage1() {
   // 发送消息
   const sendMessage = useCallback(async () => {
     const text = inputText.trim()
-    if (!text || isLoading) return
+    if (!text || isLoading || uploadedFile?.status === 'uploading') return
 
     setInputText('')
+    const activeUpload = uploadedFile
+    const uploadedFileContext = buildUploadedFileContext(activeUpload)
     const mentionContext = buildMentionContext(mentions)
     setMentions([])
 
@@ -168,7 +218,11 @@ export default function Stage1() {
     const userMsg: ChatMessage = {
       id:        Date.now().toString(),
       role:      'user',
-      content:   uploadedFile ? `[已上传文件：${uploadedFile.name}]\n\n${text}` : text,
+      content:   activeUpload?.item
+        ? `[已上传并解析文件：${activeUpload.fileName}，资料库ID：${activeUpload.item.id}]\n\n${text}`
+        : activeUpload
+          ? `[附件未完成解析：${activeUpload.fileName}]\n\n${text}`
+        : text,
       timestamp: Date.now(),
       projectId: project.id,
       stage: 'stage1',
@@ -196,6 +250,7 @@ export default function Stage1() {
 
     // 构建发送给 GPT 的历史（转换格式）
     const contextualText = [
+      uploadedFileContext,
       buildAIContext({ projectId: project.id, stage: 'stage1', userInput: text }),
       mentionContext,
     ].filter(Boolean).join('\n\n---\n\n')
@@ -269,13 +324,39 @@ export default function Stage1() {
   }, [inputText, isLoading, mentions, messages, project.context, project.id, selectedModel, uploadedFile])
 
   // 文件上传处理
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file) return
-    setUploadedFile(file)
-    // 把文件名填入输入框作为提示
-    setInputText(prev => prev || `我上传了论文原文《${file.name}》，请学习文章的基本内容和研究方向。`)
     e.target.value = ''
+    if (!file) return
+
+    setUploadedFile({ fileName: file.name, status: 'uploading' })
+    setInputText(prev => prev || `我上传了论文原文《${file.name}》，请结合解析出的正文和摘要，学习文章的基本内容、研究方向和写作边界。`)
+
+    try {
+      const row = await filesAPI.upload(file)
+      const item = libraryStore.upsertRemote(row)
+      projectStore.bindLibraryItem(project.id, item.id)
+      setUploadedFile({ fileName: file.name, status: 'ready', item })
+
+      pollExtractedLibraryItem(item.id)
+        .then(freshItem => {
+          if (!freshItem) return
+          setUploadedFile(current =>
+            current?.item?.id === item.id ? { ...current, item: freshItem } : current
+          )
+        })
+        .catch(() => {
+          // 维度提取是后台增强信息；即使轮询失败，正文和摘要也已经可用于材料理解。
+        })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '文件上传解析失败'
+      const isAuthError = message.includes('401') || message.includes('未登录') || message.includes('登录') || message.toLowerCase().includes('unauthorized')
+      setUploadedFile({
+        fileName: file.name,
+        status: 'failed',
+        error: isAuthError ? '请先登录后再上传附件，这样才能写入云端并解析正文。' : message,
+      })
+    }
   }
 
   // Enter 发送（Shift+Enter 换行）
@@ -516,7 +597,9 @@ export default function Stage1() {
                 }}
               >
                 <Paperclip size={12} />
-                已选择：{uploadedFile.name}
+                {uploadedFile.status === 'uploading' && `正在上传并解析：${uploadedFile.fileName}`}
+                {uploadedFile.status === 'ready' && `已解析：${uploadedFile.item?.title ?? uploadedFile.fileName}`}
+                {uploadedFile.status === 'failed' && `上传失败：${uploadedFile.error ?? uploadedFile.fileName}`}
                 <button
                   onClick={() => setUploadedFile(null)}
                   style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-ink-3)', fontSize: 14 }}
@@ -545,7 +628,7 @@ export default function Stage1() {
                   borderRadius: 'var(--radius-sm)',
                   border: '1px solid var(--color-border)',
                   background: 'var(--color-bg)',
-                  cursor: 'pointer',
+                  cursor: uploadedFile?.status === 'uploading' ? 'wait' : 'pointer',
                   color: 'var(--color-ink-3)',
                   flexShrink: 0,
                   transition: 'all 0.15s',
@@ -566,6 +649,7 @@ export default function Stage1() {
                   accept=".pdf,.docx,.doc,.txt"
                   style={{ display: 'none' }}
                   onChange={handleFileChange}
+                  disabled={uploadedFile?.status === 'uploading'}
                 />
               </label>
 
@@ -584,17 +668,17 @@ export default function Stage1() {
               {/* 发送按钮 */}
               <button
                 onClick={sendMessage}
-                disabled={isLoading || !inputText.trim()}
+                disabled={isLoading || !inputText.trim() || uploadedFile?.status === 'uploading'}
                 style={{
                   width: 36,
                   height: 36,
                   borderRadius: 'var(--radius-sm)',
                   border: 'none',
-                  background: isLoading || !inputText.trim()
+                  background: isLoading || !inputText.trim() || uploadedFile?.status === 'uploading'
                     ? 'var(--color-border)'
                     : 'var(--color-accent)',
                   color: '#fff',
-                  cursor: isLoading || !inputText.trim() ? 'not-allowed' : 'pointer',
+                  cursor: isLoading || !inputText.trim() || uploadedFile?.status === 'uploading' ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
