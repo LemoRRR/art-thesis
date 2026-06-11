@@ -368,6 +368,47 @@ export default function StyleProfiles() {
               </div>
             </section>
 
+            <section
+              onDragOver={handleAddDragOver}
+              onDragLeave={handleAddDragLeave}
+              onDrop={handleAddDrop}
+              style={{
+                minHeight: 190,
+                border: `1px dashed ${isAddDragActive ? 'var(--color-accent)' : 'var(--color-border-strong)'}`,
+                borderRadius: 8,
+                background: isAddDragActive ? 'var(--color-accent-light)' : 'var(--color-surface)',
+                boxShadow: isAddDragActive ? '0 0 0 3px rgba(67, 131, 85, 0.14)' : 'var(--shadow-sm)',
+                padding: 22,
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 20,
+                alignItems: 'stretch',
+              }}
+            >
+              <button onClick={startNew} style={{ flex: 1, border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer', color: 'inherit', display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+                <div style={{ width: 48, height: 48, borderRadius: 8, background: '#E8F3EA', color: 'var(--color-accent)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                  {isAddDragActive ? <Upload size={22} /> : <Plus size={22} />}
+                </div>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 18, color: 'var(--color-ink)' }}>添加风格档案</h2>
+                  <p style={{ margin: '8px 0 0', maxWidth: 540, fontSize: 13, lineHeight: 1.7, color: 'var(--color-ink-3)' }}>
+                    {isAddDragActive ? '松开文件后自动上传解析，并打开风格档案弹窗。' : '拖拽文件到这里，系统会自动上传识别；也可以直接上传参考文档，或先填写档案信息。'}
+                  </p>
+                </div>
+              </button>
+              <div style={{ width: 210, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 10, flexShrink: 0 }}>
+                <label style={{ ...primaryButtonStyle, justifyContent: 'center', cursor: isExtracting ? 'not-allowed' : 'pointer' }}>
+                  <Upload size={13} />
+                  直接上传文档
+                  <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" onChange={handleNewProfileFile} disabled={isExtracting} style={{ display: 'none' }} />
+                </label>
+                <button onClick={startNew} disabled={isExtracting} style={{ ...secondaryButtonStyle, justifyContent: 'center' }}>
+                  <Plus size={13} />
+                  填写档案信息
+                </button>
+              </div>
+            </section>
+
             <section style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, padding: 12 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid var(--color-border)', borderRadius: 6, padding: '0 10px', background: 'var(--color-bg)' }}>
                 <Search size={16} color="var(--color-ink-3)" />
@@ -384,36 +425,6 @@ export default function StyleProfiles() {
             </section>
 
             <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
-              <article
-                onDragOver={handleAddDragOver}
-                onDragLeave={handleAddDragLeave}
-                onDrop={handleAddDrop}
-                style={{
-                  ...cardStyle,
-                  borderStyle: 'dashed',
-                  justifyContent: 'space-between',
-                  background: isAddDragActive ? 'var(--color-accent-light)' : 'var(--color-surface)',
-                  borderColor: isAddDragActive ? 'var(--color-accent)' : 'var(--color-border)',
-                  boxShadow: isAddDragActive ? '0 0 0 3px rgba(67, 131, 85, 0.14)' : 'var(--shadow-sm)',
-                }}
-              >
-                <button onClick={startNew} style={{ border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer', color: 'inherit', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <div style={{ width: 46, height: 46, borderRadius: 8, background: 'var(--color-accent-light)', color: 'var(--color-accent)', display: 'grid', placeItems: 'center' }}>
-                    {isAddDragActive ? <Upload size={22} /> : <Plus size={22} />}
-                  </div>
-                  <div>
-                    <h2 style={{ margin: 0, fontSize: 16, color: 'var(--color-ink)' }}>添加风格档案</h2>
-                    <p style={{ margin: '8px 0 0', fontSize: 12, lineHeight: 1.7, color: 'var(--color-ink-3)' }}>
-                      {isAddDragActive ? '松开文件后自动上传解析，并打开风格档案弹窗。' : '拖拽文件到这里，或直接上传参考文档生成风格画像。'}
-                    </p>
-                  </div>
-                </button>
-                <label style={{ ...secondaryButtonStyle, justifyContent: 'center', cursor: isExtracting ? 'not-allowed' : 'pointer' }}>
-                  <Upload size={13} />
-                  直接上传文档
-                  <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" onChange={handleNewProfileFile} disabled={isExtracting} style={{ display: 'none' }} />
-                </label>
-              </article>
               {pagedProfiles.map(profile => (
                 <article key={profile.id} style={{ ...cardStyle, borderColor: profile.id === activeId ? 'var(--color-accent)' : 'var(--color-border)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
