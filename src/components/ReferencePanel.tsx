@@ -132,7 +132,7 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
           <input
             value={query}
             onChange={event => setQuery(event.target.value)}
-            placeholder="搜索库资料"
+            placeholder="搜索资料库"
             style={{
               flex: 1,
               border: 'none',
@@ -160,9 +160,9 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
           onClick={() => toggleFlag('includeConversationSummary')}
         />
 
-        <SectionTitle icon={<BookOpen size={13} />} label="库资料" />
+        <SectionTitle icon={<BookOpen size={13} />} label="资料库" />
         {filteredReferenceItems.length === 0 ? (
-          <EmptyText text="库里还没有匹配资料" />
+          <EmptyText text="资料库里还没有匹配资料" />
         ) : (
           filteredReferenceItems.map(item => {
             const checked = selection.libraryItemIds.includes(item.id)

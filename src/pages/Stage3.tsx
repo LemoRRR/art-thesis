@@ -1037,6 +1037,7 @@ export default function Stage3() {
         userInput: opinion,
         currentSectionId: activeSection.id,
       }),
+      activeStyleGuide ? `【/ 调用的风格档案】\n${activeStyleGuide}` : '',
       mentionContext,
     ].filter(Boolean).join('\n\n---\n\n')
     const { citationContext, citableSources } = buildCitationAwareContext(baseReferenceContext, mentionItemIds)
@@ -1088,7 +1089,7 @@ export default function Stage3() {
       },
       abort.signal
     )
-  }, [activeSectionId, buildCitationAwareContext, project.context.bannedPhrases, project.id, saveStageMessages, sections])
+  }, [activeSectionId, activeStyleGuide, buildCitationAwareContext, project.context.bannedPhrases, project.id, saveStageMessages, sections])
 
   const sendMessage = useCallback(async () => {
     const rawText = inputText.trim()
@@ -1374,12 +1375,12 @@ export default function Stage3() {
                 <select
                   value={selectedStyleProfileId}
                   onChange={event => setSelectedStyleProfileId(event.target.value)}
-                  title="选择语言风格档案"
+                  title="选择风格档案"
                   style={{ height: 28, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'transparent', color: 'var(--color-ink-2)', fontSize: 12, padding: '0 8px', fontFamily: 'var(--font-sans)' }}
                 >
                   <option value="">不使用风格档案</option>
                   {styleProfiles.map(profile => (
-                    <option key={profile.id} value={profile.id}>{profile.studentName} · {profile.profileName}</option>
+                    <option key={profile.id} value={profile.id}>{profile.studentName || profile.profileName}</option>
                   ))}
                 </select>
               )}
@@ -1517,9 +1518,12 @@ export default function Stage3() {
                     mentions={mentions}
                     onMentionsChange={setMentions}
                     onKeyDown={handleKeyDown}
-                    placeholder={allGenerated ? '说修改意见，或输入 @ 引用资料维度' : '等待全文生成完成…'}
+                    placeholder={allGenerated ? '说修改意见，输入 @ 调用资料库，输入 / 调用风格档案' : '等待全文生成完成…'}
                     rows={3}
                     disabled={!allGenerated || isLoading}
+                    styleProfiles={styleProfiles}
+                    selectedStyleProfileId={selectedStyleProfileId}
+                    onStyleProfileSelect={setSelectedStyleProfileId}
                   />
                   <button
                     onClick={sendMessage}

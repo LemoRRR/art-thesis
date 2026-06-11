@@ -113,7 +113,7 @@ export function buildAIContext({
   }
 
   if (refItems.length > 0) {
-    parts.push(`【引用的库资料】\n${refItems.map((item, index) =>
+    parts.push(`【引用的资料库资料】\n${refItems.map((item, index) =>
       `${index + 1}. ${item.title}\n类型：${item.type}\n摘要：${item.summary || '无'}\n内容摘录：${clip(item.text)}`
     ).join('\n\n')}`)
   }

@@ -1,8 +1,8 @@
 import { useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react'
-import { AtSign, Search } from 'lucide-react'
+import { AtSign, Search, Type } from 'lucide-react'
 import { libraryAPI } from '../lib/api'
 import { auth } from '../lib/auth'
-import { libraryStore, type LibraryItem } from '../lib/storage'
+import { libraryStore, type LibraryItem, type StyleProfile } from '../lib/storage'
 
 export interface MentionRef {
   itemId: string
@@ -19,6 +19,9 @@ interface MentionInputProps {
   rows?: number
   style?: CSSProperties
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void
+  styleProfiles?: StyleProfile[]
+  selectedStyleProfileId?: string
+  onStyleProfileSelect?: (profileId: string) => void
 }
 
 export default function MentionInput({
@@ -31,15 +34,35 @@ export default function MentionInput({
   rows = 3,
   style,
   onKeyDown,
+  styleProfiles = [],
+  selectedStyleProfileId = '',
+  onStyleProfileSelect,
 }: MentionInputProps) {
   const [open, setOpen] = useState(false)
+  const [styleOpen, setStyleOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [styleQuery, setStyleQuery] = useState('')
   const [results, setResults] = useState<LibraryItem[]>(() => libraryStore.getAll().slice(0, 8))
 
   const selectedKeys = useMemo(
     () => new Set(mentions.map(item => item.itemId)),
     [mentions]
   )
+  const selectedStyleProfile = useMemo(
+    () => styleProfiles.find(profile => profile.id === selectedStyleProfileId) ?? null,
+    [selectedStyleProfileId, styleProfiles]
+  )
+  const filteredStyleProfiles = useMemo(() => {
+    const keyword = styleQuery.trim().toLowerCase()
+    const list = keyword
+      ? styleProfiles.filter(profile =>
+          profile.studentName.toLowerCase().includes(keyword)
+          || profile.editableSummary.toLowerCase().includes(keyword)
+          || profile.writingLevel.toLowerCase().includes(keyword)
+        )
+      : styleProfiles
+    return list.slice(0, 8)
+  }, [styleProfiles, styleQuery])
 
   const runSearch = async (nextQuery: string) => {
     setQuery(nextQuery)
@@ -63,8 +86,13 @@ export default function MentionInput({
   const handleTextChange = (next: string) => {
     onChange(next)
     if (next.endsWith('@')) {
+      setStyleOpen(false)
       setOpen(true)
       void runSearch('')
+    } else if (next.endsWith('/') && styleProfiles.length > 0 && onStyleProfileSelect) {
+      setOpen(false)
+      setStyleOpen(true)
+      setStyleQuery('')
     }
   }
 
@@ -81,6 +109,20 @@ export default function MentionInput({
     }
     setOpen(false)
     setQuery('')
+  }
+
+  const addStyleProfile = (profile: StyleProfile) => {
+    onStyleProfileSelect?.(profile.id)
+    const label = profile.studentName || profile.profileName || '风格档案'
+    const mentionText = `/${label} `
+    const slashIndex = value.lastIndexOf('/')
+    if (slashIndex >= 0) {
+      onChange(`${value.slice(0, slashIndex)}${mentionText}`)
+    } else if (!value.includes(mentionText)) {
+      onChange(`${value}${value && !value.endsWith(' ') ? ' ' : ''}${mentionText}`)
+    }
+    setStyleOpen(false)
+    setStyleQuery('')
   }
 
   return (
@@ -130,6 +172,26 @@ export default function MentionInput({
         </div>
       )}
 
+      {selectedStyleProfile && (
+        <div style={{ marginTop: mentions.length > 0 ? 6 : 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => onStyleProfileSelect?.('')}
+            style={{
+              border: '1px solid var(--color-border)',
+              borderRadius: 999,
+              background: 'var(--color-bg)',
+              color: 'var(--color-ink-2)',
+              padding: '4px 9px',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            /{selectedStyleProfile.studentName || selectedStyleProfile.profileName} ×
+          </button>
+        </div>
+      )}
+
       {open && (
         <div style={{
           position: 'absolute',
@@ -149,7 +211,7 @@ export default function MentionInput({
             <input
               value={query}
               onChange={event => void runSearch(event.target.value)}
-              placeholder="搜索资料库"
+            placeholder="搜索资料库"
               autoFocus
               style={{ flex: 1, border: 'none', outline: 'none', fontSize: 12, fontFamily: 'var(--font-sans)' }}
             />
@@ -185,7 +247,67 @@ export default function MentionInput({
           </div>
 
           <div style={{ padding: 10, fontSize: 11, color: 'var(--color-ink-3)', lineHeight: 1.6 }}>
-            点选资料后，系统默认调用它的“写法范式”模块。
+            点选资料后，系统会调用资料库里的材料、案例或写法范式。
+          </div>
+        </div>
+      )}
+
+      {styleOpen && (
+        <div style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: '100%',
+          marginBottom: 8,
+          zIndex: 50,
+          border: '1px solid var(--color-border)',
+          borderRadius: 'var(--radius-md)',
+          background: 'var(--color-surface)',
+          boxShadow: 'var(--shadow-lg)',
+          overflow: 'hidden',
+        }}>
+          <div style={{ padding: 10, display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--color-border)' }}>
+            <Search size={13} color="var(--color-ink-3)" />
+            <input
+              value={styleQuery}
+              onChange={event => setStyleQuery(event.target.value)}
+              placeholder="搜索风格档案"
+              autoFocus
+              style={{ flex: 1, border: 'none', outline: 'none', fontSize: 12, fontFamily: 'var(--font-sans)' }}
+            />
+          </div>
+          <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+            {filteredStyleProfiles.length === 0 ? (
+              <div style={{ padding: 12, fontSize: 12, color: 'var(--color-ink-3)' }}>没有找到风格档案</div>
+            ) : filteredStyleProfiles.map(profile => (
+              <button
+                key={profile.id}
+                type="button"
+                onClick={() => addStyleProfile(profile)}
+                style={{
+                  width: '100%',
+                  border: 'none',
+                  borderBottom: '1px solid var(--color-border)',
+                  background: profile.id === selectedStyleProfileId ? 'var(--color-accent-light)' : 'transparent',
+                  padding: 10,
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  fontFamily: 'var(--font-sans)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 650 }}>
+                  <Type size={13} color="var(--color-accent)" />
+                  {profile.studentName || profile.profileName}
+                </div>
+                <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-ink-3)' }}>
+                  {profile.editableSummary || profile.writingLevel || '学生风格档案'}
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <div style={{ padding: 10, fontSize: 11, color: 'var(--color-ink-3)', lineHeight: 1.6 }}>
+            输入 / 调用风格档案；输入 @ 调用资料库，两者互不混用。
           </div>
         </div>
       )}

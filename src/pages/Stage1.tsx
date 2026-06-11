@@ -868,7 +868,7 @@ export default function Stage1() {
                 mentions={mentions}
                 onMentionsChange={setMentions}
                 onKeyDown={handleKeyDown}
-                placeholder="输入题目、材料、想法，或输入 @ 引用资料维度……（Enter 发送，Shift+Enter 换行）"
+                placeholder="输入题目、材料、想法，或输入 @ 调用资料库……（Enter 发送，Shift+Enter 换行）"
                 rows={1}
                 style={{ flex: 1 }}
               />

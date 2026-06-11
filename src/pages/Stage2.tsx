@@ -930,7 +930,7 @@ export default function Stage2() {
                 mentions={mentions}
                 onMentionsChange={setMentions}
                 onKeyDown={handleKeyDown}
-                placeholder="如：第二章加一节关于 TAM 模型，或输入 @ 引用资料维度…"
+                placeholder="如：第二章加一节关于 TAM 模型，或输入 @ 调用资料库…"
                 rows={3}
                 disabled={isLoading || isGenerating || !outline}
               />

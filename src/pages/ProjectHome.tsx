@@ -52,7 +52,7 @@ export default function ProjectHome() {
         >
           <div>
             <div style={{ fontSize: 15, fontWeight: 650, color: 'var(--color-ink)' }}>{project.title}</div>
-            <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>Project 工作区 · 可随时引用库资料和项目内容</div>
+            <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>Project 工作区 · 可随时引用资料库和项目内容</div>
           </div>
           <button
             onClick={() => setEditing(v => !v)}

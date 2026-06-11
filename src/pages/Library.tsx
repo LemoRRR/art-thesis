@@ -647,7 +647,7 @@ export default function Library() {
           }}
         >
           <div>
-            <div style={{ fontSize: 15, fontWeight: 650, color: 'var(--color-ink)' }}>库</div>
+            <div style={{ fontSize: 15, fontWeight: 650, color: 'var(--color-ink)' }}>资料库</div>
             <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>长期资料池，可被任意项目和阶段引用</div>
           </div>
           <label
@@ -723,7 +723,7 @@ export default function Library() {
             <div style={{ flex: 1, overflowY: 'auto', padding: 10 }}>
               {filteredItems.length === 0 ? (
                 <div style={{ padding: 20, color: 'var(--color-ink-3)', fontSize: 12, lineHeight: 1.7 }}>
-                  暂无资料。上传文件，或在右侧粘贴一段文本作为库资料。
+                  暂无资料。上传文件，或在右侧粘贴一段文本作为资料库资料。
                 </div>
               ) : (
                 filteredItems.map(item => {
