@@ -1,5 +1,5 @@
 import { useMemo, useState, type ChangeEvent, type ReactNode } from 'react'
-import { Download, Eye, FileText, PenLine, Plus, Search, Sparkles, Trash2, Upload, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, Eye, FileText, Plus, Search, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import { callGPT } from '../lib/ai'
@@ -168,13 +168,13 @@ export default function StyleProfiles() {
   const [uploadStatus, setUploadStatus] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
+  const [page, setPage] = useState(1)
 
   const activeProfile = useMemo(
     () => profiles.find(profile => profile.id === activeId) ?? null,
     [activeId, profiles]
   )
   const isEditing = Boolean(activeId)
-  const totalDocs = profiles.reduce((total, profile) => total + (profile.sourceDocuments?.length ?? (profile.sourceFileName ? 1 : 0)), 0)
   const filteredProfiles = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase()
     if (!keyword) return profiles
@@ -185,6 +185,10 @@ export default function StyleProfiles() {
       profile.writingLevel,
     ].some(value => value?.toLowerCase().includes(keyword)))
   }, [profiles, searchTerm])
+  const pageSize = 8
+  const totalPages = Math.max(1, Math.ceil(filteredProfiles.length / pageSize))
+  const currentPage = Math.min(page, totalPages)
+  const pagedProfiles = filteredProfiles.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   const refresh = () => setProfiles(styleProfileStore.getAll())
 
@@ -242,11 +246,14 @@ export default function StyleProfiles() {
     setUploadStatus('')
   }
 
-  const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-
+  const uploadFile = async (file: File, resetBeforeUpload = false) => {
+    if (resetBeforeUpload) {
+      setActiveId(null)
+      setDraft(emptyDraft)
+      setNotice('')
+      setUploadStatus('')
+      setIsModalOpen(true)
+    }
     setIsExtracting(true)
     setNotice('')
     setUploadStatus(`已选择：${file.name}，正在准备解析…`)
@@ -280,21 +287,24 @@ export default function StyleProfiles() {
         extractedAt: Date.now(),
       }
 
-      setDraft(prev => ({
-        ...prev,
-        profileName: prev.profileName || `${prev.studentName || '学生'}风格档案`,
-        sourceFileName: file.name,
-        sourceTextLength: (prev.sourceTextLength ?? 0) + clipped.length,
-        sourceDocuments: [...(prev.sourceDocuments ?? []), documentRecord],
-        writingLevel: mergeStyleText(prev.writingLevel, extracted.writingLevel),
-        sentenceStyle: mergeStyleText(prev.sentenceStyle, extracted.sentenceStyle),
-        paragraphLogic: mergeStyleText(prev.paragraphLogic, extracted.paragraphLogic),
-        argumentStyle: mergeStyleText(prev.argumentStyle, extracted.argumentStyle),
-        transitionStyle: mergeStyleText(prev.transitionStyle, extracted.transitionStyle),
-        vocabularyStyle: mergeStyleText(prev.vocabularyStyle, extracted.vocabularyStyle),
-        avoidContentReuseNotice: extracted.avoidContentReuseNotice || prev.avoidContentReuseNotice,
-        editableSummary: mergeStyleText(prev.editableSummary, extracted.editableSummary),
-      }))
+      setDraft(prev => {
+        const base = resetBeforeUpload ? emptyDraft : prev
+        return {
+          ...base,
+          profileName: base.profileName || `${base.studentName || '学生'}风格档案`,
+          sourceFileName: file.name,
+          sourceTextLength: (base.sourceTextLength ?? 0) + clipped.length,
+          sourceDocuments: [...(base.sourceDocuments ?? []), documentRecord],
+          writingLevel: mergeStyleText(base.writingLevel, extracted.writingLevel),
+          sentenceStyle: mergeStyleText(base.sentenceStyle, extracted.sentenceStyle),
+          paragraphLogic: mergeStyleText(base.paragraphLogic, extracted.paragraphLogic),
+          argumentStyle: mergeStyleText(base.argumentStyle, extracted.argumentStyle),
+          transitionStyle: mergeStyleText(base.transitionStyle, extracted.transitionStyle),
+          vocabularyStyle: mergeStyleText(base.vocabularyStyle, extracted.vocabularyStyle),
+          avoidContentReuseNotice: extracted.avoidContentReuseNotice || base.avoidContentReuseNotice,
+          editableSummary: mergeStyleText(base.editableSummary, extracted.editableSummary),
+        }
+      })
       setUploadStatus(`已添加参考文档：${file.name}`)
     } catch (error) {
       const message = error instanceof Error ? error.message : '风格提取失败'
@@ -303,6 +313,20 @@ export default function StyleProfiles() {
     } finally {
       setIsExtracting(false)
     }
+  }
+
+  const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    await uploadFile(file)
+  }
+
+  const handleNewProfileFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    await uploadFile(file, true)
   }
 
   return (
@@ -320,15 +344,6 @@ export default function StyleProfiles() {
                     一个学生一张风格名片，可上传多个参考文档综合分析。这里只保存表达方式，不保存参考文章的观点、案例或具体内容。
                   </p>
                 </div>
-                <button onClick={startNew} style={primaryButtonStyle}>
-                  <Plus size={14} />
-                  新建档案
-                </button>
-              </div>
-              <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
-                <Metric label="学生档案" value={`${profiles.length} / 50`} />
-                <Metric label="参考文档" value={`${totalDocs}`} />
-                <Metric label="当前模式" value="本地实验分支" />
               </div>
             </section>
 
@@ -337,7 +352,10 @@ export default function StyleProfiles() {
                 <Search size={16} color="var(--color-ink-3)" />
                 <input
                   value={searchTerm}
-                  onChange={event => setSearchTerm(event.target.value)}
+                  onChange={event => {
+                    setSearchTerm(event.target.value)
+                    setPage(1)
+                  }}
                   placeholder="搜索学生名、档案名或风格关键词"
                   style={{ ...inputStyle, border: 'none', paddingLeft: 0, background: 'transparent' }}
                 />
@@ -345,12 +363,25 @@ export default function StyleProfiles() {
             </section>
 
             <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
-              <button onClick={startNew} style={{ ...cardStyle, minHeight: 188, alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', color: 'var(--color-accent)', cursor: 'pointer' }}>
-                <Plus size={24} />
-                <span style={{ fontSize: 14, fontWeight: 650 }}>添加风格档案</span>
-                <span style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>填写学生信息后上传参考文档</span>
-              </button>
-              {filteredProfiles.map(profile => (
+              <article style={{ ...cardStyle, borderStyle: 'dashed', justifyContent: 'space-between' }}>
+                <button onClick={startNew} style={{ border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer', color: 'inherit', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ width: 46, height: 46, borderRadius: 8, background: 'var(--color-accent-light)', color: 'var(--color-accent)', display: 'grid', placeItems: 'center' }}>
+                    <Plus size={22} />
+                  </div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 16, color: 'var(--color-ink)' }}>添加风格档案</h2>
+                    <p style={{ margin: '8px 0 0', fontSize: 12, lineHeight: 1.7, color: 'var(--color-ink-3)' }}>
+                      新建学生名片，或直接上传参考文档生成风格画像。
+                    </p>
+                  </div>
+                </button>
+                <label style={{ ...secondaryButtonStyle, justifyContent: 'center', cursor: isExtracting ? 'not-allowed' : 'pointer' }}>
+                  <Upload size={13} />
+                  直接上传文档
+                  <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" onChange={handleNewProfileFile} disabled={isExtracting} style={{ display: 'none' }} />
+                </label>
+              </article>
+              {pagedProfiles.map(profile => (
                 <article key={profile.id} style={{ ...cardStyle, borderColor: profile.id === activeId ? 'var(--color-accent)' : 'var(--color-border)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
                     <div style={{ width: 46, height: 46, borderRadius: 8, background: 'var(--color-accent-light)', color: 'var(--color-accent)', display: 'grid', placeItems: 'center', fontSize: 18, fontWeight: 700 }}>
@@ -362,7 +393,7 @@ export default function StyleProfiles() {
                   </div>
                   <div style={{ minHeight: 70 }}>
                     <h2 style={{ margin: '12px 0 6px', fontSize: 15, lineHeight: 1.4, color: 'var(--color-ink)' }}>{profile.profileName}</h2>
-                    <div style={{ fontSize: 12, color: 'var(--color-ink-3)' }}>{profile.studentName}</div>
+                    <div style={{ fontSize: 13, color: 'var(--color-ink-2)', fontWeight: 600 }}>学生：{profile.studentName || '未填写'}</div>
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <Tag>{profile.sourceDocuments?.length ?? (profile.sourceFileName ? 1 : 0)} 个文档</Tag>
@@ -370,18 +401,30 @@ export default function StyleProfiles() {
                   </div>
                   <div style={{ display: 'flex', borderTop: '1px solid var(--color-border)', margin: '12px -14px -14px', padding: '8px 10px', gap: 4 }}>
                     <CardAction icon={<Eye size={12} />} label="查看" onClick={() => selectProfile(profile)} />
-                    <CardAction icon={<PenLine size={12} />} label="编辑" onClick={() => selectProfile(profile)} />
                     <CardAction icon={<Download size={12} />} label="导出" onClick={() => downloadText(`${profile.profileName}.txt`, profileToText(profile))} />
                   </div>
                 </article>
               ))}
               {filteredProfiles.length === 0 && (
-                <div style={{ ...cardStyle, minHeight: 188, alignItems: 'center', justifyContent: 'center', color: 'var(--color-ink-3)', textAlign: 'center' }}>
+                <div style={{ ...cardStyle, alignItems: 'center', justifyContent: 'center', color: 'var(--color-ink-3)', textAlign: 'center' }}>
                   <Search size={22} />
                   <div style={{ fontSize: 13 }}>没有找到匹配的风格档案</div>
                 </div>
               )}
             </section>
+            {filteredProfiles.length > pageSize && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
+                <button onClick={() => setPage(prev => Math.max(1, prev - 1))} disabled={currentPage <= 1} style={pagerButtonStyle}>
+                  <ChevronLeft size={14} />
+                </button>
+                <span style={{ fontSize: 12, color: 'var(--color-ink-3)' }}>
+                  {currentPage} / {totalPages}
+                </span>
+                <button onClick={() => setPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage >= totalPages} style={pagerButtonStyle}>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            )}
 
             {isModalOpen && (
               <div style={modalBackdropStyle}>
@@ -489,15 +532,6 @@ export default function StyleProfiles() {
   )
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ border: '1px solid var(--color-border)', borderRadius: 6, padding: '8px 12px', background: 'var(--color-bg)' }}>
-      <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>{label}</div>
-      <div style={{ marginTop: 3, fontSize: 15, fontWeight: 650, color: 'var(--color-ink)' }}>{value}</div>
-    </div>
-  )
-}
-
 function Tag({ children }: { children: ReactNode }) {
   return (
     <span style={{ fontSize: 11, color: 'var(--color-accent)', background: 'var(--color-accent-light)', border: '1px solid #B8D9C0', borderRadius: 4, padding: '2px 6px' }}>
@@ -516,7 +550,7 @@ function CardAction({ icon, label, onClick }: { icon: ReactNode; label: string; 
 }
 
 const cardStyle = {
-  minHeight: 188,
+  minHeight: 216,
   border: '1px solid var(--color-border)',
   borderRadius: 8,
   background: 'var(--color-surface)',
@@ -535,6 +569,18 @@ const iconButtonStyle = {
   background: 'transparent',
   color: 'var(--color-ink-3)',
   cursor: 'pointer',
+}
+
+const pagerButtonStyle = {
+  width: 30,
+  height: 30,
+  border: '1px solid var(--color-border)',
+  borderRadius: 6,
+  background: 'var(--color-surface)',
+  color: 'var(--color-ink-2)',
+  cursor: 'pointer',
+  display: 'grid',
+  placeItems: 'center',
 }
 
 const labelStyle = {
