@@ -110,6 +110,28 @@ function getSelectedAcademicLevel(requirements: string[] = []): AcademicLevel | 
   return stored === '本科' || stored === '硕士' || stored === '期刊' ? stored : ''
 }
 
+function normalizeAcademicLevelCandidate(value?: string): AcademicLevel | '' {
+  if (!value) return ''
+  if (/期刊|投稿|发表/.test(value)) return '期刊'
+  if (/本科|毕业论文|毕业设计/.test(value)) return '本科'
+  if (/硕士|学硕|专硕|研究生|mfa|专业型|学术型/.test(value.toLowerCase())) return '硕士'
+  return ''
+}
+
+function inferAcademicLevel(parsed: ParsedComprehension, ...sources: string[]): AcademicLevel | '' {
+  const candidates = [
+    parsed.academicLevelSuggestion,
+    parsed.academicLevel,
+    parsed.difficulty,
+    ...sources,
+  ]
+  for (const candidate of candidates) {
+    const level = normalizeAcademicLevelCandidate(candidate)
+    if (level) return level
+  }
+  return ''
+}
+
 function withSelectedAcademicLevel(requirements: string[] = [], level: AcademicLevel): string[] {
   return [
     ...requirements.filter(item => !item.startsWith(LEVEL_REQUIREMENT_PREFIX)),
@@ -271,6 +293,8 @@ export default function Stage1() {
       setMentions([])
       const currentProject = projectStore.ensure(project.id)
       const storedLevel = getSelectedAcademicLevel(currentProject.context.writingRequirements)
+        || normalizeAcademicLevelCandidate(currentProject.context.academicLevel)
+        || normalizeAcademicLevelCandidate(currentProject.context.academicLevelSuggestion)
       setSelectedLevel(storedLevel)
 
       const saved = chatStore.getByProject(project.id, 'stage1')
@@ -421,17 +445,25 @@ export default function Stage1() {
             if (parsedComprehension) {
               const model = buildComprehensionModel(parsedComprehension)
               const paperTitle = inferPaperTitle(parsedComprehension)
+              const inferredLevel = selectedLevel || inferAcademicLevel(parsedComprehension, userMsg.content, fullContent)
+              if (inferredLevel) {
+                setSelectedLevel(inferredLevel)
+              }
               const modelForDisplay = {
                 ...model,
-                academicLevel: selectedLevel || '待选择',
+                academicLevel: inferredLevel || '待选择',
               }
+              const currentProject = projectStore.ensure(project.id)
               projectStore.update(project.id, {
                 title: paperTitle,
                 context: {
-                  ...project.context,
+                  ...currentProject.context,
                   researchObject: model.researchObject,
                   writingBoundary: model.writingBoundary,
-                  academicLevel: selectedLevel || '',
+                  academicLevel: inferredLevel || '',
+                  writingRequirements: inferredLevel
+                    ? withSelectedAcademicLevel(currentProject.context.writingRequirements, inferredLevel)
+                    : currentProject.context.writingRequirements,
                   rawSummary: model.rawSummary,
                   pathType: model.pathType,
                   inputType: model.inputType,
@@ -444,7 +476,7 @@ export default function Stage1() {
                   draftSummary: model.draftSummary,
                   nextStepRecommendation: model.nextStepRecommendation,
                 },
-                currentStage: selectedLevel ? 'stage2' : 'stage1',
+                currentStage: inferredLevel ? 'stage2' : 'stage1',
               })
               setComprehension(modelForDisplay)
             }
