@@ -177,6 +177,7 @@ export default function StyleProfiles() {
   const [searchTerm, setSearchTerm] = useState('')
   const [page, setPage] = useState(1)
   const [isAddDragActive, setIsAddDragActive] = useState(false)
+  const [isModalDragActive, setIsModalDragActive] = useState(false)
   const [isUploadLoading, setIsUploadLoading] = useState(false)
 
   const activeProfile = useMemo(
@@ -368,6 +369,33 @@ export default function StyleProfiles() {
     await uploadFile(file, true)
   }
 
+  const handleModalProfileFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    await uploadFile(file, false)
+  }
+
+  const handleModalDragOver = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    if (!isExtracting) setIsModalDragActive(true)
+  }
+
+  const handleModalDragLeave = (event: DragEvent<HTMLElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setIsModalDragActive(false)
+    }
+  }
+
+  const handleModalDrop = async (event: DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    setIsModalDragActive(false)
+    if (isExtracting) return
+    const file = event.dataTransfer.files?.[0]
+    if (!file) return
+    await uploadFile(file, false)
+  }
+
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--color-bg)', overflow: 'hidden' }}>
       <style>{'@keyframes style-profile-spin { to { transform: rotate(360deg); } }'}</style>
@@ -456,7 +484,9 @@ export default function StyleProfiles() {
                   </div>
                   <div style={{ minHeight: 70 }}>
                     <h2 style={{ margin: '12px 0 6px', fontSize: 16, lineHeight: 1.4, color: 'var(--color-ink)' }}>{profile.studentName || '未填写学生名'}</h2>
-                    <div style={{ fontSize: 12, color: 'var(--color-ink-3)' }}>{profile.sourceFileName || '学生风格档案'}</div>
+                    <div style={{ fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.5 }}>
+                      {profile.sourceDocuments?.slice(0, 2).map(doc => doc.fileName).join(' / ') || profile.sourceFileName || '学生风格档案'}
+                    </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <Tag>{profile.sourceDocuments?.length ?? (profile.sourceFileName ? 1 : 0)} 个文档</Tag>
@@ -464,6 +494,7 @@ export default function StyleProfiles() {
                   </div>
                   <div style={{ display: 'flex', borderTop: '1px solid var(--color-border)', margin: '12px -14px -14px', padding: '8px 10px', gap: 4 }}>
                     <CardAction icon={<Eye size={12} />} label="查看" onClick={() => selectProfile(profile)} />
+                    <CardAction icon={<Upload size={12} />} label="追加" onClick={() => selectProfile(profile)} />
                     <CardAction icon={<Download size={12} />} label="导出" onClick={() => downloadText(`${profile.studentName || '风格档案'}.txt`, profileToText(profile))} />
                   </div>
                 </article>
@@ -541,6 +572,41 @@ export default function StyleProfiles() {
                         <input value={draft.studentName} onChange={event => setDraft({ ...draft, studentName: event.target.value })} placeholder="例如：张同学" style={inputStyle} />
                       </label>
                     </div>
+
+                    <section
+                      onDragOver={handleModalDragOver}
+                      onDragLeave={handleModalDragLeave}
+                      onDrop={handleModalDrop}
+                      style={{
+                        border: `1px dashed ${isModalDragActive ? 'var(--color-accent)' : 'var(--color-border-strong)'}`,
+                        borderRadius: 8,
+                        background: isModalDragActive ? 'var(--color-accent-light)' : 'var(--color-bg)',
+                        padding: 14,
+                        display: 'flex',
+                        gap: 14,
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <div style={{ display: 'flex', gap: 12, alignItems: 'center', minWidth: 0 }}>
+                        <div style={{ width: 38, height: 38, borderRadius: 8, background: '#E8F3EA', color: 'var(--color-accent)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                          {isExtracting ? <Loader2 size={18} style={{ animation: 'style-profile-spin 1s linear infinite' }} /> : <FileText size={18} />}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ink)' }}>
+                            {isEditing ? '继续给这张名片添加参考文档' : '给新名片添加参考文档'}
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.6, color: 'var(--color-ink-3)' }}>
+                            支持拖拽或选择 Word / PDF / TXT。新文档会追加分析，不会覆盖已有风格画像。
+                          </div>
+                        </div>
+                      </div>
+                      <label style={{ ...secondaryButtonStyle, justifyContent: 'center', cursor: isExtracting ? 'not-allowed' : 'pointer', flexShrink: 0 }}>
+                        <Upload size={13} />
+                        选择文档
+                        <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" onChange={handleModalProfileFile} disabled={isExtracting} style={{ display: 'none' }} />
+                      </label>
+                    </section>
 
                     {uploadStatus && (
                       <div style={{ fontSize: 12, color: uploadStatus.startsWith('处理失败') ? '#C0392B' : 'var(--color-accent)', background: uploadStatus.startsWith('处理失败') ? '#FFF4F2' : 'var(--color-accent-light)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '8px 10px' }}>
