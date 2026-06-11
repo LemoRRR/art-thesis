@@ -1002,7 +1002,7 @@ export default function Library() {
 
               <div style={{ padding: 16 }}>
                 {tab === 'add' && (
-                  <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <input
                       value={title}
                       onChange={event => setTitle(event.target.value)}
@@ -1013,7 +1013,6 @@ export default function Library() {
                         borderRadius: 'var(--radius-sm)',
                         padding: '8px 10px',
                         fontFamily: 'var(--font-sans)',
-                        marginBottom: 10,
                         fontSize: 13,
                         outline: 'none',
                         boxSizing: 'border-box',
@@ -1026,6 +1025,7 @@ export default function Library() {
                       rows={6}
                       style={{
                         width: '100%',
+                        minHeight: 150,
                         border: '1px solid var(--color-border)',
                         borderRadius: 'var(--radius-sm)',
                         padding: 10,
@@ -1036,23 +1036,37 @@ export default function Library() {
                         boxSizing: 'border-box',
                       }}
                     />
-                    <button
-                      onClick={addTextItem}
-                      disabled={!draft.trim() || uploading}
-                      style={{
-                        marginTop: 10,
-                        border: 'none',
-                        borderRadius: 'var(--radius-sm)',
-                        background: draft.trim() && !uploading ? 'var(--color-accent)' : 'var(--color-border)',
-                        color: '#fff',
-                        padding: '8px 14px',
-                        fontSize: 12,
-                        cursor: draft.trim() && !uploading ? 'pointer' : 'not-allowed',
-                      }}
-                    >
-                      {uploading ? '处理中…' : '存入库'}
-                    </button>
-                  </>
+                    <div style={{
+                      position: 'sticky',
+                      bottom: 0,
+                      zIndex: 1,
+                      display: 'flex',
+                      justifyContent: 'flex-end',
+                      paddingTop: 10,
+                      background: 'var(--color-surface)',
+                      borderTop: '1px solid var(--color-border)',
+                    }}>
+                      <button
+                        onClick={addTextItem}
+                        disabled={!draft.trim() || uploading}
+                        style={{
+                          border: 'none',
+                          borderRadius: 'var(--radius-sm)',
+                          background: draft.trim() && !uploading ? 'var(--color-accent)' : 'var(--color-border)',
+                          color: '#fff',
+                          padding: '9px 16px',
+                          minWidth: 86,
+                          minHeight: 34,
+                          fontSize: 12,
+                          lineHeight: 1,
+                          whiteSpace: 'nowrap',
+                          cursor: draft.trim() && !uploading ? 'pointer' : 'not-allowed',
+                        }}
+                      >
+                        {uploading ? '处理中…' : '存入库'}
+                      </button>
+                    </div>
+                  </div>
                 )}
 
                 {tab === 'background' && (
