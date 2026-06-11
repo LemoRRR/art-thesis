@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent, type ReactNode } from 'react'
+import { useMemo, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react'
 import { ChevronLeft, ChevronRight, Download, Eye, FileText, Plus, Search, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
@@ -169,6 +169,7 @@ export default function StyleProfiles() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [page, setPage] = useState(1)
+  const [isAddDragActive, setIsAddDragActive] = useState(false)
 
   const activeProfile = useMemo(
     () => profiles.find(profile => profile.id === activeId) ?? null,
@@ -329,6 +330,26 @@ export default function StyleProfiles() {
     await uploadFile(file, true)
   }
 
+  const handleAddDragOver = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    if (!isExtracting) setIsAddDragActive(true)
+  }
+
+  const handleAddDragLeave = (event: DragEvent<HTMLElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setIsAddDragActive(false)
+    }
+  }
+
+  const handleAddDrop = async (event: DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    setIsAddDragActive(false)
+    if (isExtracting) return
+    const file = event.dataTransfer.files?.[0]
+    if (!file) return
+    await uploadFile(file, true)
+  }
+
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--color-bg)', overflow: 'hidden' }}>
       <Sidebar />
@@ -363,15 +384,27 @@ export default function StyleProfiles() {
             </section>
 
             <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
-              <article style={{ ...cardStyle, borderStyle: 'dashed', justifyContent: 'space-between' }}>
+              <article
+                onDragOver={handleAddDragOver}
+                onDragLeave={handleAddDragLeave}
+                onDrop={handleAddDrop}
+                style={{
+                  ...cardStyle,
+                  borderStyle: 'dashed',
+                  justifyContent: 'space-between',
+                  background: isAddDragActive ? 'var(--color-accent-light)' : 'var(--color-surface)',
+                  borderColor: isAddDragActive ? 'var(--color-accent)' : 'var(--color-border)',
+                  boxShadow: isAddDragActive ? '0 0 0 3px rgba(67, 131, 85, 0.14)' : 'var(--shadow-sm)',
+                }}
+              >
                 <button onClick={startNew} style={{ border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer', color: 'inherit', display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <div style={{ width: 46, height: 46, borderRadius: 8, background: 'var(--color-accent-light)', color: 'var(--color-accent)', display: 'grid', placeItems: 'center' }}>
-                    <Plus size={22} />
+                    {isAddDragActive ? <Upload size={22} /> : <Plus size={22} />}
                   </div>
                   <div>
                     <h2 style={{ margin: 0, fontSize: 16, color: 'var(--color-ink)' }}>添加风格档案</h2>
                     <p style={{ margin: '8px 0 0', fontSize: 12, lineHeight: 1.7, color: 'var(--color-ink-3)' }}>
-                      新建学生名片，或直接上传参考文档生成风格画像。
+                      {isAddDragActive ? '松开文件后自动上传解析，并打开风格档案弹窗。' : '拖拽文件到这里，或直接上传参考文档生成风格画像。'}
                     </p>
                   </div>
                 </button>
