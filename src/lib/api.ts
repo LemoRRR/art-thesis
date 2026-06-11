@@ -1,15 +1,19 @@
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Message, StreamCallbacks } from './ai'
 
 const BASE_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_BASE_URL || '')
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
+let browserSupabase: SupabaseClient | null = null
 
 export function getToken(): string | null {
   return localStorage.getItem('access_token')
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, options: RequestInit = {}, timeoutMs = 20_000): Promise<T> {
   const token = getToken()
   const controller = new AbortController()
-  const timeoutId = window.setTimeout(() => controller.abort(), 20_000)
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
   let res: Response
   try {
     res = await fetch(`${BASE_URL}${path}`, {
@@ -158,13 +162,74 @@ export const referencesAPI = {
     }),
 }
 
+type SignedUploadResponse = {
+  path: string
+  token: string
+  signedUrl?: string
+  fileName: string
+  contentType: string
+  fileSize: number
+}
+
+function getBrowserSupabase() {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error('Supabase upload settings are missing. Please configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.')
+  }
+  if (!browserSupabase) {
+    browserSupabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    })
+  }
+  return browserSupabase
+}
+
 export const filesAPI = {
   upload: async (file: File) => {
-    const maxServerUploadSize = 4 * 1024 * 1024
-    if (file.size > maxServerUploadSize && !file.type.startsWith('text/') && !file.name.toLowerCase().endsWith('.txt')) {
-      throw new Error('文件较大，线上上传可能被网关拦截。请先压缩到 4MB 以内，或转为 TXT 后上传。')
-    }
     const token = getToken()
+    if (!token) {
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('auth_user')
+      throw new Error('Please log in before uploading files.')
+    }
+
+    const contentType = file.type || 'application/octet-stream'
+    try {
+      const signed = await request<SignedUploadResponse>('/api/files/signed-upload', {
+        method: 'POST',
+        body: JSON.stringify({
+          fileName: file.name,
+          contentType,
+          fileSize: file.size,
+        }),
+      })
+
+      const { error: uploadError } = await getBrowserSupabase()
+        .storage
+        .from('library-files')
+        .uploadToSignedUrl(signed.path, signed.token, file, { contentType })
+
+      if (uploadError) {
+        throw new Error(`File upload failed: ${uploadError.message}`)
+      }
+
+      return request('/api/files/import-uploaded', {
+        method: 'POST',
+        body: JSON.stringify({
+          path: signed.path,
+          fileName: signed.fileName || file.name,
+          contentType,
+          fileSize: file.size,
+        }),
+      }, 120_000)
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('Supabase upload settings are missing')) {
+        throw error
+      }
+    }
+
     const formData = new FormData()
     formData.append('file', file)
     const res = await fetch(`${BASE_URL}/api/files/upload`, {
@@ -177,14 +242,14 @@ export const filesAPI = {
     if (!res.ok) {
       const error = await res.json().catch(() => ({
         error: res.status === 413
-          ? '文件超过线上上传限制。请先压缩到 4MB 以内，或转为 TXT 后上传。'
-          : '文件上传失败',
+          ? 'File upload is too large for the API gateway. Direct upload settings are missing.'
+          : 'File upload failed',
       }))
       if (res.status === 401) {
         localStorage.removeItem('access_token')
         localStorage.removeItem('auth_user')
       }
-      throw new Error(error.error ?? `文件上传失败（HTTP ${res.status}）`)
+      throw new Error(error.error ?? `File upload failed (HTTP ${res.status})`)
     }
     return res.json()
   },
@@ -207,7 +272,7 @@ export function callAIStream(
     signal,
   }).then(async res => {
     if (!res.ok || !res.body) {
-      callbacks.onError(new Error('AI 调用失败'))
+      callbacks.onError(new Error('AI request failed'))
       return
     }
 
@@ -239,7 +304,7 @@ export function callAIStream(
           const text = json.choices?.[0]?.delta?.content
           if (text) callbacks.onChunk(text)
         } catch {
-          // ignore malformed SSE chunks
+          // Ignore malformed SSE chunks.
         }
       }
     }
