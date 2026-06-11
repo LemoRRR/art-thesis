@@ -162,6 +162,10 @@ function getStage1OutlineText(projectId: string): string {
     .join('\n\n')
 }
 
+function looksLikeReferenceOutlineRequest(text: string): boolean {
+  return /参考大纲|参考论文大纲|大纲参考|结构参考|迁移|模仿.*结构|学习.*结构|按照.*大纲|套用.*结构/.test(text)
+}
+
 function isAbstractOutlineSection(section: OutlineSection): boolean {
   return section.order === '0' || /^(摘要|abstract|中英文摘要)/i.test(section.title.trim())
 }
@@ -623,8 +627,10 @@ export default function Stage2() {
 
     const source = getOutlineSource(projectStore.ensure(project.id))
     const comprehensionSummary = source.summary
-    const detectedOutlineSections = parseExistingOutlineFromText(getStage1OutlineText(project.id))
-    if (detectedOutlineSections.length > 0) {
+    const stage1OutlineText = getStage1OutlineText(project.id)
+    const shouldMigrateReferenceOutline = looksLikeReferenceOutlineRequest(stage1OutlineText)
+    const detectedOutlineSections = parseExistingOutlineFromText(stage1OutlineText)
+    if (detectedOutlineSections.length > 0 && !shouldMigrateReferenceOutline) {
       const newOutline: Outline = {
         projectId: project.id,
         sections: ensureAbstractOutlineSection(detectedOutlineSections),
@@ -689,7 +695,12 @@ export default function Stage2() {
     abortRef.current = abort
 
     callGPT(
-      promptGenerateOutline(comprehensionSummary, source.academicLevel),
+      promptGenerateOutline(
+        comprehensionSummary,
+        source.academicLevel,
+        shouldMigrateReferenceOutline ? '优先采用用户提供的参考大纲进行结构迁移。' : undefined,
+        shouldMigrateReferenceOutline ? stage1OutlineText : undefined
+      ),
       {
         onChunk: (chunk) => {
           jsonContent += chunk
