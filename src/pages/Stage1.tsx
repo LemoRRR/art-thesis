@@ -819,7 +819,7 @@ export default function Stage1() {
               style={{
                 display: 'flex',
                 gap: 8,
-                alignItems: 'flex-end',
+                alignItems: 'center',
               }}
             >
               {/* 文件上传按钮 */}
@@ -828,8 +828,8 @@ export default function Stage1() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  width: 36,
-                  height: 36,
+                  width: 40,
+                  height: 40,
                   borderRadius: 'var(--radius-sm)',
                   border: '1px solid var(--color-border)',
                   background: 'var(--color-bg)',
@@ -875,8 +875,8 @@ export default function Stage1() {
                 onClick={sendMessage}
                 disabled={isLoading || !inputText.trim() || uploadedFile?.status === 'uploading'}
                 style={{
-                  width: 36,
-                  height: 36,
+                  width: 40,
+                  height: 40,
                   borderRadius: 'var(--radius-sm)',
                   border: 'none',
                   background: isLoading || !inputText.trim() || uploadedFile?.status === 'uploading'
