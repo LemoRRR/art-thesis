@@ -456,14 +456,7 @@ export default function Stage2() {
   const [mentions, setMentions] = useState<MentionRef[]>([])
   const [showHistory, setShowHistory] = useState(false)
 
-  const outlineSource = useMemo(() => getOutlineSource(project), [
-    project.context.academicLevel,
-    project.context.rawSummary,
-    project.context.researchObject,
-    project.context.writingBoundary,
-    project.id,
-    project.title,
-  ])
+  const outlineSource = useMemo(() => getOutlineSource(project), [project])
   const canGenerateOutline = Boolean(outlineSource.summary)
   const outlineNodeCount = useMemo(
     () => hasOutlineContent(outline) ? countSections(outline.sections) : 0,
@@ -494,7 +487,7 @@ export default function Stage2() {
           rawSummary: outlineSource.summary,
         },
       })
-      if (outlineSource.title) setProjectTitle(outlineSource.title)
+      if (outlineSource.title) queueMicrotask(() => setProjectTitle(outlineSource.title!))
     }
   }, [outlineSource, project.context, project.id, project.title])
 
@@ -618,36 +611,46 @@ export default function Stage2() {
   }, [isGenerating, project.id, saveStageMessages])
 
   useEffect(() => {
-    const savedMsgs = chatStore.getByProject(project.id, 'stage2').filter(message => message.flow === 'outline')
-    const savedOutline = outlineStore.get(project.id)
+    let cancelled = false
 
-    if (savedMsgs.length > 0) {
-      setMessages(savedMsgs)
-    } else {
-      const welcome: ChatMessage = {
-        id: 's2_welcome',
-        role: 'ai',
-        content: '已完成材料理解。我将根据你的论文背景生成完整大纲，你可以在右侧直接编辑标题，也可以在这里告诉我需要调整的地方。',
-        timestamp: Date.now(),
-        projectId: project.id,
-        stage: 'stage2',
-        flow: 'outline',
+    queueMicrotask(() => {
+      if (cancelled) return
+
+      const savedMsgs = chatStore.getByProject(project.id, 'stage2').filter(message => message.flow === 'outline')
+      const savedOutline = outlineStore.get(project.id)
+
+      if (savedMsgs.length > 0) {
+        setMessages(savedMsgs)
+      } else {
+        const welcome: ChatMessage = {
+          id: 's2_welcome',
+          role: 'ai',
+          content: '已完成材料理解。我将根据你的论文背景生成完整大纲，你可以在右侧直接编辑标题，也可以在这里告诉我需要调整的地方。',
+          timestamp: Date.now(),
+          projectId: project.id,
+          stage: 'stage2',
+          flow: 'outline',
+        }
+        setMessages([welcome])
+        saveStageMessages([welcome])
       }
-      setMessages([welcome])
-      saveStageMessages([welcome])
-    }
 
-    if (hasOutlineContent(savedOutline)) {
-      setOutline(savedOutline)
-    }
+      if (hasOutlineContent(savedOutline)) {
+        setOutline(savedOutline)
+      }
 
-    setInitialLoadDone(true)
-    projectStore.update(project.id, { currentStage: 'stage2' })
+      setInitialLoadDone(true)
+      projectStore.update(project.id, { currentStage: 'stage2' })
+    })
+
+    return () => {
+      cancelled = true
+    }
   }, [project.id, saveStageMessages])
 
   useEffect(() => {
     if (initialLoadDone && !hasOutlineContent(outline) && !isGenerating && canGenerateOutline) {
-      autoGenerateOutline(true)
+      queueMicrotask(() => autoGenerateOutline(true))
     }
   }, [autoGenerateOutline, canGenerateOutline, initialLoadDone, isGenerating, outline])
 

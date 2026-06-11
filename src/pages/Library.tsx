@@ -165,7 +165,7 @@ function TextFallbackPreview({ title, content }: { title: string; content: strin
             border: '1px solid #E2DDD4',
             boxShadow: '0 12px 28px rgba(45, 37, 27, 0.10)',
             color: '#1F2933',
-            fontFamily: 'Georgia, \"Times New Roman\", \"Songti SC\", SimSun, serif',
+            fontFamily: 'Georgia, "Times New Roman", "Songti SC", SimSun, serif',
             fontSize: 14,
             lineHeight: 2,
           }}
@@ -352,7 +352,7 @@ export default function Library() {
   }, [])
 
   useEffect(() => {
-    setShowRawText(false)
+    queueMicrotask(() => setShowRawText(false))
   }, [activeId])
 
   const refresh = () => setItems(libraryStore.getAll())

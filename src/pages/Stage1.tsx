@@ -158,45 +158,61 @@ export default function Stage1() {
 
   // 初始化：从 localStorage 读取历史记录
   useEffect(() => {
-    setIsCompleted(false)
-    setComprehension(null)
-    setInputText('')
-    setUploadedFile(null)
-    setIsLoading(false)
-    setStreamingId(null)
-    setMentions([])
+    let cancelled = false
 
-    const saved = chatStore.getByProject(project.id, 'stage1')
-    const savedComprehension = project.context.rawSummary
-      ? {
-          researchObject: project.context.researchObject,
-          writingBoundary: project.context.writingBoundary,
-          academicLevel: project.context.academicLevel,
-          rawSummary: project.context.rawSummary,
+    queueMicrotask(() => {
+      if (cancelled) return
+
+      setIsCompleted(false)
+      setComprehension(null)
+      setInputText('')
+      setUploadedFile(null)
+      setIsLoading(false)
+      setStreamingId(null)
+      setMentions([])
+
+      const saved = chatStore.getByProject(project.id, 'stage1')
+      const savedComprehension = project.context.rawSummary
+        ? {
+            researchObject: project.context.researchObject,
+            writingBoundary: project.context.writingBoundary,
+            academicLevel: project.context.academicLevel,
+            rawSummary: project.context.rawSummary,
+          }
+        : null
+
+      if (saved.length > 0) {
+        setMessages(saved)
+        // 检查是否已经完成
+        const lastAI = [...saved].reverse().find(m => m.role === 'ai')
+        if (lastAI?.content.includes('【理解完成')) {
+          setIsCompleted(true)
         }
-      : null
-
-    if (saved.length > 0) {
-      setMessages(saved)
-      // 检查是否已经完成
-      const lastAI = [...saved].reverse().find(m => m.role === 'ai')
-      if (lastAI?.content.includes('【理解完成')) {
-        setIsCompleted(true)
+      } else {
+        // 第一次进入，显示欢迎消息
+        const welcome = { ...WELCOME_MESSAGE, projectId: project.id, stage: 'stage1' as const }
+        setMessages([welcome])
+        chatStore.saveForProject(project.id, 'stage1', [welcome])
       }
-    } else {
-      // 第一次进入，显示欢迎消息
-      const welcome = { ...WELCOME_MESSAGE, projectId: project.id, stage: 'stage1' as const }
-      setMessages([welcome])
-      chatStore.saveForProject(project.id, 'stage1', [welcome])
-    }
 
-    if (savedComprehension) {
-      setComprehension(savedComprehension)
-      if (savedComprehension.rawSummary) {
-        setIsCompleted(true)
+      if (savedComprehension) {
+        setComprehension(savedComprehension)
+        if (savedComprehension.rawSummary) {
+          setIsCompleted(true)
+        }
       }
+    })
+
+    return () => {
+      cancelled = true
     }
-  }, [project.id])
+  }, [
+    project.context.academicLevel,
+    project.context.rawSummary,
+    project.context.researchObject,
+    project.context.writingBoundary,
+    project.id,
+  ])
 
   // 自动滚动到底部
   useEffect(() => {

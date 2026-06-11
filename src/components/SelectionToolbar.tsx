@@ -92,7 +92,6 @@ export default function SelectionToolbar({
   projectId,
   containerRef,
   sections,
-  activeSectionId: _activeSectionId,
   onContentUpdate,
   onAddFootnote,
 }: SelectionToolbarProps) {
@@ -106,6 +105,7 @@ export default function SelectionToolbar({
   const [done,        setDone]        = useState(false)
   const [error,       setError]       = useState('')
   const [pendingRevision, setPendingRevision] = useState<PendingRevision | null>(null)
+  const [selectedText, setSelectedText] = useState('')
 
   const savedRangeRef    = useRef<Range | null>(null)
   const savedSectionId   = useRef<string | null>(null)
@@ -126,6 +126,7 @@ export default function SelectionToolbar({
     setError('')
     setCustomInput('')
     setFootnoteInput('')
+    setSelectedText('')
   }, [])
 
   // ── 监听 mouseup：检测选区 ──────────────────────────────────
@@ -179,6 +180,7 @@ export default function SelectionToolbar({
         savedCharStart.current = charStart
         savedCharEnd.current = charEnd
         savedSelectedText.current = selectedText
+        setSelectedText(selectedText)
 
         // 获取上下文（选中文字前后各 150 字）
         const section = sections.find(s => s.id === sectionId)
@@ -400,7 +402,7 @@ export default function SelectionToolbar({
           {/* 操作按钮行 */}
           <div style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', gap: 4 }}>
             <span style={{ fontSize: 10, color: 'var(--color-ink-3)', padding: '0 4px', whiteSpace: 'nowrap' }}>
-              已选中 {savedSelectedText.current.length} 字
+              已选中 {selectedText.length} 字
             </span>
             <div style={{ width: 1, height: 14, background: 'var(--color-border)', margin: '0 2px' }} />
 
@@ -456,7 +458,7 @@ export default function SelectionToolbar({
               }}
             >
               <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>
-                正文脚注（与 @ 资料无关）：为「{savedSelectedText.current.slice(0, 18)}{savedSelectedText.current.length > 18 ? '…' : ''}」添加引用说明
+                正文脚注（与 @ 资料无关）：为「{selectedText.slice(0, 18)}{selectedText.length > 18 ? '…' : ''}」添加引用说明
               </div>
               <textarea
                 autoFocus

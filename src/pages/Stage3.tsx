@@ -518,7 +518,7 @@ export default function Stage3() {
     const bannedPhrases = currentProject.context.bannedPhrases ?? []
     const styleGuide = currentProject.context.stylePreference || undefined
     const generatedSections: DocSection[] = []
-    let paperPlan = ''
+    let paperPlan: string
     const chapterSummaries: string[] = []
 
     const startMsg: ChatMessage = {
@@ -573,9 +573,8 @@ export default function Stage3() {
 
       const abort = new AbortController()
       abortRef.current = abort
-      let fullContent = ''
       try {
-        fullContent = await streamGPTText(
+        const fullContent = await streamGPTText(
           promptGenerateChapter(
             outlineSectionTitle(chapter),
             chapterChildrenToText(chapter),
@@ -791,7 +790,7 @@ export default function Stage3() {
     const savedSections = sectionStore.getByProject(project.id)
     const outline = outlineStore.get(project.id)
 
-    if (savedMessages.length > 0) setMessages(savedMessages)
+    if (savedMessages.length > 0) queueMicrotask(() => setMessages(savedMessages))
 
     if (savedSections.length > 0) {
       let formattedSections = formatSectionsForPaper(savedSections)
@@ -831,17 +830,21 @@ export default function Stage3() {
             projectId: project.id,
             stage: 'stage3',
           }
-          setMessages(prev => {
-            const next = prev.some(message => message.id === noticeMsg.id) ? prev : [...prev, noticeMsg]
-            saveStageMessages(next)
-            return next
+          queueMicrotask(() => {
+            setMessages(prev => {
+              const next = prev.some(message => message.id === noticeMsg.id) ? prev : [...prev, noticeMsg]
+              saveStageMessages(next)
+              return next
+            })
           })
           syncSnapshotDescription ||= '根据大纲同步正文结构'
         }
 
-        setSections(formattedSections)
-        setActiveSectionId(formattedSections[0]?.id ?? null)
-        setAllGenerated(formattedSections.every(section => section.status === 'done'))
+        queueMicrotask(() => {
+          setSections(formattedSections)
+          setActiveSectionId(formattedSections[0]?.id ?? null)
+          setAllGenerated(formattedSections.every(section => section.status === 'done'))
+        })
         sectionStore.saveForProject(project.id, formattedSections)
         if (syncSnapshotDescription) versionStore.snapshot(syncSnapshotDescription, project.id)
 
@@ -849,21 +852,25 @@ export default function Stage3() {
           addedOutlineSections.length > 0 &&
           confirm(`检测到新增大纲 ${addedOutlineSections.length} 个章节，是否生成新增章节？\n\n将生成：${addedOutlineSections.map(outlineSectionTitle).join('、')}`)
         ) {
-          void generateAdditionalSections(
-            addedOutlineSections,
-            formattedSections.length,
-            formattedSections,
-            outline.sections
-          )
+          queueMicrotask(() => {
+            void generateAdditionalSections(
+              addedOutlineSections,
+              formattedSections.length,
+              formattedSections,
+              outline.sections
+            )
+          })
         }
       } else {
-        setSections(formattedSections)
-        setActiveSectionId(formattedSections[0]?.id ?? null)
-        setAllGenerated(formattedSections.every(section => section.status === 'done'))
+        queueMicrotask(() => {
+          setSections(formattedSections)
+          setActiveSectionId(formattedSections[0]?.id ?? null)
+          setAllGenerated(formattedSections.every(section => section.status === 'done'))
+        })
       }
       hasStartedGenerationRef.current = true
     } else if (outline?.confirmedAt) {
-      startFullGeneration(outline.sections)
+      queueMicrotask(() => startFullGeneration(outline.sections))
     } else {
       const waitMsg: ChatMessage = {
         id: 's3_wait_outline',
@@ -873,7 +880,7 @@ export default function Stage3() {
         projectId: project.id,
         stage: 'stage3',
       }
-      setMessages([waitMsg])
+      queueMicrotask(() => setMessages([waitMsg]))
       saveStageMessages([waitMsg])
     }
 

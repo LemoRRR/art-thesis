@@ -12,9 +12,9 @@ interface VersionPanelProps {
 export default function VersionPanel({ projectId, onClose, onRestore }: VersionPanelProps) {
   const versions = versionStore.getByProject(projectId)
   const [previewId, setPreviewId] = useState<string | null>(null)
+  const [now] = useState(() => Date.now())
 
   function formatTime(ts: number): string {
-    const now = Date.now()
     const diff = now - ts
     if (diff < 60_000)  return '刚刚'
     if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`
