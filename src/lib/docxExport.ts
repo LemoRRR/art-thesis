@@ -14,6 +14,7 @@ import { getFootnotesForBlock, splitTextWithFootnotes } from './footnotes'
 import type { DocSection } from './storage'
 
 const FONT = '宋体'
+const TEXT_COLOR = '000000'
 const FILE_SAFE_PATTERN = /[\\/:*?"<>|]/g
 
 function editorAlignment(value: unknown) {
@@ -54,6 +55,7 @@ function createTitleParagraph(title: string) {
         bold: true,
         font: FONT,
         size: 32,
+        color: TEXT_COLOR,
       }),
     ],
   })
@@ -69,6 +71,7 @@ function createSectionHeading(title: string) {
         bold: true,
         font: FONT,
         size: 28,
+        color: TEXT_COLOR,
       }),
     ],
   })
@@ -84,6 +87,7 @@ function createSubHeading(text: string, level: 2 | 3) {
         bold: true,
         font: FONT,
         size: level === 2 ? 26 : 24,
+        color: TEXT_COLOR,
       }),
     ],
   })
@@ -238,12 +242,54 @@ export async function exportSectionsToDocx(title: string, sections: DocSection[]
           run: {
             font: FONT,
             size: 24,
+            color: TEXT_COLOR,
           },
           paragraph: {
             spacing: { line: 360 },
           },
         },
       },
+      paragraphStyles: [
+        {
+          id: 'Heading1',
+          name: 'Heading 1',
+          basedOn: 'Normal',
+          next: 'Normal',
+          quickFormat: true,
+          run: {
+            bold: true,
+            font: FONT,
+            size: 28,
+            color: TEXT_COLOR,
+          },
+        },
+        {
+          id: 'Heading2',
+          name: 'Heading 2',
+          basedOn: 'Normal',
+          next: 'Normal',
+          quickFormat: true,
+          run: {
+            bold: true,
+            font: FONT,
+            size: 26,
+            color: TEXT_COLOR,
+          },
+        },
+        {
+          id: 'Heading3',
+          name: 'Heading 3',
+          basedOn: 'Normal',
+          next: 'Normal',
+          quickFormat: true,
+          run: {
+            bold: true,
+            font: FONT,
+            size: 24,
+            color: TEXT_COLOR,
+          },
+        },
+      ],
     },
     sections: [
       {
