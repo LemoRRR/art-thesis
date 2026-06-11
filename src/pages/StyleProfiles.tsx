@@ -368,9 +368,9 @@ export default function StyleProfiles() {
   }
 
   const handleNewProfileFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files
+    const files = Array.from(event.target.files ?? [])
     event.target.value = ''
-    if (!files?.length) return
+    if (!files.length) return
     await uploadFiles(files, true)
   }
 
@@ -395,9 +395,9 @@ export default function StyleProfiles() {
   }
 
   const handleModalProfileFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files
+    const files = Array.from(event.target.files ?? [])
     event.target.value = ''
-    if (!files?.length) return
+    if (!files.length) return
     await uploadFiles(files, false)
   }
 
