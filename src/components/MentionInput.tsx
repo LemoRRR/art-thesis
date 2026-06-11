@@ -164,6 +164,7 @@ export default function MentionInput({
 
   const showLibraryPicker = open && value.endsWith('@')
   const showStylePicker = styleOpen && value.endsWith('/')
+  const isSingleLine = rows === 1
 
   return (
     <div ref={rootRef} style={{ position: 'relative', ...style }}>
@@ -175,16 +176,20 @@ export default function MentionInput({
         disabled={disabled}
         rows={rows}
         style={{
+          display: 'block',
           width: '100%',
           border: '1px solid var(--color-border)',
           borderRadius: 'var(--radius-sm)',
-          padding: 10,
-          resize: 'vertical',
+          height: isSingleLine ? 40 : undefined,
+          minHeight: isSingleLine ? 40 : undefined,
+          padding: isSingleLine ? '0 10px' : 10,
+          resize: isSingleLine ? 'none' : 'vertical',
           fontFamily: 'var(--font-sans)',
           fontSize: 13,
-          lineHeight: 1.7,
+          lineHeight: isSingleLine ? '40px' : 1.7,
           boxSizing: 'border-box',
           outline: 'none',
+          overflowY: isSingleLine ? 'hidden' : undefined,
           background: disabled ? 'var(--color-bg)' : 'var(--color-surface)',
         }}
       />
