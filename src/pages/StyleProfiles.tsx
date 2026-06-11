@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react'
 import { ChevronLeft, ChevronRight, Download, Eye, FileText, Loader2, Plus, Search, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
@@ -202,6 +202,8 @@ export default function StyleProfiles() {
   const [isAddDragActive, setIsAddDragActive] = useState(false)
   const [isModalDragActive, setIsModalDragActive] = useState(false)
   const [isUploadLoading, setIsUploadLoading] = useState(false)
+  const [studentNameError, setStudentNameError] = useState(false)
+  const studentNameInputRef = useRef<HTMLInputElement>(null)
 
   const activeProfile = useMemo(
     () => profiles.find(profile => profile.id === activeId) ?? null,
@@ -228,6 +230,7 @@ export default function StyleProfiles() {
     setActiveId(null)
     setDraft(emptyDraft)
     setNotice('')
+    setStudentNameError(false)
     setUploadStatus('')
     setIsModalOpen(true)
   }
@@ -236,6 +239,7 @@ export default function StyleProfiles() {
     setActiveId(profile.id)
     setDraft(profileToDraft(profile))
     setNotice('')
+    setStudentNameError(false)
     setUploadStatus(profile.sourceDocuments?.length ? `当前档案包含 ${profile.sourceDocuments.length} 个参考文档` : '')
     setIsModalOpen(true)
   }
@@ -244,6 +248,7 @@ export default function StyleProfiles() {
     if (isExtracting) return
     setIsModalOpen(false)
     setNotice('')
+    setStudentNameError(false)
     setUploadStatus('')
   }
 
@@ -251,6 +256,8 @@ export default function StyleProfiles() {
     const studentName = draft.studentName.trim()
     if (!studentName) {
       setNotice('请先填写学生名。')
+      setStudentNameError(true)
+      window.setTimeout(() => studentNameInputRef.current?.focus(), 0)
       return
     }
     if (profiles.length >= 50 && !activeProfile) {
@@ -272,6 +279,7 @@ export default function StyleProfiles() {
       setNotice('风格档案已保存。')
     }
     refresh()
+    setStudentNameError(false)
     setIsModalOpen(false)
     setNotice('')
     setUploadStatus('')
@@ -617,11 +625,36 @@ export default function StyleProfiles() {
                   </div>
 
                   <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr',
+                      gap: 12,
+                      border: studentNameError ? '1px solid #D64545' : '1px solid transparent',
+                      background: studentNameError ? '#FFF4F2' : 'transparent',
+                      borderRadius: 8,
+                      padding: studentNameError ? 10 : 0,
+                    }}>
                       <label style={labelStyle}>
                         学生名（必填）
-                        <input value={draft.studentName} onChange={event => setDraft({ ...draft, studentName: event.target.value })} placeholder="例如：张同学" style={inputStyle} />
+                        <input
+                          ref={studentNameInputRef}
+                          value={draft.studentName}
+                          onChange={event => {
+                            setDraft({ ...draft, studentName: event.target.value })
+                            if (event.target.value.trim()) setStudentNameError(false)
+                          }}
+                          placeholder="例如：张同学"
+                          aria-invalid={studentNameError}
+                          style={{
+                            ...inputStyle,
+                            borderColor: studentNameError ? '#D64545' : 'var(--color-border)',
+                            boxShadow: studentNameError ? '0 0 0 3px rgba(214, 69, 69, 0.12)' : 'none',
+                          }}
+                        />
                       </label>
+                      {studentNameError && (
+                        <div style={{ fontSize: 12, color: '#C0392B' }}>请填写学生名后再保存档案。</div>
+                      )}
                     </div>
 
                     <section
