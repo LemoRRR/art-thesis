@@ -6,9 +6,8 @@ import ReferencePanel from '../components/ReferencePanel'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import ChatBubble from '../components/ChatBubble'
-import ModelTag from '../components/ModelTag'
 import MentionInput, { type MentionRef } from '../components/MentionInput'
-import { callDoubao, callGPT } from '../lib/ai'
+import { callGPT } from '../lib/ai'
 import { filesAPI, libraryAPI } from '../lib/api'
 import { buildAIContext, buildMentionContext } from '../lib/context'
 import { promptChatFollowup, type AcademicLevel } from '../lib/prompts'
@@ -23,7 +22,6 @@ import {
 } from '../lib/storage'
 import type { Message } from '../lib/ai'
 
-type ChatModel = 'gpt' | 'doubao'
 type Stage1UploadStatus = 'uploading' | 'ready' | 'failed'
 const ACADEMIC_LEVELS: AcademicLevel[] = ['本科', '硕士', '期刊']
 const LEVEL_REQUIREMENT_PREFIX = '论文规格：'
@@ -251,7 +249,6 @@ export default function Stage1() {
   const [isCompleted,  setIsCompleted]  = useState(false)
   const [uploadedFile, setUploadedFile] = useState<Stage1UploadedFile | null>(null)
   const [showReferences, setShowReferences] = useState(false)
-  const [selectedModel, setSelectedModel] = useState<ChatModel>('gpt')
   const [comprehension, setComprehension] = useState<ComprehensionModel | null>(null)
   const [mentions, setMentions] = useState<MentionRef[]>([])
   const [selectedLevel, setSelectedLevel] = useState<AcademicLevel | ''>(() =>
@@ -394,7 +391,7 @@ export default function Stage1() {
     const abort = new AbortController()
     abortRef.current = abort
 
-    const callModel = selectedModel === 'gpt' ? callGPT : callDoubao
+    const callModel = callGPT
 
     callModel(
       promptChatFollowup(history.slice(0, -1), text, contextualText),
@@ -467,7 +464,7 @@ export default function Stage1() {
       },
       abort.signal
     )
-  }, [inputText, isLoading, mentions, messages, project.context, project.id, selectedLevel, selectedModel, uploadedFile])
+  }, [inputText, isLoading, mentions, messages, project.context, project.id, selectedLevel, uploadedFile])
 
   // 文件上传处理
   const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -898,32 +895,7 @@ export default function Stage1() {
               </button>
             </div>
 
-            {/* 模型选择 */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>模型</span>
-                <select
-                  value={selectedModel}
-                  onChange={e => setSelectedModel(e.target.value as ChatModel)}
-                  style={{
-                    height: 26,
-                    minWidth: 118,
-                    border: '1px solid var(--color-border-strong)',
-                    borderRadius: 6,
-                    background: 'var(--color-surface)',
-                    color: 'var(--color-ink-2)',
-                    padding: '0 28px 0 9px',
-                    fontSize: 12,
-                    fontFamily: 'var(--font-sans)',
-                    cursor: 'pointer',
-                    outline: 'none',
-                  }}
-                >
-                  <option value="gpt">GPT-5.5 Medium</option>
-                  <option value="doubao">豆包 Ark</option>
-                </select>
-                <ModelTag model={selectedModel} />
-              </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
               <span style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>
                 材料理解 · 读懂材料并给出写作建议
               </span>
