@@ -48,6 +48,24 @@ const styleFields: Array<[string, keyof DraftProfile]> = [
   ['风格画像总结', 'editableSummary'],
 ]
 
+const emptyFieldPlaceholder = '样本不足，暂未稳定识别'
+
+function getProfileDocumentCount(profile: StyleProfile | DraftProfile) {
+  return profile.sourceDocuments?.length ?? (profile.sourceFileName ? 1 : 0)
+}
+
+function getProfileDocumentLine(profile: StyleProfile | DraftProfile) {
+  const docs = profile.sourceDocuments ?? []
+  if (docs.length === 0) return profile.sourceFileName || '尚未上传参考文档'
+  const names = docs.map(doc => doc.fileName)
+  return names.length > 2 ? `${names.slice(0, 2).join(' / ')} 等 ${names.length} 个文档` : names.join(' / ')
+}
+
+function fieldValue(value: unknown) {
+  const text = String(value ?? '').trim()
+  return text || emptyFieldPlaceholder
+}
+
 function parseStyleProfile(content: string): StyleProfileJson {
   const match = content.replace(/```json|```/g, '').match(/\{[\s\S]*\}/)
   if (!match) return { editableSummary: content.trim() }
@@ -99,34 +117,38 @@ function downloadText(fileName: string, content: string, type = 'text/plain;char
 
 function profileToText(profile: StyleProfile): string {
   return [
-    `学生：${profile.studentName}`,
-    `文档数：${profile.sourceDocuments?.length ?? (profile.sourceFileName ? 1 : 0)}`,
+    '【风格名片】',
+    `学生：${profile.studentName || '未填写'}`,
+    `样本文档数：${getProfileDocumentCount(profile)}`,
+    `样本文档：${getProfileDocumentLine(profile)}`,
     '',
-    `语言水平：${profile.writingLevel}`,
-    `句式特征：${profile.sentenceStyle}`,
-    `段落组织：${profile.paragraphLogic}`,
-    `论证方式：${profile.argumentStyle}`,
-    `过渡方式：${profile.transitionStyle}`,
-    `词汇风格：${profile.vocabularyStyle}`,
-    `风险提醒：${profile.avoidContentReuseNotice}`,
+    '【固定画像】',
+    `1. 语言水平：${fieldValue(profile.writingLevel)}`,
+    `2. 句式特征：${fieldValue(profile.sentenceStyle)}`,
+    `3. 段落组织：${fieldValue(profile.paragraphLogic)}`,
+    `4. 论证方式：${fieldValue(profile.argumentStyle)}`,
+    `5. 过渡方式：${fieldValue(profile.transitionStyle)}`,
+    `6. 词汇风格：${fieldValue(profile.vocabularyStyle)}`,
+    `7. 风险提醒：${fieldValue(profile.avoidContentReuseNotice)}`,
     '',
-    `风格画像：${profile.editableSummary}`,
-  ].filter(Boolean).join('\n')
+    `8. 风格画像总结：${fieldValue(profile.editableSummary)}`,
+  ].join('\n')
 }
 
 function profileToCsv(profile: StyleProfile): string {
   const rows = [
     ['字段', '内容'],
     ['学生', profile.studentName],
-    ['文档数', String(profile.sourceDocuments?.length ?? 0)],
-    ['语言水平', profile.writingLevel],
-    ['句式特征', profile.sentenceStyle],
-    ['段落组织', profile.paragraphLogic],
-    ['论证方式', profile.argumentStyle],
-    ['过渡方式', profile.transitionStyle],
-    ['词汇风格', profile.vocabularyStyle],
-    ['风险提醒', profile.avoidContentReuseNotice],
-    ['风格画像', profile.editableSummary],
+    ['样本文档数', String(getProfileDocumentCount(profile))],
+    ['样本文档', getProfileDocumentLine(profile)],
+    ['语言水平', fieldValue(profile.writingLevel)],
+    ['句式特征', fieldValue(profile.sentenceStyle)],
+    ['段落组织', fieldValue(profile.paragraphLogic)],
+    ['论证方式', fieldValue(profile.argumentStyle)],
+    ['过渡方式', fieldValue(profile.transitionStyle)],
+    ['词汇风格', fieldValue(profile.vocabularyStyle)],
+    ['风险提醒', fieldValue(profile.avoidContentReuseNotice)],
+    ['风格画像', fieldValue(profile.editableSummary)],
   ]
   return rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n')
 }
@@ -509,13 +531,17 @@ export default function StyleProfiles() {
                   </div>
                   <div style={{ minHeight: 70 }}>
                     <h2 style={{ margin: '12px 0 6px', fontSize: 16, lineHeight: 1.4, color: 'var(--color-ink)' }}>{profile.studentName || '未填写学生名'}</h2>
-                    <div style={{ fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.5 }}>
-                      {profile.sourceDocuments?.slice(0, 2).map(doc => doc.fileName).join(' / ') || profile.sourceFileName || '学生风格档案'}
+                    <div style={{ fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.5, minHeight: 36 }}>
+                      {getProfileDocumentLine(profile)}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    <Tag>{profile.sourceDocuments?.length ?? (profile.sourceFileName ? 1 : 0)} 个文档</Tag>
+                    <Tag>{getProfileDocumentCount(profile)} 个文档</Tag>
                     <Tag>{profile.writingLevel ? '已分析' : '待分析'}</Tag>
+                  </div>
+                  <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 10, display: 'grid', gap: 6, fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.55 }}>
+                    <div><strong style={{ color: 'var(--color-ink-2)' }}>语言</strong>：{fieldValue(profile.writingLevel)}</div>
+                    <div><strong style={{ color: 'var(--color-ink-2)' }}>论证</strong>：{fieldValue(profile.argumentStyle)}</div>
                   </div>
                   <div style={{ display: 'flex', borderTop: '1px solid var(--color-border)', margin: '12px -14px -14px', padding: '8px 10px', gap: 4 }}>
                     <CardAction icon={<Eye size={12} />} label="查看" onClick={() => selectProfile(profile)} />
@@ -639,10 +665,25 @@ export default function StyleProfiles() {
                       </div>
                     )}
 
+                    <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'hidden' }}>
+                      <div style={{ padding: '8px 12px', background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)', fontSize: 12, color: 'var(--color-ink-2)', fontWeight: 600, display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                        <span>基础信息</span>
+                        <span style={{ color: 'var(--color-ink-3)', fontWeight: 500 }}>{getProfileDocumentCount(draft)} / {maxDocumentsPerProfile} 个样本文档</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: 0, fontSize: 12 }}>
+                        <div style={fixedLabelCellStyle}>学生姓名</div>
+                        <div style={fixedValueCellStyle}>{draft.studentName || '未填写'}</div>
+                        <div style={fixedLabelCellStyle}>档案状态</div>
+                        <div style={fixedValueCellStyle}>{draft.writingLevel ? '已生成标准风格画像' : '待上传样本并分析'}</div>
+                        <div style={fixedLabelCellStyle}>样本文档</div>
+                        <div style={fixedValueCellStyle}>{getProfileDocumentLine(draft)}</div>
+                      </div>
+                    </div>
+
                     {(draft.sourceDocuments?.length ?? 0) > 0 && (
                       <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'hidden' }}>
                         <div style={{ padding: '8px 12px', background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)', fontSize: 12, color: 'var(--color-ink-2)', fontWeight: 600 }}>
-                          已纳入分析的文档
+                          样本文档列表
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8, padding: 10 }}>
                           {draft.sourceDocuments?.map(doc => (
@@ -656,7 +697,11 @@ export default function StyleProfiles() {
                       </div>
                     )}
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'hidden' }}>
+                      <div style={{ padding: '8px 12px', background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)', fontSize: 12, color: 'var(--color-ink-2)', fontWeight: 600 }}>
+                        固定风格画像
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: 12 }}>
                       {styleFields.map(([label, key]) => (
                         <label key={key} style={{ ...labelStyle, gridColumn: key === 'editableSummary' || key === 'avoidContentReuseNotice' ? '1 / -1' : undefined }}>
                           {label}
@@ -668,6 +713,7 @@ export default function StyleProfiles() {
                           />
                         </label>
                       ))}
+                      </div>
                     </div>
 
                     {notice && <div style={{ fontSize: 12, color: 'var(--color-accent)' }}>{notice}</div>}
@@ -771,6 +817,23 @@ const textareaStyle = {
   outline: 'none',
   resize: 'vertical' as const,
   fontFamily: 'var(--font-sans)',
+}
+
+const fixedLabelCellStyle = {
+  padding: '9px 10px',
+  borderRight: '1px solid var(--color-border)',
+  borderBottom: '1px solid var(--color-border)',
+  background: 'var(--color-bg)',
+  color: 'var(--color-ink-3)',
+  fontWeight: 600,
+}
+
+const fixedValueCellStyle = {
+  padding: '9px 10px',
+  borderBottom: '1px solid var(--color-border)',
+  color: 'var(--color-ink-2)',
+  minWidth: 0,
+  overflowWrap: 'anywhere' as const,
 }
 
 const modalBackdropStyle = {

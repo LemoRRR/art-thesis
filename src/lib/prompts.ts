@@ -132,8 +132,17 @@ export function promptExtractStyleProfile(articleText: string): Message[] {
 - 不提取、复述或保存具体观点、案例、材料、结论和原句
 - 不模仿具体内容，不输出可直接复用的原文表达
 
-请只输出 JSON，不要加代码块：
-{"writingLevel":"语言水平与学术化程度","sentenceStyle":"句式特征","paragraphLogic":"段落组织方式","argumentStyle":"论证节奏与分析方式","transitionStyle":"过渡和衔接方式","vocabularyStyle":"词汇与术语使用习惯","avoidContentReuseNotice":"不得复用原文观点、案例、素材、原句或具体内容","editableSummary":"可人工编辑的风格画像总结，150-220字"}`,
+请只输出 JSON，不要加代码块。必须严格包含以下 8 个字段，不要新增字段，不要缺字段；无法稳定判断时写“样本不足，暂未稳定识别”：
+{
+  "writingLevel":"语言水平与学术化程度，40-80字",
+  "sentenceStyle":"句式特征，40-80字",
+  "paragraphLogic":"段落组织方式，40-80字",
+  "argumentStyle":"论证节奏与分析方式，40-80字",
+  "transitionStyle":"过渡和衔接方式，40-80字",
+  "vocabularyStyle":"词汇与术语使用习惯，40-80字",
+  "avoidContentReuseNotice":"固定写作边界提醒，40-80字，强调只模仿表达方式，不复用观点/案例/素材/原句",
+  "editableSummary":"标准风格名片总结，150-220字，按语言、句式、段落、论证、过渡五个维度概括"
+}`,
     },
     { role: 'user', content: articleText.slice(0, 10000) },
   ]
