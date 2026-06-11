@@ -141,7 +141,164 @@ F2 最终包含三种动作：
 
 ## F3 语言风格记忆库
 
-待讨论与补充。
+### 已达成共识
+
+语言风格记忆库必须与资料库分开。
+
+- 资料库回答“写什么”，保存内容资料、案例、观点、背景、理论和可引用信息。
+- 语言风格记忆库回答“怎么写”，保存某个学生/作者的语言水平、句式习惯、段落组织和论证节奏。
+- 上传已有论文用于 F1 修改时，默认只理解研究对象、核心论点和结构，不学习语言风格。
+- 只有用户明确选择“提取为风格档案”时，才进入 F3。
+
+### 合同交付要求
+
+- 输入参考文章，支持 Word/PDF。
+- 单次参考文章上限 10000 字。
+- 提取并存储语言风格特征。
+- 支持多个学生独立档案，上限 50 个。
+- 同一学生第二次使用时自动调取上次档案。
+- 甲方可手动编辑、删除档案内容。
+- 档案数据可导出为 txt/csv。
+- 风格记忆效果依赖参考文章质量，不承诺风格相似度作为验收指标。
+
+### 产品定义
+
+F3 不做“模仿某篇文章内容”，而是为某个学生保存可复用的语言水平和表达习惯画像。后续写作时只作为表达约束调用，不复用参考文章的内容、观点、案例和具体表达。
+
+建议命名：
+
+- 导航入口：`风格档案`
+- 单条数据：`学生风格档案`
+
+### 建议数据模型
+
+```ts
+interface StyleProfile {
+  id: string
+  userId: string
+  studentName: string
+  profileName: string
+  sourceFileName?: string
+  sourceTextLength: number
+  writingLevel: string
+  sentenceStyle: string
+  paragraphLogic: string
+  argumentStyle: string
+  transitionStyle: string
+  vocabularyStyle: string
+  avoidContentReuseNotice: string
+  editableSummary: string
+  createdAt: number
+  updatedAt: number
+}
+```
+
+### 风格提取结果应包含
+
+- 语言水平：本科/硕士/期刊感、学术化程度、表达成熟度。
+- 句式特征：长短句比例、常见句式、是否偏概念化表达。
+- 段落组织：先提出观点还是先描述现象、段落展开节奏。
+- 论证方式：概念解释、案例分析、理论连接、总结句习惯。
+- 过渡方式：章节之间和段落之间如何衔接。
+- 词汇风格：抽象词、学科术语、评价性词语使用习惯。
+- 风险提醒：不得复用原文观点、案例、措辞或具体内容。
+
+### 使用流程
+
+1. 用户进入 `风格档案`。
+2. 新建学生档案。
+3. 上传参考文章 Word/PDF。
+4. 系统只截取或处理前 10000 字。
+5. AI 生成风格画像。
+6. 用户可手动编辑画像。
+7. 保存为学生档案。
+8. 后续进入 Stage3 生成或修改正文时，可选择使用某个风格档案。
+9. Prompt 中只注入风格画像，不注入原文内容。
+
+### 写作调用规则
+
+Stage3 生成或修改正文时，可以提供风格选择：
+
+- 不使用风格档案
+- 使用某个学生风格档案
+
+Prompt 约束示例：
+
+```text
+【语言风格约束】
+请参考以下风格画像调整表达方式：
+...
+
+注意：只参考语言水平、句式、段落组织和论证节奏，不复用参考文章的观点、案例、素材、原句或具体内容。
+```
+
+### 需要实现的产品变化
+
+- 新增 `风格档案` 页面或资料库内独立 Tab。
+- 支持学生风格档案列表。
+- 支持新建、编辑、删除档案。
+- 支持上传 Word/PDF 后提取风格画像。
+- 支持档案上限 50 个。
+- 支持同一学生后续自动调取或默认推荐最近档案。
+- 支持导出 txt/csv。
+- Stage3 生成和修改时支持选择风格档案。
+- F1 已有论文修改路径默认不触发风格学习。
+
+### 主要影响文件
+
+- `src/pages/Library.tsx` 或新增 `src/pages/StyleProfiles.tsx`
+- `src/components/Sidebar.tsx`
+- `src/lib/prompts.ts`
+- `src/lib/storage.ts`
+- `src/lib/api.ts`
+- 后端新增 style profile API 和 Supabase 表。
+
+### 数据表建议
+
+```sql
+create table style_profiles (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  student_name text not null,
+  profile_name text not null,
+  source_file_name text,
+  source_text_length integer not null default 0,
+  writing_level text not null default '',
+  sentence_style text not null default '',
+  paragraph_logic text not null default '',
+  argument_style text not null default '',
+  transition_style text not null default '',
+  vocabulary_style text not null default '',
+  avoid_content_reuse_notice text not null default '',
+  editable_summary text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+```
+
+### 分阶段实现建议
+
+#### 阶段一：本地风格档案
+
+- 先用本地 store 做列表、新建、编辑、删除。
+- 不影响现有资料库和写作主流程。
+
+#### 阶段二：风格提取
+
+- 复用文件上传/解析能力。
+- 新增只提取风格的 prompt。
+- 严格提示不提取具体内容。
+
+#### 阶段三：写作调用
+
+- Stage3 增加风格档案选择。
+- 章节生成、当前小节生成、选区修改都可带风格画像。
+
+#### 阶段四：云端与导出
+
+- Supabase 表与 RLS。
+- txt/csv 导出。
+- 档案数量上限 50 个。
 
 ## F4 艺术类量表生成 + 质性研究辅助
 
