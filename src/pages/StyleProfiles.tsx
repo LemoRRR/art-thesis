@@ -3,9 +3,9 @@ import { Download, FileText, Plus, Sparkles, Trash2 } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import { callGPT } from '../lib/ai'
-import { filesAPI } from '../lib/api'
+import { filesAPI, libraryAPI } from '../lib/api'
 import { promptExtractStyleProfile } from '../lib/prompts'
-import { libraryStore, styleProfileStore, type StyleProfile } from '../lib/storage'
+import { libraryStore, styleProfileStore, type LibraryItem, type StyleProfile } from '../lib/storage'
 
 interface StyleProfileJson {
   writingLevel?: string
@@ -39,6 +39,22 @@ function streamStyleProfile(text: string): Promise<StyleProfileJson> {
       onError: reject,
     })
   })
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => window.setTimeout(resolve, ms))
+}
+
+async function waitForParsedLibraryItem(itemId: string): Promise<LibraryItem> {
+  let latest = libraryStore.get(itemId)
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    if (latest?.text || latest?.summary || latest?.extractStatus === 'failed') return latest
+    await sleep(1200)
+    const row = await libraryAPI.get(itemId)
+    latest = libraryStore.upsertRemote(row)
+  }
+  if (latest) return latest
+  throw new Error('没有找到上传后的资料记录')
 }
 
 function downloadText(fileName: string, content: string, type = 'text/plain;charset=utf-8') {
@@ -108,6 +124,7 @@ export default function StyleProfiles() {
   const [draft, setDraft] = useState(emptyDraft)
   const [isExtracting, setIsExtracting] = useState(false)
   const [notice, setNotice] = useState('')
+  const [uploadStatus, setUploadStatus] = useState('')
 
   const activeProfile = useMemo(
     () => profiles.find(profile => profile.id === activeId) ?? null,
@@ -123,20 +140,29 @@ export default function StyleProfiles() {
 
     setIsExtracting(true)
     setNotice('')
+    setUploadStatus(`已选择：${file.name}，正在准备解析…`)
     try {
       let text = ''
       if (file.type.startsWith('text/') || file.name.toLowerCase().endsWith('.txt')) {
+        setUploadStatus(`正在读取文本：${file.name}`)
         text = await file.text()
       } else {
-        setNotice('Word/PDF 暂复用云端解析能力，解析出的正文只用于生成风格画像。')
+        setUploadStatus(`正在上传并解析：${file.name}`)
+        setNotice('Word/PDF 会先上传到解析服务；解析出的正文只用于生成风格画像。')
         const row = await filesAPI.upload(file)
         const item = libraryStore.upsertRemote(row)
-        text = item.text || item.summary || ''
+        setUploadStatus('文件已上传，正在等待正文解析结果…')
+        const parsedItem = await waitForParsedLibraryItem(item.id)
+        if (parsedItem.extractStatus === 'failed') {
+          throw new Error('文件解析失败，请换一个文档或先转为 TXT 再上传。')
+        }
+        text = parsedItem.text || parsedItem.summary || ''
       }
 
       const clipped = text.trim().slice(0, 10000)
       if (!clipped) throw new Error('没有解析到可用于提取风格的正文')
 
+      setUploadStatus(`已读取 ${clipped.length} 字，正在生成风格画像…`)
       const extracted = await streamStyleProfile(clipped)
       setDraft(prev => ({
         ...prev,
@@ -152,8 +178,11 @@ export default function StyleProfiles() {
         avoidContentReuseNotice: extracted.avoidContentReuseNotice || prev.avoidContentReuseNotice,
         editableSummary: extracted.editableSummary ?? '',
       }))
+      setUploadStatus(`风格画像已生成：${file.name}`)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '风格提取失败')
+      const message = error instanceof Error ? error.message : '风格提取失败'
+      setUploadStatus(`处理失败：${message}`)
+      setNotice(message)
     } finally {
       setIsExtracting(false)
     }
@@ -184,6 +213,7 @@ export default function StyleProfiles() {
     setActiveId(null)
     setDraft(emptyDraft)
     setNotice('')
+    setUploadStatus('')
   }
 
   const selectProfile = (profile: StyleProfile) => {
@@ -203,6 +233,7 @@ export default function StyleProfiles() {
       editableSummary: profile.editableSummary,
     })
     setNotice('')
+    setUploadStatus(profile.sourceFileName ? `当前档案来源：${profile.sourceFileName}` : '')
   }
 
   const deleteProfile = (profile: StyleProfile) => {
@@ -284,9 +315,16 @@ export default function StyleProfiles() {
                 </label>
                 <label style={{ gridColumn: '1 / -1', border: '1px dashed var(--color-border-strong)', borderRadius: 8, padding: 14, background: 'var(--color-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
                   <FileText size={18} color="var(--color-accent)" />
-                  <span style={{ fontSize: 13, color: 'var(--color-ink-2)' }}>{isExtracting ? '正在提取风格画像…' : '上传参考文章提取风格画像（Word/PDF/TXT，最多使用前 10000 字）'}</span>
+                  <span style={{ fontSize: 13, color: 'var(--color-ink-2)' }}>
+                    {isExtracting ? (uploadStatus || '正在提取风格画像…') : '上传参考文章提取风格画像（Word/PDF/TXT，最多使用前 10000 字）'}
+                  </span>
                   <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" onChange={handleFile} disabled={isExtracting} style={{ display: 'none' }} />
                 </label>
+                {uploadStatus && (
+                  <div style={{ gridColumn: '1 / -1', fontSize: 12, color: uploadStatus.startsWith('处理失败') ? '#C0392B' : 'var(--color-accent)', background: uploadStatus.startsWith('处理失败') ? '#FFF4F2' : 'var(--color-accent-light)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '8px 10px' }}>
+                    {uploadStatus}
+                  </div>
+                )}
               </section>
 
               <section style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
