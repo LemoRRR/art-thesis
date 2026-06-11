@@ -5,6 +5,7 @@ const BASE_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_BASE_URL 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 let browserSupabase: SupabaseClient | null = null
+let browserSupabaseConfigKey = ''
 
 export function getToken(): string | null {
   return localStorage.getItem('access_token')
@@ -169,19 +170,23 @@ type SignedUploadResponse = {
   fileName: string
   contentType: string
   fileSize: number
+  supabaseUrl?: string
+  supabaseAnonKey?: string
 }
 
-function getBrowserSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+function getBrowserSupabase(supabaseUrl = SUPABASE_URL, supabaseAnonKey = SUPABASE_ANON_KEY) {
+  if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error('Supabase upload settings are missing. Please configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.')
   }
-  if (!browserSupabase) {
-    browserSupabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  const configKey = `${supabaseUrl}:${supabaseAnonKey}`
+  if (!browserSupabase || browserSupabaseConfigKey !== configKey) {
+    browserSupabase = createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
       },
     })
+    browserSupabaseConfigKey = configKey
   }
   return browserSupabase
 }
@@ -206,7 +211,7 @@ export const filesAPI = {
         }),
       })
 
-      const { error: uploadError } = await getBrowserSupabase()
+      const { error: uploadError } = await getBrowserSupabase(signed.supabaseUrl, signed.supabaseAnonKey)
         .storage
         .from('library-files')
         .uploadToSignedUrl(signed.path, signed.token, file, { contentType })

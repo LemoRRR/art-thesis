@@ -8,6 +8,9 @@ const fallbackUrl = 'http://localhost:54321'
 const fallbackKey = 'missing-supabase-service-role-key'
 const fallbackAnonKey = 'missing-supabase-anon-key'
 
+export const publicSupabaseUrl = supabaseUrl || fallbackUrl
+export const publicSupabaseAnonKey = anonKey || fallbackAnonKey
+
 if (!supabaseUrl || !serviceRoleKey) {
   console.warn('[server] SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured')
 }
@@ -29,8 +32,8 @@ export const supabase = createClient(
 
 export function createUserClient(accessToken: string) {
   return createClient(
-    supabaseUrl || fallbackUrl,
-    anonKey || fallbackAnonKey,
+    publicSupabaseUrl,
+    publicSupabaseAnonKey,
     {
       global: {
         headers: { Authorization: `Bearer ${accessToken}` },

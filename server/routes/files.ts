@@ -2,7 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import { extractDimensions } from '../lib/extract.js'
 import { parseFile } from '../lib/parser.js'
-import { createUserClient, supabase } from '../lib/supabase.js'
+import { createUserClient, publicSupabaseAnonKey, publicSupabaseUrl, supabase } from '../lib/supabase.js'
 import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
@@ -119,6 +119,8 @@ router.post('/signed-upload', async (req: AuthRequest, res) => {
     fileName: originalFileName,
     contentType: contentType || 'application/octet-stream',
     fileSize: Number(fileSize) || 0,
+    supabaseUrl: publicSupabaseUrl,
+    supabaseAnonKey: publicSupabaseAnonKey,
   })
 })
 
