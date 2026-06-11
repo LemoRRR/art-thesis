@@ -8,6 +8,7 @@ interface DocAreaProps {
   projectId: string
   paperTitle: string
   sections: DocSection[]
+  isPreparing?: boolean
   activeSectionId: string | null
   onSectionClick: (id: string) => void
   onSectionChange: (
@@ -33,6 +34,7 @@ export default function DocArea({
   projectId,
   paperTitle,
   sections,
+  isPreparing = false,
   activeSectionId,
   onSectionClick,
   onSectionChange,
@@ -78,13 +80,50 @@ export default function DocArea({
   }, [paperTitle, sections])
 
   if (sections.length === 0) {
+    const emptyTitle = isPreparing ? '正在准备正文' : '文档还是空的'
+    const emptyText = isPreparing
+      ? '已读取确认大纲，正在整理全文计划并准备逐章生成正文。'
+      : '先在阶段二确认大纲，或在左侧对话框说明章节标题，AI 会生成正文出现在这里。'
+
     return (
-      <div className="doc-empty-state">
-        <div style={{ fontSize: 32 }}>□</div>
-        <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--color-ink-2)' }}>文档还是空的</div>
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'var(--color-ink-3)',
+          gap: 12,
+          padding: 40,
+          textAlign: 'center',
+          background: isPreparing ? 'linear-gradient(180deg, #FBFAF7 0%, #F4F0E8 100%)' : 'transparent',
+        }}
+      >
+        {isPreparing ? (
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: '50%',
+              border: '2px solid rgba(46, 125, 76, 0.18)',
+              borderTopColor: 'var(--color-accent)',
+              animation: 'doc-loading-spin 0.8s linear infinite',
+            }}
+            aria-hidden="true"
+          />
+        ) : (
+          <div style={{ fontSize: 32 }}>□</div>
+        )}
+        <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--color-ink-2)' }}>{emptyTitle}</div>
         <div style={{ fontSize: 13, lineHeight: 1.7 }}>
-          先在阶段二确认大纲，或在左侧对话框说明章节标题，AI 会生成正文出现在这里。
+          {emptyText}
         </div>
+        <style>{`
+          @keyframes doc-loading-spin {
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
       </div>
     )
   }

@@ -418,6 +418,10 @@ export default function Stage3() {
   const [showHistory, setShowHistory] = useState(false)
   const [showReferences, setShowReferences] = useState(false)
   const [isGeneratingFull, setIsGeneratingFull] = useState(false)
+  const [isPreparingDraft, setIsPreparingDraft] = useState(() => {
+    const outline = outlineStore.get(project.id)
+    return sectionStore.getByProject(project.id).length === 0 && Boolean(outline?.confirmedAt && outline.sections.length > 0)
+  })
   const [generatingProgress, setGeneratingProgress] = useState({ current: 0, total: 0 })
   const [allGenerated, setAllGenerated] = useState(false)
   const [finishResult, setFinishResult] = useState('')
@@ -530,6 +534,7 @@ export default function Stage3() {
   const startFullGeneration = useCallback(async (outlineSections: OutlineSection[]) => {
     if (hasStartedGenerationRef.current || outlineSections.length === 0) return
     hasStartedGenerationRef.current = true
+    setIsPreparingDraft(true)
     setIsGeneratingFull(true)
     setAllGenerated(false)
     setGeneratingProgress({ current: 0, total: outlineSections.length })
@@ -671,6 +676,7 @@ export default function Stage3() {
     }
 
     setIsGeneratingFull(false)
+    setIsPreparingDraft(false)
     setAllGenerated(true)
     sectionStore.saveForProject(project.id, generatedSections)
 
@@ -888,6 +894,7 @@ export default function Stage3() {
         }
 
         queueMicrotask(() => {
+          setIsPreparingDraft(false)
           setSections(formattedSections)
           setActiveSectionId(formattedSections[0]?.id ?? null)
           setAllGenerated(formattedSections.every(section => section.status === 'done'))
@@ -910,6 +917,7 @@ export default function Stage3() {
         }
       } else {
         queueMicrotask(() => {
+          setIsPreparingDraft(false)
           setSections(formattedSections)
           setActiveSectionId(formattedSections[0]?.id ?? null)
           setAllGenerated(formattedSections.every(section => section.status === 'done'))
@@ -927,7 +935,10 @@ export default function Stage3() {
         projectId: project.id,
         stage: 'stage3',
       }
-      queueMicrotask(() => setMessages([waitMsg]))
+      queueMicrotask(() => {
+        setIsPreparingDraft(false)
+        setMessages([waitMsg])
+      })
       saveStageMessages([waitMsg])
     }
 
@@ -1446,6 +1457,7 @@ export default function Stage3() {
                 projectId={project.id}
                 paperTitle={projectTitle}
                 sections={sections}
+                isPreparing={isPreparingDraft || isGeneratingFull || showOutlineTransition}
                 activeSectionId={activeSectionId}
                 onSectionClick={id => setActiveSectionId(id)}
                 onSectionChange={(id, content, editorDoc, footnotes, snapshotLabel, title) => {
