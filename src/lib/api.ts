@@ -6,9 +6,16 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 let browserSupabase: SupabaseClient | null = null
 let browserSupabaseConfigKey = ''
+const AUTH_EXPIRED_EVENT = 'paper-ai-auth-expired'
 
 export function getToken(): string | null {
   return localStorage.getItem('access_token')
+}
+
+function clearExpiredAuth() {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('auth_user')
+  window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT))
 }
 
 async function request<T>(path: string, options: RequestInit = {}, timeoutMs = 20_000): Promise<T> {
@@ -41,8 +48,7 @@ async function request<T>(path: string, options: RequestInit = {}, timeoutMs = 2
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: 'Request failed' }))
     if (res.status === 401) {
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('auth_user')
+      clearExpiredAuth()
     }
     throw new Error(`${path} ${res.status}: ${error.error ?? 'Request failed'}`)
   }
@@ -195,9 +201,8 @@ export const filesAPI = {
   upload: async (file: File) => {
     const token = getToken()
     if (!token) {
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('auth_user')
-      throw new Error('Please log in before uploading files.')
+      clearExpiredAuth()
+      throw new Error('登录已过期，请重新登录后再上传文件。')
     }
 
     const contentType = file.type || 'application/octet-stream'
@@ -251,8 +256,7 @@ export const filesAPI = {
           : 'File upload failed',
       }))
       if (res.status === 401) {
-        localStorage.removeItem('access_token')
-        localStorage.removeItem('auth_user')
+        clearExpiredAuth()
       }
       throw new Error(error.error ?? `File upload failed (HTTP ${res.status})`)
     }

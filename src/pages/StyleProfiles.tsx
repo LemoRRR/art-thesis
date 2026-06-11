@@ -330,8 +330,10 @@ export default function StyleProfiles() {
       if (resetBeforeUpload) setIsModalOpen(true)
     } catch (error) {
       const message = error instanceof Error ? error.message : '风格提取失败'
-      setUploadStatus(`处理失败：${message}`)
-      setNotice(message)
+      const isAuthError = message.includes('401') || message.includes('Token') || message.includes('登录') || message.toLowerCase().includes('unauthorized')
+      const friendlyMessage = isAuthError ? '登录已过期，请重新登录后再上传风格档案。' : message
+      setUploadStatus(`处理失败：${friendlyMessage}`)
+      setNotice(friendlyMessage)
       if (resetBeforeUpload) setIsModalOpen(true)
     } finally {
       setIsExtracting(false)

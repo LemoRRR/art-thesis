@@ -11,6 +11,8 @@ import Stage3 from './pages/Stage3'
 import StyleProfiles from './pages/StyleProfiles'
 import { projectStore, syncRemoteData } from './lib/storage'
 
+const AUTH_EXPIRED_EVENT = 'paper-ai-auth-expired'
+
 function DefaultConversationRedirect() {
   const projectId = projectStore.getActiveId()
   return <Navigate to={`/projects/${projectId}/stage1`} replace />
@@ -31,6 +33,16 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
   const [error, setError] = useState('')
   const [redirectToLogin, setRedirectToLogin] = useState(false)
   const syncedRef = useRef(false)
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      if (auth.isAuthRequired() && location.pathname !== '/login') {
+        setRedirectToLogin(true)
+      }
+    }
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
+  }, [location.pathname])
 
   useEffect(() => {
     let cancelled = false
