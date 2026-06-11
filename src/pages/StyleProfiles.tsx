@@ -1,5 +1,5 @@
 import { useMemo, useState, type ChangeEvent, type ReactNode } from 'react'
-import { Download, Eye, FileText, PenLine, Plus, Sparkles, Trash2, Upload } from 'lucide-react'
+import { Download, Eye, FileText, PenLine, Plus, Search, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import { callGPT } from '../lib/ai'
@@ -166,6 +166,8 @@ export default function StyleProfiles() {
   const [isExtracting, setIsExtracting] = useState(false)
   const [notice, setNotice] = useState('')
   const [uploadStatus, setUploadStatus] = useState('')
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [searchTerm, setSearchTerm] = useState('')
 
   const activeProfile = useMemo(
     () => profiles.find(profile => profile.id === activeId) ?? null,
@@ -173,6 +175,16 @@ export default function StyleProfiles() {
   )
   const isEditing = Boolean(activeId)
   const totalDocs = profiles.reduce((total, profile) => total + (profile.sourceDocuments?.length ?? (profile.sourceFileName ? 1 : 0)), 0)
+  const filteredProfiles = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase()
+    if (!keyword) return profiles
+    return profiles.filter(profile => [
+      profile.studentName,
+      profile.profileName,
+      profile.editableSummary,
+      profile.writingLevel,
+    ].some(value => value?.toLowerCase().includes(keyword)))
+  }, [profiles, searchTerm])
 
   const refresh = () => setProfiles(styleProfileStore.getAll())
 
@@ -181,6 +193,7 @@ export default function StyleProfiles() {
     setDraft(emptyDraft)
     setNotice('')
     setUploadStatus('')
+    setIsModalOpen(true)
   }
 
   const selectProfile = (profile: StyleProfile) => {
@@ -188,6 +201,13 @@ export default function StyleProfiles() {
     setDraft(profileToDraft(profile))
     setNotice('')
     setUploadStatus(profile.sourceDocuments?.length ? `当前档案包含 ${profile.sourceDocuments.length} 个参考文档` : '')
+    setIsModalOpen(true)
+  }
+
+  const closeModal = () => {
+    if (isExtracting) return
+    setIsModalOpen(false)
+    setNotice('')
   }
 
   const saveProfile = () => {
@@ -312,13 +332,25 @@ export default function StyleProfiles() {
               </div>
             </section>
 
+            <section style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, padding: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid var(--color-border)', borderRadius: 6, padding: '0 10px', background: 'var(--color-bg)' }}>
+                <Search size={16} color="var(--color-ink-3)" />
+                <input
+                  value={searchTerm}
+                  onChange={event => setSearchTerm(event.target.value)}
+                  placeholder="搜索学生名、档案名或风格关键词"
+                  style={{ ...inputStyle, border: 'none', paddingLeft: 0, background: 'transparent' }}
+                />
+              </label>
+            </section>
+
             <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
               <button onClick={startNew} style={{ ...cardStyle, minHeight: 188, alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', color: 'var(--color-accent)', cursor: 'pointer' }}>
                 <Plus size={24} />
                 <span style={{ fontSize: 14, fontWeight: 650 }}>添加风格档案</span>
                 <span style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>填写学生信息后上传参考文档</span>
               </button>
-              {profiles.map(profile => (
+              {filteredProfiles.map(profile => (
                 <article key={profile.id} style={{ ...cardStyle, borderColor: profile.id === activeId ? 'var(--color-accent)' : 'var(--color-border)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
                     <div style={{ width: 46, height: 46, borderRadius: 8, background: 'var(--color-accent-light)', color: 'var(--color-accent)', display: 'grid', placeItems: 'center', fontSize: 18, fontWeight: 700 }}>
@@ -343,96 +375,113 @@ export default function StyleProfiles() {
                   </div>
                 </article>
               ))}
-            </section>
-
-            <section style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
-                <div>
-                  <h2 style={{ margin: 0, fontSize: 16, color: 'var(--color-ink)' }}>{isEditing ? '编辑档案信息' : '添加档案信息 / 上传解析档案信息'}</h2>
-                  <div style={{ fontSize: 12, color: 'var(--color-ink-3)', marginTop: 5 }}>
-                    先填写学生与档案名，再上传一个或多个文档。后上传的文档会补充到同一个学生档案中。
-                  </div>
-                </div>
-                {activeProfile && (
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={() => downloadText(`${activeProfile.profileName}.txt`, profileToText(activeProfile))} style={secondaryButtonStyle}>
-                      <Download size={13} />
-                      TXT
-                    </button>
-                    <button onClick={() => downloadText(`${activeProfile.profileName}.csv`, `\uFEFF${profileToCsv(activeProfile)}`, 'text/csv;charset=utf-8')} style={secondaryButtonStyle}>
-                      <Download size={13} />
-                      CSV
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <label style={labelStyle}>
-                  学生名
-                  <input value={draft.studentName} onChange={event => setDraft({ ...draft, studentName: event.target.value })} placeholder="例如：张同学" style={inputStyle} />
-                </label>
-                <label style={labelStyle}>
-                  档案名
-                  <input value={draft.profileName} onChange={event => setDraft({ ...draft, profileName: event.target.value })} placeholder="例如：张同学本科论文风格" style={inputStyle} />
-                </label>
-              </div>
-
-              <label style={{ border: '1px dashed var(--color-border-strong)', borderRadius: 8, padding: 14, background: 'var(--color-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Upload size={18} color="var(--color-accent)" />
-                <span style={{ fontSize: 13, color: 'var(--color-ink-2)' }}>
-                  {isExtracting ? (uploadStatus || '正在提取风格画像…') : '上传参考文档并追加到当前档案（Word/PDF/TXT，单次最多使用前 10000 字）'}
-                </span>
-                <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" onChange={handleFile} disabled={isExtracting} style={{ display: 'none' }} />
-              </label>
-
-              {uploadStatus && (
-                <div style={{ fontSize: 12, color: uploadStatus.startsWith('处理失败') ? '#C0392B' : 'var(--color-accent)', background: uploadStatus.startsWith('处理失败') ? '#FFF4F2' : 'var(--color-accent-light)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '8px 10px' }}>
-                  {uploadStatus}
+              {filteredProfiles.length === 0 && (
+                <div style={{ ...cardStyle, minHeight: 188, alignItems: 'center', justifyContent: 'center', color: 'var(--color-ink-3)', textAlign: 'center' }}>
+                  <Search size={22} />
+                  <div style={{ fontSize: 13 }}>没有找到匹配的风格档案</div>
                 </div>
               )}
+            </section>
 
-              {(draft.sourceDocuments?.length ?? 0) > 0 && (
-                <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'hidden' }}>
-                  <div style={{ padding: '8px 12px', background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)', fontSize: 12, color: 'var(--color-ink-2)', fontWeight: 600 }}>
-                    已纳入分析的文档
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8, padding: 10 }}>
-                    {draft.sourceDocuments?.map(doc => (
-                      <div key={doc.id} style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid var(--color-border)', borderRadius: 6, padding: 8, fontSize: 12, color: 'var(--color-ink-2)' }}>
-                        <FileText size={14} color="var(--color-accent)" />
-                        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.fileName}</span>
-                        <span style={{ color: 'var(--color-ink-3)' }}>{doc.textLength}字</span>
+            {isModalOpen && (
+              <div style={modalBackdropStyle}>
+                <section style={modalPanelStyle}>
+                  <div style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border)', padding: '16px 18px', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                    <div>
+                      <h2 style={{ margin: 0, fontSize: 16, color: 'var(--color-ink)' }}>{isEditing ? '编辑档案信息' : '添加档案信息 / 上传解析档案信息'}</h2>
+                      <div style={{ fontSize: 12, color: 'var(--color-ink-3)', marginTop: 5 }}>
+                        先填写学生与档案名，再上传一个或多个文档。解析结果会沉淀为这个学生的风格画像。
                       </div>
-                    ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      {activeProfile && (
+                        <>
+                          <button onClick={() => downloadText(`${activeProfile.profileName}.txt`, profileToText(activeProfile))} style={secondaryButtonStyle}>
+                            <Download size={13} />
+                            TXT
+                          </button>
+                          <button onClick={() => downloadText(`${activeProfile.profileName}.csv`, `\uFEFF${profileToCsv(activeProfile)}`, 'text/csv;charset=utf-8')} style={secondaryButtonStyle}>
+                            <Download size={13} />
+                            CSV
+                          </button>
+                        </>
+                      )}
+                      <button onClick={closeModal} disabled={isExtracting} title="关闭" style={iconButtonStyle}>
+                        <X size={15} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                {styleFields.map(([label, key]) => (
-                  <label key={key} style={{ ...labelStyle, gridColumn: key === 'editableSummary' || key === 'avoidContentReuseNotice' ? '1 / -1' : undefined }}>
-                    {label}
-                    <textarea
-                      value={String(draft[key] ?? '')}
-                      onChange={event => setDraft({ ...draft, [key]: event.target.value })}
-                      rows={key === 'editableSummary' ? 4 : 2}
-                      style={textareaStyle}
-                    />
-                  </label>
-                ))}
+                  <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <label style={labelStyle}>
+                        学生名
+                        <input value={draft.studentName} onChange={event => setDraft({ ...draft, studentName: event.target.value })} placeholder="例如：张同学" style={inputStyle} />
+                      </label>
+                      <label style={labelStyle}>
+                        档案名
+                        <input value={draft.profileName} onChange={event => setDraft({ ...draft, profileName: event.target.value })} placeholder="例如：张同学本科论文风格" style={inputStyle} />
+                      </label>
+                    </div>
+
+                    <label style={{ border: '1px dashed var(--color-border-strong)', borderRadius: 8, padding: 14, background: 'var(--color-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <Upload size={18} color="var(--color-accent)" />
+                      <span style={{ fontSize: 13, color: 'var(--color-ink-2)' }}>
+                        {isExtracting ? (uploadStatus || '正在提取风格画像…') : '上传参考文档并追加到当前档案（Word/PDF/TXT，单次最多使用前 10000 字）'}
+                      </span>
+                      <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" onChange={handleFile} disabled={isExtracting} style={{ display: 'none' }} />
+                    </label>
+
+                    {uploadStatus && (
+                      <div style={{ fontSize: 12, color: uploadStatus.startsWith('处理失败') ? '#C0392B' : 'var(--color-accent)', background: uploadStatus.startsWith('处理失败') ? '#FFF4F2' : 'var(--color-accent-light)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '8px 10px' }}>
+                        {uploadStatus}
+                      </div>
+                    )}
+
+                    {(draft.sourceDocuments?.length ?? 0) > 0 && (
+                      <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'hidden' }}>
+                        <div style={{ padding: '8px 12px', background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)', fontSize: 12, color: 'var(--color-ink-2)', fontWeight: 600 }}>
+                          已纳入分析的文档
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8, padding: 10 }}>
+                          {draft.sourceDocuments?.map(doc => (
+                            <div key={doc.id} style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid var(--color-border)', borderRadius: 6, padding: 8, fontSize: 12, color: 'var(--color-ink-2)' }}>
+                              <FileText size={14} color="var(--color-accent)" />
+                              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.fileName}</span>
+                              <span style={{ color: 'var(--color-ink-3)' }}>{doc.textLength}字</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      {styleFields.map(([label, key]) => (
+                        <label key={key} style={{ ...labelStyle, gridColumn: key === 'editableSummary' || key === 'avoidContentReuseNotice' ? '1 / -1' : undefined }}>
+                          {label}
+                          <textarea
+                            value={String(draft[key] ?? '')}
+                            onChange={event => setDraft({ ...draft, [key]: event.target.value })}
+                            rows={key === 'editableSummary' ? 4 : 2}
+                            style={textareaStyle}
+                          />
+                        </label>
+                      ))}
+                    </div>
+
+                    {notice && <div style={{ fontSize: 12, color: 'var(--color-accent)' }}>{notice}</div>}
+
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', borderTop: '1px solid var(--color-border)', paddingTop: 14 }}>
+                      <button onClick={closeModal} disabled={isExtracting} style={secondaryButtonStyle}>取消</button>
+                      <button onClick={saveProfile} disabled={isExtracting} style={primaryButtonStyle}>
+                        <Sparkles size={13} />
+                        {isEditing ? '保存档案' : '创建档案'}
+                      </button>
+                    </div>
+                  </div>
+                </section>
               </div>
-
-              {notice && <div style={{ fontSize: 12, color: 'var(--color-accent)' }}>{notice}</div>}
-
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button onClick={saveProfile} disabled={isExtracting} style={primaryButtonStyle}>
-                  <Sparkles size={13} />
-                  {isEditing ? '保存档案' : '创建档案'}
-                </button>
-                <button onClick={startNew} style={secondaryButtonStyle}>清空表单</button>
-              </div>
-            </section>
+            )}
           </div>
         </main>
       </div>
@@ -518,6 +567,27 @@ const textareaStyle = {
   outline: 'none',
   resize: 'vertical' as const,
   fontFamily: 'var(--font-sans)',
+}
+
+const modalBackdropStyle = {
+  position: 'fixed' as const,
+  inset: 0,
+  zIndex: 20,
+  background: 'rgba(26, 28, 24, 0.42)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 24,
+}
+
+const modalPanelStyle = {
+  width: 'min(1040px, 100%)',
+  maxHeight: 'calc(100vh - 56px)',
+  overflowY: 'auto' as const,
+  background: 'var(--color-surface)',
+  border: '1px solid var(--color-border)',
+  borderRadius: 8,
+  boxShadow: 'var(--shadow-lg)',
 }
 
 const primaryButtonStyle = {
