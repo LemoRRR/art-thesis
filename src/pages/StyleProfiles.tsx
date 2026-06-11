@@ -1,5 +1,5 @@
-import { useMemo, useState, type ChangeEvent } from 'react'
-import { Download, FileText, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { useMemo, useState, type ChangeEvent, type ReactNode } from 'react'
+import { Download, Eye, FileText, PenLine, Plus, Sparkles, Trash2, Upload } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import { callGPT } from '../lib/ai'
@@ -17,6 +17,35 @@ interface StyleProfileJson {
   avoidContentReuseNotice?: string
   editableSummary?: string
 }
+
+type DraftProfile = Omit<StyleProfile, 'id' | 'createdAt' | 'updatedAt'>
+
+const emptyDraft: DraftProfile = {
+  studentName: '',
+  profileName: '',
+  sourceFileName: '',
+  sourceDocuments: [],
+  sourceTextLength: 0,
+  writingLevel: '',
+  sentenceStyle: '',
+  paragraphLogic: '',
+  argumentStyle: '',
+  transitionStyle: '',
+  vocabularyStyle: '',
+  avoidContentReuseNotice: '只参考语言水平、句式、段落组织和论证节奏，不复用参考文章的观点、案例、素材、原句或具体内容。',
+  editableSummary: '',
+}
+
+const styleFields: Array<[string, keyof DraftProfile]> = [
+  ['语言水平', 'writingLevel'],
+  ['句式特征', 'sentenceStyle'],
+  ['段落组织', 'paragraphLogic'],
+  ['论证方式', 'argumentStyle'],
+  ['过渡方式', 'transitionStyle'],
+  ['词汇风格', 'vocabularyStyle'],
+  ['风险提醒', 'avoidContentReuseNotice'],
+  ['风格画像总结', 'editableSummary'],
+]
 
 function parseStyleProfile(content: string): StyleProfileJson {
   const match = content.replace(/```json|```/g, '').match(/\{[\s\S]*\}/)
@@ -71,7 +100,7 @@ function profileToText(profile: StyleProfile): string {
   return [
     `学生：${profile.studentName}`,
     `档案：${profile.profileName}`,
-    profile.sourceFileName ? `来源：${profile.sourceFileName}` : '',
+    `文档数：${profile.sourceDocuments?.length ?? (profile.sourceFileName ? 1 : 0)}`,
     '',
     `语言水平：${profile.writingLevel}`,
     `句式特征：${profile.sentenceStyle}`,
@@ -90,7 +119,7 @@ function profileToCsv(profile: StyleProfile): string {
     ['字段', '内容'],
     ['学生', profile.studentName],
     ['档案', profile.profileName],
-    ['来源', profile.sourceFileName ?? ''],
+    ['文档数', String(profile.sourceDocuments?.length ?? 0)],
     ['语言水平', profile.writingLevel],
     ['句式特征', profile.sentenceStyle],
     ['段落组织', profile.paragraphLogic],
@@ -103,25 +132,37 @@ function profileToCsv(profile: StyleProfile): string {
   return rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n')
 }
 
-const emptyDraft = {
-  studentName: '',
-  profileName: '',
-  sourceFileName: '',
-  sourceTextLength: 0,
-  writingLevel: '',
-  sentenceStyle: '',
-  paragraphLogic: '',
-  argumentStyle: '',
-  transitionStyle: '',
-  vocabularyStyle: '',
-  avoidContentReuseNotice: '只参考语言水平、句式、段落组织和论证节奏，不复用参考文章的观点、案例、素材、原句或具体内容。',
-  editableSummary: '',
+function profileToDraft(profile: StyleProfile): DraftProfile {
+  return {
+    studentName: profile.studentName,
+    profileName: profile.profileName,
+    sourceFileName: profile.sourceFileName ?? '',
+    sourceDocuments: profile.sourceDocuments ?? (profile.sourceFileName
+      ? [{ id: profile.id, fileName: profile.sourceFileName, textLength: profile.sourceTextLength, extractedAt: profile.updatedAt }]
+      : []),
+    sourceTextLength: profile.sourceTextLength,
+    writingLevel: profile.writingLevel,
+    sentenceStyle: profile.sentenceStyle,
+    paragraphLogic: profile.paragraphLogic,
+    argumentStyle: profile.argumentStyle,
+    transitionStyle: profile.transitionStyle,
+    vocabularyStyle: profile.vocabularyStyle,
+    avoidContentReuseNotice: profile.avoidContentReuseNotice,
+    editableSummary: profile.editableSummary,
+  }
+}
+
+function mergeStyleText(previous: string, next?: string) {
+  const clean = next?.trim()
+  if (!clean) return previous
+  if (!previous.trim()) return clean
+  return `${previous.trim()}\n\n补充样本：${clean}`
 }
 
 export default function StyleProfiles() {
   const [profiles, setProfiles] = useState<StyleProfile[]>(() => styleProfileStore.getAll())
-  const [activeId, setActiveId] = useState<string | null>(() => styleProfileStore.getAll()[0]?.id ?? null)
-  const [draft, setDraft] = useState(emptyDraft)
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [draft, setDraft] = useState<DraftProfile>(emptyDraft)
   const [isExtracting, setIsExtracting] = useState(false)
   const [notice, setNotice] = useState('')
   const [uploadStatus, setUploadStatus] = useState('')
@@ -130,8 +171,56 @@ export default function StyleProfiles() {
     () => profiles.find(profile => profile.id === activeId) ?? null,
     [activeId, profiles]
   )
+  const isEditing = Boolean(activeId)
+  const totalDocs = profiles.reduce((total, profile) => total + (profile.sourceDocuments?.length ?? (profile.sourceFileName ? 1 : 0)), 0)
 
   const refresh = () => setProfiles(styleProfileStore.getAll())
+
+  const startNew = () => {
+    setActiveId(null)
+    setDraft(emptyDraft)
+    setNotice('')
+    setUploadStatus('')
+  }
+
+  const selectProfile = (profile: StyleProfile) => {
+    setActiveId(profile.id)
+    setDraft(profileToDraft(profile))
+    setNotice('')
+    setUploadStatus(profile.sourceDocuments?.length ? `当前档案包含 ${profile.sourceDocuments.length} 个参考文档` : '')
+  }
+
+  const saveProfile = () => {
+    if (!draft.studentName.trim() || !draft.profileName.trim()) {
+      setNotice('请先填写学生名和档案名。')
+      return
+    }
+    if (profiles.length >= 50 && !activeProfile) {
+      setNotice('风格档案最多 50 个，请删除旧档案后再新增。')
+      return
+    }
+
+    if (activeProfile) {
+      styleProfileStore.update(activeProfile.id, draft)
+      setNotice('风格档案已更新。')
+    } else {
+      const created = styleProfileStore.add(draft)
+      setActiveId(created.id)
+      setNotice('风格档案已保存。')
+    }
+    refresh()
+  }
+
+  const deleteProfile = (profile: StyleProfile) => {
+    if (!confirm(`确认删除「${profile.profileName}」？`)) return
+    styleProfileStore.remove(profile.id)
+    const next = styleProfileStore.getAll()
+    setProfiles(next)
+    setActiveId(null)
+    setDraft(emptyDraft)
+    setNotice('')
+    setUploadStatus('')
+  }
 
   const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -164,21 +253,29 @@ export default function StyleProfiles() {
 
       setUploadStatus(`已读取 ${clipped.length} 字，正在生成风格画像…`)
       const extracted = await streamStyleProfile(clipped)
+      const documentRecord = {
+        id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        fileName: file.name,
+        textLength: clipped.length,
+        extractedAt: Date.now(),
+      }
+
       setDraft(prev => ({
         ...prev,
-        profileName: prev.profileName || file.name.replace(/\.[^.]+$/, ''),
+        profileName: prev.profileName || `${prev.studentName || '学生'}风格档案`,
         sourceFileName: file.name,
-        sourceTextLength: clipped.length,
-        writingLevel: extracted.writingLevel ?? '',
-        sentenceStyle: extracted.sentenceStyle ?? '',
-        paragraphLogic: extracted.paragraphLogic ?? '',
-        argumentStyle: extracted.argumentStyle ?? '',
-        transitionStyle: extracted.transitionStyle ?? '',
-        vocabularyStyle: extracted.vocabularyStyle ?? '',
+        sourceTextLength: (prev.sourceTextLength ?? 0) + clipped.length,
+        sourceDocuments: [...(prev.sourceDocuments ?? []), documentRecord],
+        writingLevel: mergeStyleText(prev.writingLevel, extracted.writingLevel),
+        sentenceStyle: mergeStyleText(prev.sentenceStyle, extracted.sentenceStyle),
+        paragraphLogic: mergeStyleText(prev.paragraphLogic, extracted.paragraphLogic),
+        argumentStyle: mergeStyleText(prev.argumentStyle, extracted.argumentStyle),
+        transitionStyle: mergeStyleText(prev.transitionStyle, extracted.transitionStyle),
+        vocabularyStyle: mergeStyleText(prev.vocabularyStyle, extracted.vocabularyStyle),
         avoidContentReuseNotice: extracted.avoidContentReuseNotice || prev.avoidContentReuseNotice,
-        editableSummary: extracted.editableSummary ?? '',
+        editableSummary: mergeStyleText(prev.editableSummary, extracted.editableSummary),
       }))
-      setUploadStatus(`风格画像已生成：${file.name}`)
+      setUploadStatus(`已添加参考文档：${file.name}`)
     } catch (error) {
       const message = error instanceof Error ? error.message : '风格提取失败'
       setUploadStatus(`处理失败：${message}`)
@@ -188,199 +285,218 @@ export default function StyleProfiles() {
     }
   }
 
-  const saveProfile = () => {
-    if (!draft.studentName.trim() || !draft.profileName.trim()) {
-      setNotice('请先填写学生名和档案名。')
-      return
-    }
-    if (profiles.length >= 50 && !activeProfile) {
-      setNotice('风格档案最多 50 个，请删除旧档案后再新增。')
-      return
-    }
-
-    if (activeProfile) {
-      styleProfileStore.update(activeProfile.id, draft)
-      setNotice('风格档案已更新。')
-    } else {
-      const created = styleProfileStore.add(draft)
-      setActiveId(created.id)
-      setNotice('风格档案已保存。')
-    }
-    refresh()
-  }
-
-  const startNew = () => {
-    setActiveId(null)
-    setDraft(emptyDraft)
-    setNotice('')
-    setUploadStatus('')
-  }
-
-  const selectProfile = (profile: StyleProfile) => {
-    setActiveId(profile.id)
-    setDraft({
-      studentName: profile.studentName,
-      profileName: profile.profileName,
-      sourceFileName: profile.sourceFileName ?? '',
-      sourceTextLength: profile.sourceTextLength,
-      writingLevel: profile.writingLevel,
-      sentenceStyle: profile.sentenceStyle,
-      paragraphLogic: profile.paragraphLogic,
-      argumentStyle: profile.argumentStyle,
-      transitionStyle: profile.transitionStyle,
-      vocabularyStyle: profile.vocabularyStyle,
-      avoidContentReuseNotice: profile.avoidContentReuseNotice,
-      editableSummary: profile.editableSummary,
-    })
-    setNotice('')
-    setUploadStatus(profile.sourceFileName ? `当前档案来源：${profile.sourceFileName}` : '')
-  }
-
-  const deleteProfile = (profile: StyleProfile) => {
-    if (!confirm(`确认删除「${profile.profileName}」？`)) return
-    styleProfileStore.remove(profile.id)
-    const next = styleProfileStore.getAll()
-    setProfiles(next)
-    setActiveId(next[0]?.id ?? null)
-    if (next[0]) selectProfile(next[0])
-    else setDraft(emptyDraft)
-  }
-
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--color-bg)', overflow: 'hidden' }}>
       <Sidebar />
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <TopBar currentStep={0} />
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
-          <aside style={{ width: 280, flexShrink: 0, borderRight: '1px solid var(--color-border)', background: 'var(--color-surface)', padding: 16, overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 650, color: 'var(--color-ink)' }}>风格档案</div>
-                <div style={{ fontSize: 11, color: 'var(--color-ink-3)', marginTop: 4 }}>{profiles.length} / 50 个学生档案</div>
-              </div>
-              <button onClick={startNew} style={{ border: 'none', borderRadius: 6, background: 'var(--color-accent)', color: '#fff', width: 30, height: 30, cursor: 'pointer' }}>
-                <Plus size={15} />
-              </button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {profiles.map(profile => (
-                <button
-                  key={profile.id}
-                  onClick={() => selectProfile(profile)}
-                  style={{
-                    border: `1px solid ${profile.id === activeId ? 'var(--color-accent)' : 'var(--color-border)'}`,
-                    background: profile.id === activeId ? 'var(--color-accent-light)' : 'var(--color-bg)',
-                    borderRadius: 8,
-                    padding: 10,
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    color: 'var(--color-ink)',
-                    fontFamily: 'var(--font-sans)',
-                  }}
-                >
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{profile.profileName}</div>
-                  <div style={{ fontSize: 11, color: 'var(--color-ink-3)', marginTop: 4 }}>{profile.studentName}</div>
-                </button>
-              ))}
-            </div>
-          </aside>
-
-          <main style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-            <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <section style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, padding: 16 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
-                  <div>
-                    <h1 style={{ fontSize: 18, margin: 0, color: 'var(--color-ink)' }}>语言风格记忆库</h1>
-                    <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--color-ink-3)', lineHeight: 1.7 }}>
-                      这里只保存语言水平、句式和段落组织，不保存参考文章的观点、案例或具体内容。Stage1 上传已有论文默认不会进入风格学习。
-                    </p>
-                  </div>
-                  {activeProfile && (
-                    <button onClick={() => deleteProfile(activeProfile)} style={{ border: '1px solid #F1C0B8', background: '#FFF4F2', color: '#C0392B', borderRadius: 6, padding: '7px 10px', display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
-                      <Trash2 size={13} />
-                      删除
-                    </button>
-                  )}
+        <main style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+          <div style={{ maxWidth: 1180, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
+            <section style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, padding: 18 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' }}>
+                <div>
+                  <h1 style={{ margin: 0, fontSize: 20, color: 'var(--color-ink)' }}>风格档案</h1>
+                  <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--color-ink-3)', lineHeight: 1.7 }}>
+                    一个学生一张风格名片，可上传多个参考文档综合分析。这里只保存表达方式，不保存参考文章的观点、案例或具体内容。
+                  </p>
                 </div>
-              </section>
+                <button onClick={startNew} style={primaryButtonStyle}>
+                  <Plus size={14} />
+                  新建档案
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
+                <Metric label="学生档案" value={`${profiles.length} / 50`} />
+                <Metric label="参考文档" value={`${totalDocs}`} />
+                <Metric label="当前模式" value="本地实验分支" />
+              </div>
+            </section>
 
-              <section style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, padding: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <label style={{ fontSize: 12, color: 'var(--color-ink-2)' }}>
+            <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
+              <button onClick={startNew} style={{ ...cardStyle, minHeight: 188, alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', color: 'var(--color-accent)', cursor: 'pointer' }}>
+                <Plus size={24} />
+                <span style={{ fontSize: 14, fontWeight: 650 }}>添加风格档案</span>
+                <span style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>填写学生信息后上传参考文档</span>
+              </button>
+              {profiles.map(profile => (
+                <article key={profile.id} style={{ ...cardStyle, borderColor: profile.id === activeId ? 'var(--color-accent)' : 'var(--color-border)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                    <div style={{ width: 46, height: 46, borderRadius: 8, background: 'var(--color-accent-light)', color: 'var(--color-accent)', display: 'grid', placeItems: 'center', fontSize: 18, fontWeight: 700 }}>
+                      {profile.studentName.trim().slice(0, 1) || '档'}
+                    </div>
+                    <button onClick={() => deleteProfile(profile)} title="删除" style={iconButtonStyle}>
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                  <div style={{ minHeight: 70 }}>
+                    <h2 style={{ margin: '12px 0 6px', fontSize: 15, lineHeight: 1.4, color: 'var(--color-ink)' }}>{profile.profileName}</h2>
+                    <div style={{ fontSize: 12, color: 'var(--color-ink-3)' }}>{profile.studentName}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <Tag>{profile.sourceDocuments?.length ?? (profile.sourceFileName ? 1 : 0)} 个文档</Tag>
+                    <Tag>{profile.writingLevel ? '已分析' : '待分析'}</Tag>
+                  </div>
+                  <div style={{ display: 'flex', borderTop: '1px solid var(--color-border)', margin: '12px -14px -14px', padding: '8px 10px', gap: 4 }}>
+                    <CardAction icon={<Eye size={12} />} label="查看" onClick={() => selectProfile(profile)} />
+                    <CardAction icon={<PenLine size={12} />} label="编辑" onClick={() => selectProfile(profile)} />
+                    <CardAction icon={<Download size={12} />} label="导出" onClick={() => downloadText(`${profile.profileName}.txt`, profileToText(profile))} />
+                  </div>
+                </article>
+              ))}
+            </section>
+
+            <section style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 16, color: 'var(--color-ink)' }}>{isEditing ? '编辑档案信息' : '添加档案信息 / 上传解析档案信息'}</h2>
+                  <div style={{ fontSize: 12, color: 'var(--color-ink-3)', marginTop: 5 }}>
+                    先填写学生与档案名，再上传一个或多个文档。后上传的文档会补充到同一个学生档案中。
+                  </div>
+                </div>
+                {activeProfile && (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => downloadText(`${activeProfile.profileName}.txt`, profileToText(activeProfile))} style={secondaryButtonStyle}>
+                      <Download size={13} />
+                      TXT
+                    </button>
+                    <button onClick={() => downloadText(`${activeProfile.profileName}.csv`, `\uFEFF${profileToCsv(activeProfile)}`, 'text/csv;charset=utf-8')} style={secondaryButtonStyle}>
+                      <Download size={13} />
+                      CSV
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <label style={labelStyle}>
                   学生名
                   <input value={draft.studentName} onChange={event => setDraft({ ...draft, studentName: event.target.value })} placeholder="例如：张同学" style={inputStyle} />
                 </label>
-                <label style={{ fontSize: 12, color: 'var(--color-ink-2)' }}>
+                <label style={labelStyle}>
                   档案名
-                  <input value={draft.profileName} onChange={event => setDraft({ ...draft, profileName: event.target.value })} placeholder="例如：本科论文表达习惯" style={inputStyle} />
+                  <input value={draft.profileName} onChange={event => setDraft({ ...draft, profileName: event.target.value })} placeholder="例如：张同学本科论文风格" style={inputStyle} />
                 </label>
-                <label style={{ gridColumn: '1 / -1', border: '1px dashed var(--color-border-strong)', borderRadius: 8, padding: 14, background: 'var(--color-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <FileText size={18} color="var(--color-accent)" />
-                  <span style={{ fontSize: 13, color: 'var(--color-ink-2)' }}>
-                    {isExtracting ? (uploadStatus || '正在提取风格画像…') : '上传参考文章提取风格画像（Word/PDF/TXT，最多使用前 10000 字）'}
-                  </span>
-                  <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" onChange={handleFile} disabled={isExtracting} style={{ display: 'none' }} />
-                </label>
-                {uploadStatus && (
-                  <div style={{ gridColumn: '1 / -1', fontSize: 12, color: uploadStatus.startsWith('处理失败') ? '#C0392B' : 'var(--color-accent)', background: uploadStatus.startsWith('处理失败') ? '#FFF4F2' : 'var(--color-accent-light)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '8px 10px' }}>
-                    {uploadStatus}
-                  </div>
-                )}
-              </section>
+              </div>
 
-              <section style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {[
-                  ['语言水平', 'writingLevel'],
-                  ['句式特征', 'sentenceStyle'],
-                  ['段落组织', 'paragraphLogic'],
-                  ['论证方式', 'argumentStyle'],
-                  ['过渡方式', 'transitionStyle'],
-                  ['词汇风格', 'vocabularyStyle'],
-                  ['风险提醒', 'avoidContentReuseNotice'],
-                  ['风格画像总结', 'editableSummary'],
-                ].map(([label, key]) => (
-                  <label key={key} style={{ fontSize: 12, color: 'var(--color-ink-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ border: '1px dashed var(--color-border-strong)', borderRadius: 8, padding: 14, background: 'var(--color-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Upload size={18} color="var(--color-accent)" />
+                <span style={{ fontSize: 13, color: 'var(--color-ink-2)' }}>
+                  {isExtracting ? (uploadStatus || '正在提取风格画像…') : '上传参考文档并追加到当前档案（Word/PDF/TXT，单次最多使用前 10000 字）'}
+                </span>
+                <input type="file" accept=".pdf,.doc,.docx,.txt,text/plain" onChange={handleFile} disabled={isExtracting} style={{ display: 'none' }} />
+              </label>
+
+              {uploadStatus && (
+                <div style={{ fontSize: 12, color: uploadStatus.startsWith('处理失败') ? '#C0392B' : 'var(--color-accent)', background: uploadStatus.startsWith('处理失败') ? '#FFF4F2' : 'var(--color-accent-light)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '8px 10px' }}>
+                  {uploadStatus}
+                </div>
+              )}
+
+              {(draft.sourceDocuments?.length ?? 0) > 0 && (
+                <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'hidden' }}>
+                  <div style={{ padding: '8px 12px', background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)', fontSize: 12, color: 'var(--color-ink-2)', fontWeight: 600 }}>
+                    已纳入分析的文档
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8, padding: 10 }}>
+                    {draft.sourceDocuments?.map(doc => (
+                      <div key={doc.id} style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid var(--color-border)', borderRadius: 6, padding: 8, fontSize: 12, color: 'var(--color-ink-2)' }}>
+                        <FileText size={14} color="var(--color-accent)" />
+                        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.fileName}</span>
+                        <span style={{ color: 'var(--color-ink-3)' }}>{doc.textLength}字</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {styleFields.map(([label, key]) => (
+                  <label key={key} style={{ ...labelStyle, gridColumn: key === 'editableSummary' || key === 'avoidContentReuseNotice' ? '1 / -1' : undefined }}>
                     {label}
                     <textarea
-                      value={String(draft[key as keyof typeof draft] ?? '')}
+                      value={String(draft[key] ?? '')}
                       onChange={event => setDraft({ ...draft, [key]: event.target.value })}
                       rows={key === 'editableSummary' ? 4 : 2}
                       style={textareaStyle}
                     />
                   </label>
                 ))}
+              </div>
 
-                {notice && <div style={{ fontSize: 12, color: 'var(--color-accent)' }}>{notice}</div>}
+              {notice && <div style={{ fontSize: 12, color: 'var(--color-accent)' }}>{notice}</div>}
 
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button onClick={saveProfile} disabled={isExtracting} style={primaryButtonStyle}>
-                    <Sparkles size={13} />
-                    {activeProfile ? '保存修改' : '保存档案'}
-                  </button>
-                  {activeProfile && (
-                    <>
-                      <button onClick={() => downloadText(`${activeProfile.profileName}.txt`, profileToText(activeProfile))} style={secondaryButtonStyle}>
-                        <Download size={13} />
-                        导出 TXT
-                      </button>
-                      <button onClick={() => downloadText(`${activeProfile.profileName}.csv`, `\uFEFF${profileToCsv(activeProfile)}`, 'text/csv;charset=utf-8')} style={secondaryButtonStyle}>
-                        <Download size={13} />
-                        导出 CSV
-                      </button>
-                    </>
-                  )}
-                </div>
-              </section>
-            </div>
-          </main>
-        </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button onClick={saveProfile} disabled={isExtracting} style={primaryButtonStyle}>
+                  <Sparkles size={13} />
+                  {isEditing ? '保存档案' : '创建档案'}
+                </button>
+                <button onClick={startNew} style={secondaryButtonStyle}>清空表单</button>
+              </div>
+            </section>
+          </div>
+        </main>
       </div>
     </div>
   )
 }
 
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ border: '1px solid var(--color-border)', borderRadius: 6, padding: '8px 12px', background: 'var(--color-bg)' }}>
+      <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>{label}</div>
+      <div style={{ marginTop: 3, fontSize: 15, fontWeight: 650, color: 'var(--color-ink)' }}>{value}</div>
+    </div>
+  )
+}
+
+function Tag({ children }: { children: ReactNode }) {
+  return (
+    <span style={{ fontSize: 11, color: 'var(--color-accent)', background: 'var(--color-accent-light)', border: '1px solid #B8D9C0', borderRadius: 4, padding: '2px 6px' }}>
+      {children}
+    </span>
+  )
+}
+
+function CardAction({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button onClick={onClick} style={{ flex: 1, border: 'none', background: 'transparent', color: 'var(--color-ink-3)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, cursor: 'pointer', padding: '4px 0' }}>
+      {icon}
+      {label}
+    </button>
+  )
+}
+
+const cardStyle = {
+  minHeight: 188,
+  border: '1px solid var(--color-border)',
+  borderRadius: 8,
+  background: 'var(--color-surface)',
+  boxShadow: 'var(--shadow-sm)',
+  padding: 14,
+  display: 'flex',
+  flexDirection: 'column' as const,
+  gap: 8,
+}
+
+const iconButtonStyle = {
+  width: 26,
+  height: 26,
+  border: 'none',
+  borderRadius: 6,
+  background: 'transparent',
+  color: 'var(--color-ink-3)',
+  cursor: 'pointer',
+}
+
+const labelStyle = {
+  fontSize: 12,
+  color: 'var(--color-ink-2)',
+  display: 'flex',
+  flexDirection: 'column' as const,
+  gap: 6,
+}
+
 const inputStyle = {
-  display: 'block',
-  marginTop: 6,
   width: '100%',
   boxSizing: 'border-box' as const,
   border: '1px solid var(--color-border)',

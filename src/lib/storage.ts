@@ -192,6 +192,12 @@ export interface StyleProfile {
   studentName: string
   profileName: string
   sourceFileName?: string
+  sourceDocuments?: Array<{
+    id: string
+    fileName: string
+    textLength: number
+    extractedAt: number
+  }>
   sourceTextLength: number
   writingLevel: string
   sentenceStyle: string
