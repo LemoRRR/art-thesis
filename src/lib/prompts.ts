@@ -204,14 +204,14 @@ const LEVEL_GUIDE: Record<AcademicLevel, string> = {
 }
 
 const THESIS_FORMAT_GUIDE = `论文格式规则：
-- 正文主章节之外，完整论文应包含：中文摘要、中文关键词、英文 Abstract、英文 Keywords、引言、结语、参考文献。
+- 完整论文必须包含：中文摘要、中文关键词、英文 Abstract、英文 Keywords、正文主章节、结语、参考文献。
 - 中文摘要应使用第三人称客观语气，概括研究背景、研究对象、研究方法或分析路径、核心发现与研究意义，通常 200-350 字；避免口语化和“我认为”等表达。
 - 中文关键词置于摘要之后，格式为“关键词：关键词一；关键词二；关键词三”，通常 3-5 个，使用中文分号分隔。
 - 英文摘要标题使用“Abstract”，内容不是逐字翻译中文摘要，而是符合英文学术摘要习惯：先交代 research background 和 object，再说明 method / analytical framework，再概括 findings / contribution；段落可分为 1-3 段，语言保持正式、清晰、紧凑。
 - 英文关键词格式为“Keywords: keyword one; keyword two; keyword three”，3-5 个，使用英文分号分隔；作品名、专有名词按英文规范斜体或保留通行译名。
 - 引言进入正文之前应完成问题提出、研究背景、研究意义、研究对象、文献与方法的引入；不要重复摘要句式。
 - 结语应回应全文论证，概括发现、说明局限和后续研究方向，避免拔高和空泛抒情。
-- 大纲阶段只生成正文主章节，不要把“摘要 / Abstract / 关键词 / Keywords / 参考文献”作为正文第 1 章；但写作计划必须预留这些前置与后置格式。`
+- 大纲阶段必须默认包含“0 摘要”作为前置节点，用于承载中文摘要、中文关键词、英文 Abstract、英文 Keywords；参考文献不进入大纲章节。`
 
 export function promptWriteSection(
   sectionTitle: string,
@@ -444,15 +444,21 @@ ${additionalRequirements ? `\n额外要求：${additionalRequirements}` : ''}
 ${THESIS_FORMAT_GUIDE}
 
 大纲要求：
-- 包含完整的三级标题结构（章 → 节 → 小节）
+- 大纲第一项必须是：order 为 "0"、level 为 1、title 为 "摘要" 的前置节点；该节点不需要 children
+- 其后再包含完整的正文三级标题结构（章 → 节 → 小节）
 - 每个标题简洁准确，反映该部分的核心内容
 - 章节之间逻辑递进，层次分明
 - 必须包含：绪论、文献综述（或理论基础）、研究方法、核心论述章节、结论
-- 大纲 JSON 只放正文主章节；摘要、Abstract、关键词、Keywords、参考文献不进入 sections，但大纲逻辑要能支撑后续生成中英文摘要
+- 摘要必须进入 sections，作为 "0 摘要"；参考文献不进入 sections
 
 请严格用以下 JSON 格式输出，不要输出任何其他内容：
 {
   "sections": [
+    {
+      "order": "0",
+      "level": 1,
+      "title": "摘要"
+    },
     {
       "order": "1",
       "level": 1,
@@ -499,7 +505,8 @@ ${THESIS_FORMAT_GUIDE}
 - 保留用户未提及的章节结构
 - 保持原有的 JSON 格式和字段结构不变
 - 新增章节时自动补充合理的 order 编号
-- 不要把摘要、Abstract、关键词、Keywords、参考文献新增为正文主章节，除非用户明确要求把它们作为可编辑章节
+- 保留或补足 "0 摘要" 节点；不要删除摘要节点
+- 不要把参考文献新增为正文主章节
 
 请直接输出修改后的完整 JSON，不要输出任何其他内容，格式与输入保持一致。`,
     },
@@ -572,6 +579,59 @@ ${THESIS_FORMAT_GUIDE}
     {
       role: 'user',
       content: '请生成全文写作计划。',
+    },
+  ]
+}
+
+export function promptGenerateFrontMatter(
+  fullOutlineSummary: string,
+  comprehensionSummary: string,
+  referenceContext: string,
+  academicLevel: AcademicLevel = '本科',
+  paperPlan?: string,
+  styleGuide?: string
+): Message[] {
+  const levelGuide = LEVEL_GUIDE[academicLevel]
+
+  return [
+    {
+      role: 'system',
+      content: `你是一个论文写作助手。请为整篇论文生成固定格式的前置摘要部分。
+
+【论文背景】
+${comprehensionSummary || '（暂无）'}
+
+【完整大纲】
+${fullOutlineSummary}
+
+${paperPlan ? `【全文写作计划】\n${paperPlan}\n` : ''}
+
+【引用资料与项目上下文】
+${referenceContext || '（无引用资料）'}
+
+【学段写作标准】
+${levelGuide}
+${styleGuide ? `\n【语言风格参考】\n${styleGuide}` : ''}
+
+${THESIS_FORMAT_GUIDE}
+
+必须严格输出以下四个部分，不要输出“0 摘要”标题，系统会自动显示标题：
+
+【摘要】
+中文摘要正文。第三人称客观语气，约 200-350 字，覆盖研究背景、研究对象、研究方法或分析路径、核心发现、研究意义。避免“本文将”“我认为”等口语或主观表达。
+
+【关键词】
+关键词：关键词一；关键词二；关键词三；关键词四
+
+【Abstract】
+English abstract. It should follow English academic abstract conventions rather than translate the Chinese abstract word-for-word. Include background, research object, method or analytical framework, findings, and contribution.
+
+【Keywords】
+Keywords: keyword one; keyword two; keyword three; keyword four`,
+    },
+    {
+      role: 'user',
+      content: '请生成论文前置摘要部分。',
     },
   ]
 }

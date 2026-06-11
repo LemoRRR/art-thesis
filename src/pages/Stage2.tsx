@@ -78,7 +78,39 @@ function countSections(sections: OutlineSection[]): number {
   return sections.reduce((total, section) => total + 1 + (section.children ? countSections(section.children) : 0), 0)
 }
 
+function isAbstractOutlineSection(section: OutlineSection): boolean {
+  return section.order === '0' || /^(摘要|abstract|中英文摘要)/i.test(section.title.trim())
+}
+
+function createAbstractOutlineSection(): OutlineSection {
+  return {
+    id: uid(),
+    order: '0',
+    level: 1,
+    title: '摘要',
+  }
+}
+
+function ensureAbstractOutlineSection(sections: OutlineSection[]): OutlineSection[] {
+  const abstractSection = sections.find(isAbstractOutlineSection)
+  const bodySections = sections.filter(section => !isAbstractOutlineSection(section))
+  return [
+    {
+      ...(abstractSection ?? createAbstractOutlineSection()),
+      order: '0',
+      level: 1,
+      title: '摘要',
+      children: undefined,
+    },
+    ...renumberOutline(bodySections),
+  ]
+}
+
 function renumberOutline(sections: OutlineSection[], parentOrder = ''): OutlineSection[] {
+  if (!parentOrder && sections.some(isAbstractOutlineSection)) {
+    return ensureAbstractOutlineSection(sections)
+  }
+
   return sections.map((section, index) => {
     const order = parentOrder ? `${parentOrder}.${index + 1}` : `${index + 1}`
     const level = Math.min(order.split('.').length, 3) as 1 | 2 | 3
@@ -494,7 +526,14 @@ export default function Stage2() {
   const autoGenerateOutline = useCallback((force = false) => {
     const existingOutline = outlineStore.get(project.id)
     if (!force && hasOutlineContent(existingOutline)) {
-      setOutline(existingOutline)
+      const normalizedOutline = {
+        ...existingOutline,
+        sections: ensureAbstractOutlineSection(existingOutline.sections),
+      }
+      setOutline(normalizedOutline)
+      if (normalizedOutline.sections !== existingOutline.sections) {
+        outlineStore.save(normalizedOutline)
+      }
       return
     }
 
@@ -550,7 +589,7 @@ export default function Stage2() {
             const parsed = JSON.parse(cleanJSON(jsonContent))
             const newOutline: Outline = {
               projectId: project.id,
-              sections: addIds(parsed.sections ?? []),
+              sections: ensureAbstractOutlineSection(addIds(parsed.sections ?? [])),
               updatedAt: Date.now(),
             }
             setOutline(newOutline)
@@ -636,7 +675,14 @@ export default function Stage2() {
       }
 
       if (hasOutlineContent(savedOutline)) {
-        setOutline(savedOutline)
+        const normalizedOutline = {
+          ...savedOutline,
+          sections: ensureAbstractOutlineSection(savedOutline.sections),
+        }
+        setOutline(normalizedOutline)
+        if (normalizedOutline.sections !== savedOutline.sections) {
+          outlineStore.save(normalizedOutline)
+        }
       }
 
       setInitialLoadDone(true)
@@ -712,7 +758,7 @@ export default function Stage2() {
             const parsed = JSON.parse(cleanJSON(jsonContent))
             const updatedOutline: Outline = {
               ...outline,
-              sections: mergeOutlineIds(addIds(parsed.sections ?? []), outline.sections),
+              sections: ensureAbstractOutlineSection(mergeOutlineIds(addIds(parsed.sections ?? []), outline.sections)),
               updatedAt: Date.now(),
             }
             setOutline(updatedOutline)
@@ -743,7 +789,7 @@ export default function Stage2() {
     if (!outline) return
     const updated = {
       ...outline,
-      sections: renumberOutline(nextSections),
+      sections: ensureAbstractOutlineSection(renumberOutline(nextSections)),
       updatedAt: Date.now(),
     }
     setOutline(updated)
@@ -811,7 +857,7 @@ export default function Stage2() {
       id: uid(),
       level: 1,
       title: '新章节',
-      order: `${outline.sections.length + 1}`,
+      order: `${outline.sections.filter(section => !isAbstractOutlineSection(section)).length + 1}`,
       children: [],
     }
     saveOutline([...outline.sections, section], '新增一级标题')
@@ -931,7 +977,7 @@ export default function Stage2() {
                 }}
               />
               <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>
-                {hasOutlineContent(outline) ? `共 ${outline.sections.length} 章 · ${outlineNodeCount} 个标题节点` : isGenerating ? '生成中…' : '尚未生成大纲'}
+                {hasOutlineContent(outline) ? `共 ${outline.sections.filter(section => !isAbstractOutlineSection(section)).length} 章 · ${outlineNodeCount} 个标题节点` : isGenerating ? '生成中…' : '尚未生成大纲'}
               </div>
             </div>
 

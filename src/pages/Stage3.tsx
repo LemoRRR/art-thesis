@@ -27,6 +27,7 @@ import {
   promptAdjustFinish,
   promptFinishDraft,
   promptGenerateChapter,
+  promptGenerateFrontMatter,
   promptGeneratePaperPlan,
   promptReviseSection,
   promptSummarizeGeneratedChapter,
@@ -76,6 +77,30 @@ function chapterChildrenToText(section: OutlineSection): string {
 
 function outlineSectionTitle(section: OutlineSection): string {
   return `${section.order} ${section.title}`.trim()
+}
+
+function isAbstractOutlineSection(section: OutlineSection): boolean {
+  return section.order === '0' || /^(摘要|abstract|中英文摘要)/i.test(section.title.trim())
+}
+
+function ensureFrontMatterOutlineSection(sections: OutlineSection[]): OutlineSection[] {
+  const abstractSection = sections.find(isAbstractOutlineSection)
+  if (abstractSection) {
+    return [
+      { ...abstractSection, order: '0', level: 1, title: '摘要', children: undefined },
+      ...sections.filter(section => section !== abstractSection),
+    ]
+  }
+
+  return [
+    {
+      id: 'front-matter-abstract',
+      order: '0',
+      level: 1,
+      title: '摘要',
+    },
+    ...sections,
+  ]
 }
 
 function outlineChildrenSignature(section: OutlineSection): string {
@@ -574,21 +599,32 @@ export default function Stage3() {
       const abort = new AbortController()
       abortRef.current = abort
       try {
+        const generationMessages = isAbstractOutlineSection(chapter)
+          ? promptGenerateFrontMatter(
+              fullOutlineSummary,
+              comprehensionSummary,
+              citationContext,
+              academicLevel,
+              paperPlan,
+              styleGuide
+            )
+          : promptGenerateChapter(
+              outlineSectionTitle(chapter),
+              chapterChildrenToText(chapter),
+              fullOutlineSummary,
+              comprehensionSummary,
+              citationContext,
+              bannedPhrases,
+              academicLevel,
+              styleGuide,
+              undefined,
+              paperPlan,
+              chapterSummaries.join('\n\n'),
+              outlineSections[index + 1] ? outlineSectionTitle(outlineSections[index + 1]) : undefined
+            )
+
         const fullContent = await streamGPTText(
-          promptGenerateChapter(
-            outlineSectionTitle(chapter),
-            chapterChildrenToText(chapter),
-            fullOutlineSummary,
-            comprehensionSummary,
-            citationContext,
-            bannedPhrases,
-            academicLevel,
-            styleGuide,
-            undefined,
-            paperPlan,
-            chapterSummaries.join('\n\n'),
-            outlineSections[index + 1] ? outlineSectionTitle(outlineSections[index + 1]) : undefined
-          ),
+          generationMessages,
           abort.signal,
           (streamed) => {
             setSections(prev => prev.map(item =>
@@ -720,22 +756,32 @@ export default function Stage3() {
         let fullContent = ''
         const abort = new AbortController()
         abortRef.current = abort
+        const generationMessages = isAbstractOutlineSection(chapter)
+          ? promptGenerateFrontMatter(
+              fullOutlineSummary,
+              comprehensionSummary,
+              citationContext,
+              academicLevel,
+              paperPlan,
+              styleGuide
+            )
+          : promptGenerateChapter(
+              outlineSectionTitle(chapter),
+              chapterChildrenToText(chapter),
+              fullOutlineSummary,
+              comprehensionSummary,
+              citationContext,
+              bannedPhrases,
+              academicLevel,
+              styleGuide,
+              undefined,
+              paperPlan,
+              chapterSummaries.join('\n\n'),
+              allOutlineSections[sectionIndex + 1] ? outlineSectionTitle(allOutlineSections[sectionIndex + 1]) : undefined
+            )
 
         callGPT(
-          promptGenerateChapter(
-            outlineSectionTitle(chapter),
-            chapterChildrenToText(chapter),
-            fullOutlineSummary,
-            comprehensionSummary,
-            citationContext,
-            bannedPhrases,
-            academicLevel,
-            styleGuide,
-            undefined,
-            paperPlan,
-            chapterSummaries.join('\n\n'),
-            allOutlineSections[sectionIndex + 1] ? outlineSectionTitle(allOutlineSections[sectionIndex + 1]) : undefined
-          ),
+          generationMessages,
           {
             onChunk: (chunk) => {
               fullContent += chunk
@@ -796,13 +842,14 @@ export default function Stage3() {
       let formattedSections = formatSectionsForPaper(savedSections)
 
       if (outline?.sections?.length) {
+        const outlineSections = ensureFrontMatterOutlineSection(outline.sections)
         let syncSnapshotDescription = ''
         const {
           nextSections,
           addedOutlineSections,
           removedSections,
           notices,
-        } = reconcileSectionsWithOutline(formattedSections, outline.sections)
+        } = reconcileSectionsWithOutline(formattedSections, outlineSections)
 
         formattedSections = nextSections
 
@@ -857,7 +904,7 @@ export default function Stage3() {
               addedOutlineSections,
               formattedSections.length,
               formattedSections,
-              outline.sections
+              outlineSections
             )
           })
         }
@@ -870,7 +917,7 @@ export default function Stage3() {
       }
       hasStartedGenerationRef.current = true
     } else if (outline?.confirmedAt) {
-      queueMicrotask(() => startFullGeneration(outline.sections))
+      queueMicrotask(() => startFullGeneration(ensureFrontMatterOutlineSection(outline.sections)))
     } else {
       const waitMsg: ChatMessage = {
         id: 's3_wait_outline',
@@ -1131,7 +1178,7 @@ export default function Stage3() {
     setIsLoading(false)
     setStreamingId(null)
     sectionStore.saveForProject(project.id, [])
-    startFullGeneration(outline.sections)
+    startFullGeneration(ensureFrontMatterOutlineSection(outline.sections))
   }
 
   const syncSectionsToCloud = async () => {
