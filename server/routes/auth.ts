@@ -41,6 +41,19 @@ router.post('/login', async (req, res) => {
   res.json({ user: data.user, session: data.session })
 })
 
+router.post('/demo-login', async (_req, res) => {
+  const email = process.env.DEMO_EMAIL || 'admin@qq.com'
+  const password = process.env.DEMO_PASSWORD || '123456789'
+
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  if (error) {
+    res.status(401).json({ error: 'Demo 账号登录失败，请确认演示账号已创建。' })
+    return
+  }
+
+  res.json({ user: data.user, session: data.session })
+})
+
 router.post('/logout', async (_req, res) => {
   res.json({ ok: true })
 })

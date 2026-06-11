@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { auth } from './lib/auth'
 import Library from './pages/Library'
 import Login from './pages/Login'
+import DemoLogin from './pages/DemoLogin'
 import ProjectHome from './pages/ProjectHome'
 import Projects from './pages/Projects'
 import Stage1 from './pages/Stage1'
@@ -20,7 +21,7 @@ function DefaultConversationRedirect() {
 
 function AuthGuard({ children }: { children: ReactNode }) {
   const location = useLocation()
-  if (auth.isAuthRequired() && !auth.isLoggedIn() && location.pathname !== '/login') {
+  if (auth.isAuthRequired() && !auth.isLoggedIn() && location.pathname !== '/login' && location.pathname !== '/demo') {
     const redirect = `${location.pathname}${location.search}${location.hash}`
     return <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />
   }
@@ -109,6 +110,7 @@ export default function App() {
         <RemoteDataGate>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/demo" element={<DemoLogin />} />
             <Route path="/" element={<DefaultConversationRedirect />} />
             <Route path="/library" element={<Library />} />
             <Route path="/style-profiles" element={<StyleProfiles />} />
