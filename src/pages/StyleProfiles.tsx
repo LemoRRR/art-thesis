@@ -1,5 +1,5 @@
 import { useMemo, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react'
-import { ChevronLeft, ChevronRight, Download, Eye, FileText, Plus, Search, Sparkles, Trash2, Upload, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, Eye, FileText, Loader2, Plus, Search, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import { callGPT } from '../lib/ai'
@@ -99,7 +99,6 @@ function downloadText(fileName: string, content: string, type = 'text/plain;char
 function profileToText(profile: StyleProfile): string {
   return [
     `学生：${profile.studentName}`,
-    `档案：${profile.profileName}`,
     `文档数：${profile.sourceDocuments?.length ?? (profile.sourceFileName ? 1 : 0)}`,
     '',
     `语言水平：${profile.writingLevel}`,
@@ -118,7 +117,6 @@ function profileToCsv(profile: StyleProfile): string {
   const rows = [
     ['字段', '内容'],
     ['学生', profile.studentName],
-    ['档案', profile.profileName],
     ['文档数', String(profile.sourceDocuments?.length ?? 0)],
     ['语言水平', profile.writingLevel],
     ['句式特征', profile.sentenceStyle],
@@ -159,6 +157,15 @@ function mergeStyleText(previous: string, next?: string) {
   return `${previous.trim()}\n\n补充样本：${clean}`
 }
 
+function guessStudentNameFromFileName(fileName: string) {
+  const baseName = fileName.replace(/\.[^.]+$/, '')
+  const labeled = baseName.match(/(?:学生|同学|姓名|作者)[-_\s：:]*([\u4e00-\u9fa5]{2,4})/)
+  if (labeled?.[1]) return labeled[1]
+  const suffixed = baseName.match(/([\u4e00-\u9fa5]{2,4})(?:同学|学生)/)
+  if (suffixed?.[1]) return suffixed[1]
+  return /^[\u4e00-\u9fa5]{2,4}$/.test(baseName) ? baseName : ''
+}
+
 export default function StyleProfiles() {
   const [profiles, setProfiles] = useState<StyleProfile[]>(() => styleProfileStore.getAll())
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -170,6 +177,7 @@ export default function StyleProfiles() {
   const [searchTerm, setSearchTerm] = useState('')
   const [page, setPage] = useState(1)
   const [isAddDragActive, setIsAddDragActive] = useState(false)
+  const [isUploadLoading, setIsUploadLoading] = useState(false)
 
   const activeProfile = useMemo(
     () => profiles.find(profile => profile.id === activeId) ?? null,
@@ -181,7 +189,6 @@ export default function StyleProfiles() {
     if (!keyword) return profiles
     return profiles.filter(profile => [
       profile.studentName,
-      profile.profileName,
       profile.editableSummary,
       profile.writingLevel,
     ].some(value => value?.toLowerCase().includes(keyword)))
@@ -216,20 +223,26 @@ export default function StyleProfiles() {
   }
 
   const saveProfile = () => {
-    if (!draft.studentName.trim() || !draft.profileName.trim()) {
-      setNotice('请先填写学生名和档案名。')
+    const studentName = draft.studentName.trim()
+    if (!studentName) {
+      setNotice('请先填写学生名。')
       return
     }
     if (profiles.length >= 50 && !activeProfile) {
       setNotice('风格档案最多 50 个，请删除旧档案后再新增。')
       return
     }
+    const payload: DraftProfile = {
+      ...draft,
+      studentName,
+      profileName: `${studentName}风格档案`,
+    }
 
     if (activeProfile) {
-      styleProfileStore.update(activeProfile.id, draft)
+      styleProfileStore.update(activeProfile.id, payload)
       setNotice('风格档案已更新。')
     } else {
-      const created = styleProfileStore.add(draft)
+      const created = styleProfileStore.add(payload)
       setActiveId(created.id)
       setNotice('风格档案已保存。')
     }
@@ -237,7 +250,7 @@ export default function StyleProfiles() {
   }
 
   const deleteProfile = (profile: StyleProfile) => {
-    if (!confirm(`确认删除「${profile.profileName}」？`)) return
+    if (!confirm(`确认删除「${profile.studentName || '未填写学生名'}」的风格档案？`)) return
     styleProfileStore.remove(profile.id)
     const next = styleProfileStore.getAll()
     setProfiles(next)
@@ -253,7 +266,8 @@ export default function StyleProfiles() {
       setDraft(emptyDraft)
       setNotice('')
       setUploadStatus('')
-      setIsModalOpen(true)
+      setIsModalOpen(false)
+      setIsUploadLoading(true)
     }
     setIsExtracting(true)
     setNotice('')
@@ -290,9 +304,11 @@ export default function StyleProfiles() {
 
       setDraft(prev => {
         const base = resetBeforeUpload ? emptyDraft : prev
+        const guessedStudentName = base.studentName || guessStudentNameFromFileName(file.name)
         return {
           ...base,
-          profileName: base.profileName || `${base.studentName || '学生'}风格档案`,
+          studentName: guessedStudentName,
+          profileName: guessedStudentName ? `${guessedStudentName}风格档案` : '',
           sourceFileName: file.name,
           sourceTextLength: (base.sourceTextLength ?? 0) + clipped.length,
           sourceDocuments: [...(base.sourceDocuments ?? []), documentRecord],
@@ -307,12 +323,15 @@ export default function StyleProfiles() {
         }
       })
       setUploadStatus(`已添加参考文档：${file.name}`)
+      if (resetBeforeUpload) setIsModalOpen(true)
     } catch (error) {
       const message = error instanceof Error ? error.message : '风格提取失败'
       setUploadStatus(`处理失败：${message}`)
       setNotice(message)
+      if (resetBeforeUpload) setIsModalOpen(true)
     } finally {
       setIsExtracting(false)
+      if (resetBeforeUpload) setIsUploadLoading(false)
     }
   }
 
@@ -352,6 +371,7 @@ export default function StyleProfiles() {
 
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--color-bg)', overflow: 'hidden' }}>
+      <style>{'@keyframes style-profile-spin { to { transform: rotate(360deg); } }'}</style>
       <Sidebar />
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <TopBar currentStep={0} />
@@ -418,7 +438,7 @@ export default function StyleProfiles() {
                     setSearchTerm(event.target.value)
                     setPage(1)
                   }}
-                  placeholder="搜索学生名、档案名或风格关键词"
+                  placeholder="搜索学生名或风格关键词"
                   style={{ ...inputStyle, border: 'none', paddingLeft: 0, background: 'transparent' }}
                 />
               </label>
@@ -436,8 +456,8 @@ export default function StyleProfiles() {
                     </button>
                   </div>
                   <div style={{ minHeight: 70 }}>
-                    <h2 style={{ margin: '12px 0 6px', fontSize: 15, lineHeight: 1.4, color: 'var(--color-ink)' }}>{profile.profileName}</h2>
-                    <div style={{ fontSize: 13, color: 'var(--color-ink-2)', fontWeight: 600 }}>学生：{profile.studentName || '未填写'}</div>
+                    <h2 style={{ margin: '12px 0 6px', fontSize: 16, lineHeight: 1.4, color: 'var(--color-ink)' }}>{profile.studentName || '未填写学生名'}</h2>
+                    <div style={{ fontSize: 12, color: 'var(--color-ink-3)' }}>{profile.sourceFileName || '学生风格档案'}</div>
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <Tag>{profile.sourceDocuments?.length ?? (profile.sourceFileName ? 1 : 0)} 个文档</Tag>
@@ -445,7 +465,7 @@ export default function StyleProfiles() {
                   </div>
                   <div style={{ display: 'flex', borderTop: '1px solid var(--color-border)', margin: '12px -14px -14px', padding: '8px 10px', gap: 4 }}>
                     <CardAction icon={<Eye size={12} />} label="查看" onClick={() => selectProfile(profile)} />
-                    <CardAction icon={<Download size={12} />} label="导出" onClick={() => downloadText(`${profile.profileName}.txt`, profileToText(profile))} />
+                    <CardAction icon={<Download size={12} />} label="导出" onClick={() => downloadText(`${profile.studentName || '风格档案'}.txt`, profileToText(profile))} />
                   </div>
                 </article>
               ))}
@@ -470,24 +490,40 @@ export default function StyleProfiles() {
               </div>
             )}
 
+            {isUploadLoading && (
+              <div style={modalBackdropStyle}>
+                <section style={{ ...modalPanelStyle, width: 'min(520px, 100%)', padding: 26, display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 8, background: 'var(--color-accent-light)', color: 'var(--color-accent)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                    <Loader2 size={22} style={{ animation: 'style-profile-spin 1s linear infinite' }} />
+                  </div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 16, color: 'var(--color-ink)' }}>正在解析风格档案</h2>
+                    <p style={{ margin: '7px 0 0', fontSize: 13, lineHeight: 1.7, color: 'var(--color-ink-3)' }}>
+                      {uploadStatus || '正在上传并识别文档，请稍候。'}
+                    </p>
+                  </div>
+                </section>
+              </div>
+            )}
+
             {isModalOpen && (
               <div style={modalBackdropStyle}>
                 <section style={modalPanelStyle}>
                   <div style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border)', padding: '16px 18px', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
                     <div>
-                      <h2 style={{ margin: 0, fontSize: 16, color: 'var(--color-ink)' }}>{isEditing ? '编辑档案信息' : '添加档案信息 / 上传解析档案信息'}</h2>
+                      <h2 style={{ margin: 0, fontSize: 16, color: 'var(--color-ink)' }}>{isEditing ? '查看风格档案' : '确认风格档案'}</h2>
                       <div style={{ fontSize: 12, color: 'var(--color-ink-3)', marginTop: 5 }}>
-                        先填写学生与档案名，再上传一个或多个文档。解析结果会沉淀为这个学生的风格画像。
+                        学生名为必填项。上传解析完成后，可在这里确认并保存风格画像。
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                       {activeProfile && (
                         <>
-                          <button onClick={() => downloadText(`${activeProfile.profileName}.txt`, profileToText(activeProfile))} style={secondaryButtonStyle}>
+                          <button onClick={() => downloadText(`${activeProfile.studentName || '风格档案'}.txt`, profileToText(activeProfile))} style={secondaryButtonStyle}>
                             <Download size={13} />
                             TXT
                           </button>
-                          <button onClick={() => downloadText(`${activeProfile.profileName}.csv`, `\uFEFF${profileToCsv(activeProfile)}`, 'text/csv;charset=utf-8')} style={secondaryButtonStyle}>
+                          <button onClick={() => downloadText(`${activeProfile.studentName || '风格档案'}.csv`, `\uFEFF${profileToCsv(activeProfile)}`, 'text/csv;charset=utf-8')} style={secondaryButtonStyle}>
                             <Download size={13} />
                             CSV
                           </button>
@@ -500,14 +536,10 @@ export default function StyleProfiles() {
                   </div>
 
                   <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
                       <label style={labelStyle}>
-                        学生名
+                        学生名（必填）
                         <input value={draft.studentName} onChange={event => setDraft({ ...draft, studentName: event.target.value })} placeholder="例如：张同学" style={inputStyle} />
-                      </label>
-                      <label style={labelStyle}>
-                        档案名
-                        <input value={draft.profileName} onChange={event => setDraft({ ...draft, profileName: event.target.value })} placeholder="例如：张同学本科论文风格" style={inputStyle} />
                       </label>
                     </div>
 
