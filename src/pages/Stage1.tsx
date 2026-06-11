@@ -28,9 +28,16 @@ type Stage1UploadStatus = 'uploading' | 'ready' | 'failed'
 
 interface ParsedComprehension {
   paperTitle?: string
+  recommendedTitles?: string[]
+  materialTopic?: string
   researchObject?: string
+  possibleDirections?: string[]
+  keyArguments?: string[]
+  risks?: string[]
   writingBoundary?: string
   academicLevel?: string
+  difficulty?: string
+  coreSummary?: string
   coreClaims?: string
 }
 
@@ -51,7 +58,9 @@ const WELCOME_MESSAGE: ChatMessage = {
 }
 
 function parseComprehensionReply(content: string): ParsedComprehension | null {
-  const jsonMatch = content.match(/\{[\s\S]*"researchObject"[\s\S]*?\}/)
+  const markerIndex = content.lastIndexOf('【理解完成】')
+  const target = markerIndex >= 0 ? content.slice(markerIndex) : content
+  const jsonMatch = target.match(/\{[\s\S]*\}/)
   if (!jsonMatch) return null
   try {
     return JSON.parse(jsonMatch[0]) as ParsedComprehension
@@ -60,18 +69,29 @@ function parseComprehensionReply(content: string): ParsedComprehension | null {
   }
 }
 
+function formatList(items?: string[]): string {
+  return items?.map(item => item.trim()).filter(Boolean).join('；') ?? ''
+}
+
 function buildComprehensionModel(parsed: ParsedComprehension): ComprehensionModel {
+  const topic = parsed.materialTopic || parsed.researchObject || ''
+  const possibleDirections = formatList(parsed.possibleDirections)
+  const keyArguments = formatList(parsed.keyArguments)
+  const risks = formatList(parsed.risks)
+  const summary = parsed.coreSummary || parsed.coreClaims || ''
   const rawSummary = [
-    `研究对象：${parsed.researchObject ?? ''}`,
-    `写作边界：${parsed.writingBoundary ?? ''}`,
-    `学段：${parsed.academicLevel ?? '本科'}`,
-    parsed.coreClaims ? `核心论点：${parsed.coreClaims}` : '',
+    topic ? `材料主题：${topic}` : '',
+    summary ? `材料理解：${summary}` : '',
+    possibleDirections ? `可写方向：${possibleDirections}` : '',
+    keyArguments ? `可展开论点：${keyArguments}` : '',
+    risks ? `材料缺口/风险：${risks}` : '',
+    `建议难度：${parsed.difficulty || parsed.academicLevel || '本科'}`,
   ].filter(Boolean).join('\n')
 
   return {
-    researchObject: parsed.researchObject ?? '',
-    writingBoundary: parsed.writingBoundary ?? '',
-    academicLevel: parsed.academicLevel ?? '本科',
+    researchObject: topic,
+    writingBoundary: parsed.writingBoundary || risks || '可在大纲阶段继续收束研究范围。',
+    academicLevel: parsed.academicLevel || parsed.difficulty || '本科',
     rawSummary,
   }
 }
@@ -80,7 +100,10 @@ function inferPaperTitle(parsed: ParsedComprehension): string {
   const explicitTitle = parsed.paperTitle?.trim()
   if (explicitTitle) return explicitTitle
 
-  const researchObject = parsed.researchObject?.trim()
+  const recommendedTitle = parsed.recommendedTitles?.find(title => title.trim())?.trim()
+  if (recommendedTitle) return recommendedTitle
+
+  const researchObject = (parsed.materialTopic || parsed.researchObject)?.trim()
   if (researchObject) return `${researchObject}研究`
 
   return '未命名论文'
@@ -89,22 +112,24 @@ function inferPaperTitle(parsed: ParsedComprehension): string {
 function formatComprehensionReply(content: string, parsed: ParsedComprehension): string {
   const lead = content.split('【理解完成】')[0].trim()
   const paperTitle = inferPaperTitle(parsed)
+  const topic = parsed.materialTopic || parsed.researchObject || '未明确'
+  const directions = formatList(parsed.possibleDirections)
+  const argumentsText = formatList(parsed.keyArguments)
+  const risks = formatList(parsed.risks)
+  const summary = parsed.coreSummary || parsed.coreClaims
+  const titles = parsed.recommendedTitles?.length ? parsed.recommendedTitles.join('；') : paperTitle
   return [
-    lead || '我已经理解了这篇论文的基本写作方向。',
+    lead || '我已经读取并整理了你提供的材料，可以进入下一步。',
     '',
     '【理解完成】',
-    `论文标题：${paperTitle}`,
-    `研究对象：${parsed.researchObject ?? '未明确'}`,
-    `写作边界：${parsed.writingBoundary ?? '未明确'}`,
-    `学段判断：${parsed.academicLevel ?? '本科'}`,
-    parsed.coreClaims ? `核心论点：${parsed.coreClaims}` : '',
+    `主题判断：${topic}`,
+    summary ? `材料理解：${summary}` : '',
+    directions ? `可写方向：${directions}` : '',
+    argumentsText ? `可展开论点：${argumentsText}` : '',
+    risks ? `材料缺口/风险：${risks}` : '',
+    `推荐题目：${titles}`,
+    `建议难度：${parsed.difficulty || parsed.academicLevel || '本科'}`,
   ].filter(Boolean).join('\n')
-}
-
-function clipStage1Material(text: string, max = 7000): string {
-  const clean = text.trim()
-  if (clean.length <= max) return clean
-  return `${clean.slice(0, max).trim()}\n……（附件正文较长，已截取前 ${max} 字用于本轮材料理解）`
 }
 
 function buildUploadedFileContext(uploadedFile: Stage1UploadedFile | null): string {
@@ -120,7 +145,7 @@ function buildUploadedFileContext(uploadedFile: Stage1UploadedFile | null): stri
     item.styleExtract ? `写法范式：\n${item.styleExtract}` : '',
     item.viewpointsExtract ? `观点与使用方式：\n${item.viewpointsExtract}` : '',
     item.casesExtract ? `案例与引用线索：\n${item.casesExtract}` : '',
-    item.text ? `正文摘录：\n${clipStage1Material(item.text)}` : '',
+    item.text ? `正文全文：\n${item.text}` : '',
   ].filter(Boolean).join('\n\n')
 }
 
@@ -346,7 +371,7 @@ export default function Stage1() {
     if (!file) return
 
     setUploadedFile({ fileName: file.name, status: 'uploading' })
-    setInputText(prev => prev || `我上传了论文原文《${file.name}》，请结合解析出的正文和摘要，学习文章的基本内容、研究方向和写作边界。`)
+    setInputText(prev => prev || `我上传了材料《${file.name}》，请先读懂材料内容，整理可写方向、可展开论点、材料缺口和推荐题目。`)
 
     try {
       const row = await filesAPI.upload(file)
@@ -497,13 +522,13 @@ export default function Stage1() {
                 }}
               >
                 <div style={{ fontSize: 11, color: 'var(--color-ink-3)', fontWeight: 500, letterSpacing: '0.05em' }}>
-                  理解模型
+                  材料理解
                 </div>
                 {[
-                  { label: '论文标题', value: projectStore.ensure(project.id).title },
-                  { label: '研究对象', value: comprehension.researchObject },
-                  { label: '写作边界', value: comprehension.writingBoundary },
-                  { label: '学段判断', value: comprehension.academicLevel },
+                  { label: '推荐题目', value: projectStore.ensure(project.id).title },
+                  { label: '主题判断', value: comprehension.researchObject },
+                  { label: '材料建议', value: comprehension.rawSummary },
+                  { label: '难度判断', value: comprehension.academicLevel },
                 ].map(item => (
                   <div key={item.label} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                     <span
@@ -550,7 +575,7 @@ export default function Stage1() {
                 材料理解完成 ✓
               </span>
               <span style={{ fontSize: 12, color: 'var(--color-ink-3)', marginLeft: 10 }}>
-                可以开始撰写正文了
+                可以进入大纲撰写了
               </span>
             </div>
             <button
@@ -574,7 +599,7 @@ export default function Stage1() {
               onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-accent-hover)')}
               onMouseLeave={e => (e.currentTarget.style.background = 'var(--color-accent)')}
             >
-              进入撰写阶段
+              进入大纲撰写
               <ArrowRight size={14} />
             </button>
           </div>
@@ -676,7 +701,7 @@ export default function Stage1() {
                 mentions={mentions}
                 onMentionsChange={setMentions}
                 onKeyDown={handleKeyDown}
-                placeholder="输入题目、大纲、研究框架，或输入 @ 引用资料维度……（Enter 发送，Shift+Enter 换行）"
+                placeholder="输入题目、材料、想法，或输入 @ 引用资料维度……（Enter 发送，Shift+Enter 换行）"
                 rows={1}
                 style={{ flex: 1 }}
               />
@@ -733,7 +758,7 @@ export default function Stage1() {
                 <ModelTag model={selectedModel} />
               </div>
               <span style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>
-                材料理解 · 不会模仿你的语言风格
+                材料理解 · 读懂材料并给出写作建议
               </span>
             </div>
           </div>
