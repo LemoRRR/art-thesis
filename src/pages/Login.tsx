@@ -82,7 +82,7 @@ export default function Login() {
       <div style={{ width: 380, background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', padding: 32, boxShadow: 'var(--shadow-lg)' }}>
         <div style={{ marginBottom: 24, textAlign: 'center' }}>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-ink)' }}>论文助手</div>
-          <div style={{ fontSize: 12, color: 'var(--color-ink-3)', marginTop: 4 }}>AI 学术写作工作台</div>
+          <div style={{ fontSize: 12, color: 'var(--color-ink-3)', marginTop: 4 }}>艺术科研管理系统</div>
         </div>
 
         <div style={{ display: 'flex', marginBottom: 20, borderBottom: '1px solid var(--color-border)' }}>
