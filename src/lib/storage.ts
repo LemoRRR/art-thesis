@@ -28,6 +28,8 @@ const KEYS = {
   OUTLINE:       'pai_outline',
   REVISIONS:     'pai_revision_changes',
   STYLE_PROFILES:'pai_style_profiles',
+  RESEARCH_TASKS:'pai_research_tasks',
+  RESEARCH_ASSETS:'pai_research_assets',
 } as const
 
 // ── 通用读写 ──────────────────────────────────────────────────
@@ -64,6 +66,41 @@ export type WorkflowStage = 'stage1' | 'stage2' | 'stage3'
 export type LibraryItemType = 'pdf' | 'docx' | 'doc' | 'txt' | 'note' | 'background' | 'style' | 'case' | 'other'
 export type IndexStatus = 'pending' | 'ready' | 'failed'
 export type ExtractStatus = 'pending' | 'processing' | 'done' | 'failed'
+export type ResearchMethodType = 'theoretical' | 'case_study' | 'quantitative' | 'qualitative' | 'mixed' | 'design_evaluation'
+export type ResearchToolKey =
+  | 'scale_generation'
+  | 'hypothesis_model'
+  | 'survey_analysis'
+  | 'mediation'
+  | 'kano'
+  | 'ahp'
+  | 'grounded_coding'
+  | 'emotion_coding'
+  | 'theme_extraction'
+  | 'case_summary'
+export type ResearchTaskStatus =
+  | 'route_planned'
+  | 'scale_drafting'
+  | 'scale_confirmed'
+  | 'survey_ready'
+  | 'collecting_data'
+  | 'data_uploaded'
+  | 'data_validated'
+  | 'analysis_done'
+  | 'chapter_text_ready'
+  | 'inserted_into_paper'
+export type ResearchAssetType =
+  | 'research_design'
+  | 'scale_schema'
+  | 'survey_questionnaire'
+  | 'questionnaire_review'
+  | 'hypothesis_model'
+  | 'quant_dataset'
+  | 'quant_analysis_result'
+  | 'kano_result'
+  | 'ahp_result'
+  | 'qualitative_coding'
+  | 'chapter_text'
 
 export interface SectionFootnote {
   id: string
@@ -147,6 +184,23 @@ export interface ComprehensionModel {
   nextStepRecommendation?: 'generate_outline' | 'confirm_detected_outline' | 'revise_existing_draft' | 'write_from_outline'
 }
 
+export interface ResearchPlan {
+  methodType: ResearchMethodType
+  methodLabel: string
+  methodReason: string
+  suggestedTools: ResearchToolKey[]
+  variables?: {
+    independent?: string[]
+    dependent?: string[]
+    mediator?: string[]
+    moderator?: string[]
+    control?: string[]
+  }
+  dataNeeds: string[]
+  outlineRequirements: string[]
+  pendingResearchTasks: string[]
+}
+
 export interface LibraryItem {
   id: string
   title: string
@@ -185,6 +239,73 @@ export interface ProjectContext {
   bannedPhrases: string[]
   stylePreference: string
   rawSummary: string
+  researchPlan?: ResearchPlan
+}
+
+export interface ScaleItem {
+  id: string
+  code: string
+  text: string
+  reverseScored: boolean
+  required: boolean
+  disabled?: boolean
+}
+
+export interface ScaleDimension {
+  id: string
+  name: string
+  definition: string
+  items: ScaleItem[]
+}
+
+export interface ScaleVariable {
+  id: string
+  name: string
+  role: 'independent' | 'dependent' | 'mediator' | 'moderator' | 'control'
+  definition: string
+  dimensions: ScaleDimension[]
+}
+
+export interface ScaleAssetData {
+  title: string
+  version: number
+  basedOnVersionId?: string
+  researchTopic: string
+  scaleType: 'likert_5' | 'likert_7'
+  variables: ScaleVariable[]
+  scoringRules: string
+  notes: string
+}
+
+export interface ResearchAsset {
+  id: string
+  projectId: string
+  taskId?: string
+  type: ResearchAssetType
+  title: string
+  summary: string
+  source: 'generated_from_project' | 'created_in_stage3' | 'uploaded_by_user' | 'manual_input'
+  structuredData: unknown
+  plainText: string
+  status: 'draft' | 'confirmed' | 'archived' | 'used_in_paper'
+  linkedSectionIds?: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ResearchTask {
+  id: string
+  projectId: string
+  title: string
+  methodType: ResearchMethodType
+  status: ResearchTaskStatus
+  currentScaleAssetId?: string
+  datasetAssetId?: string
+  analysisAssetId?: string
+  chapterTextAssetId?: string
+  nextActionLabel: string
+  createdAt: number
+  updatedAt: number
 }
 
 export interface StyleProfile {
@@ -930,6 +1051,80 @@ export const styleProfileStore = {
   clear: () => localStorage.removeItem(KEYS.STYLE_PROFILES),
 }
 
+// ── 研究计算中心 ──────────────────────────────────────────────
+export const researchTaskStore = {
+  getAll: (): ResearchTask[] => read<ResearchTask[]>(KEYS.RESEARCH_TASKS) ?? [],
+  save: (tasks: ResearchTask[]) => write(KEYS.RESEARCH_TASKS, tasks),
+  getByProject: (projectId: string): ResearchTask[] =>
+    researchTaskStore.getAll()
+      .filter(task => task.projectId === projectId)
+      .sort((a, b) => b.updatedAt - a.updatedAt),
+  get: (id: string): ResearchTask | null =>
+    researchTaskStore.getAll().find(task => task.id === id) ?? null,
+  add: (task: Omit<ResearchTask, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const now = Date.now()
+    const next: ResearchTask = {
+      ...task,
+      id: uid('research_task'),
+      createdAt: now,
+      updatedAt: now,
+    }
+    researchTaskStore.save([next, ...researchTaskStore.getAll()])
+    return next
+  },
+  update: (id: string, patch: Partial<ResearchTask>) => {
+    researchTaskStore.save(researchTaskStore.getAll().map(task =>
+      task.id === id ? { ...task, ...patch, updatedAt: Date.now() } : task
+    ))
+  },
+  remove: (id: string) => {
+    researchTaskStore.save(researchTaskStore.getAll().filter(task => task.id !== id))
+  },
+  clear: () => localStorage.removeItem(KEYS.RESEARCH_TASKS),
+}
+
+export const researchAssetStore = {
+  getAll: (): ResearchAsset[] => read<ResearchAsset[]>(KEYS.RESEARCH_ASSETS) ?? [],
+  save: (assets: ResearchAsset[]) => write(KEYS.RESEARCH_ASSETS, assets),
+  getByProject: (projectId: string): ResearchAsset[] =>
+    researchAssetStore.getAll()
+      .filter(asset => asset.projectId === projectId)
+      .sort((a, b) => b.updatedAt - a.updatedAt),
+  getByTask: (taskId: string): ResearchAsset[] =>
+    researchAssetStore.getAll()
+      .filter(asset => asset.taskId === taskId)
+      .sort((a, b) => b.updatedAt - a.updatedAt),
+  get: (id: string): ResearchAsset | null =>
+    researchAssetStore.getAll().find(asset => asset.id === id) ?? null,
+  add: (asset: Omit<ResearchAsset, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const now = Date.now()
+    const next: ResearchAsset = {
+      ...asset,
+      id: uid('research_asset'),
+      createdAt: now,
+      updatedAt: now,
+    }
+    researchAssetStore.save([next, ...researchAssetStore.getAll()])
+    return next
+  },
+  update: (id: string, patch: Partial<ResearchAsset>) => {
+    researchAssetStore.save(researchAssetStore.getAll().map(asset =>
+      asset.id === id ? { ...asset, ...patch, updatedAt: Date.now() } : asset
+    ))
+  },
+  archiveConfirmedScaleAssets: (projectId: string, exceptId: string) => {
+    researchAssetStore.save(researchAssetStore.getAll().map(asset =>
+      asset.projectId === projectId && asset.type === 'scale_schema' && asset.id !== exceptId && asset.status === 'confirmed'
+        ? { ...asset, status: 'archived', updatedAt: Date.now() }
+        : asset
+    ))
+  },
+  remove: (id: string) => {
+    researchAssetStore.save(researchAssetStore.getAll().filter(asset => asset.id !== id))
+  },
+  clear: () => localStorage.removeItem(KEYS.RESEARCH_ASSETS),
+}
+
 // ── 文档标题 ──────────────────────────────────────────────────
 export const docTitleStore = {
   get:   () => read<string>(KEYS.DOC_TITLE) ?? '未命名论文',
@@ -1094,6 +1289,8 @@ export const projectStore = {
     write(KEYS.CHAT, chatStore.getAll().filter(message => message.projectId !== projectId))
     write(KEYS.VERSIONS, versionStore.getAll().filter(snapshot => snapshot.projectId !== projectId))
     write(KEYS.REFERENCES, referenceStore.getAll().filter(selection => selection.projectId !== projectId))
+    write(KEYS.RESEARCH_TASKS, researchTaskStore.getAll().filter(task => task.projectId !== projectId))
+    write(KEYS.RESEARCH_ASSETS, researchAssetStore.getAll().filter(asset => asset.projectId !== projectId))
     projectStore.update(projectId, { context: createEmptyProjectContext(), currentStage: 'stage1' })
   },
   update: (id: string, patch: Partial<Project>) => {
@@ -1111,6 +1308,8 @@ export const projectStore = {
     write(KEYS.CHAT, chatStore.getAll().filter(message => message.projectId !== id))
     write(KEYS.VERSIONS, versionStore.getAll().filter(snapshot => snapshot.projectId !== id))
     write(KEYS.REFERENCES, referenceStore.getAll().filter(selection => selection.projectId !== id))
+    write(KEYS.RESEARCH_TASKS, researchTaskStore.getAll().filter(task => task.projectId !== id))
+    write(KEYS.RESEARCH_ASSETS, researchAssetStore.getAll().filter(asset => asset.projectId !== id))
     const activeId = read<string>(KEYS.ACTIVE_PROJECT)
     if (activeId === id && nextProjects[0]) {
       projectStore.setActiveId(nextProjects[0].id)

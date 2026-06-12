@@ -10,6 +10,7 @@ import Stage1 from './pages/Stage1'
 import Stage2 from './pages/Stage2'
 import Stage3 from './pages/Stage3'
 import StyleProfiles from './pages/StyleProfiles'
+import ResearchCenter from './pages/ResearchCenter'
 import { projectStore, syncRemoteData } from './lib/storage'
 
 const AUTH_EXPIRED_EVENT = 'paper-ai-auth-expired'
@@ -118,6 +119,7 @@ export default function App() {
             <Route path="/projects/:projectId" element={<ProjectHome />} />
             <Route path="/projects/:projectId/stage1" element={<Stage1 />} />
             <Route path="/projects/:projectId/stage2" element={<Stage2 />} />
+            <Route path="/projects/:projectId/research" element={<ResearchCenter />} />
             <Route path="/projects/:projectId/stage3" element={<Stage3 />} />
             <Route path="/stage1" element={<Stage1 />} />
             <Route path="/stage2" element={<Stage2 />} />

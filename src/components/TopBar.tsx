@@ -3,7 +3,7 @@ import { Feather } from 'lucide-react'
 import StepBar from './StepBar'
 
 interface TopBarProps {
-  currentStep: 0 | 1 | 2
+  currentStep: 0 | 1 | 2 | 3
   right?: ReactNode     // 右侧插槽，各页面放不同内容
 }
 

@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { BookOpen, CheckCircle2, Copy, Download, History, MessageSquare, RefreshCw, Send, Sparkles } from 'lucide-react'
+import { BookOpen, CheckCircle2, Copy, Download, FlaskConical, History, MessageSquare, RefreshCw, Send, Sparkles } from 'lucide-react'
 import ChatBubble from '../components/ChatBubble'
 import DocumentToolbar from '../components/DocumentToolbar'
 import DocArea from '../components/DocArea'
 import MentionInput, { type MentionRef } from '../components/MentionInput'
 import ReferencePanel from '../components/ReferencePanel'
+import ResearchDrawer from '../components/ResearchDrawer'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import VersionPanel from '../components/VersionPanel'
-import { callDoubao, callGPT } from '../lib/ai'
+import { callDoubao, callGPT, type Message } from '../lib/ai'
 import {
   finalizeSectionWithCitations,
   formatCitableSourcesForPrompt,
@@ -37,12 +38,15 @@ import {
   chatStore,
   outlineStore,
   projectStore,
+  researchAssetStore,
+  researchTaskStore,
   sectionStore,
   styleProfileStore,
   versionStore,
   type ChatMessage,
   type DocSection,
   type OutlineSection,
+  type ResearchAsset,
   type StyleProfile,
 } from '../lib/storage'
 
@@ -132,6 +136,127 @@ function formatStyleProfileForPrompt(profile?: StyleProfile | null): string | un
     `风格画像：${profile.editableSummary}`,
     `边界：${profile.avoidContentReuseNotice || '只参考表达方式，不复用参考文章内容。'}`,
   ].filter(Boolean).join('\n')
+}
+
+function clipResearchText(text: string, max = 5000) {
+  const clean = text.trim()
+  return clean.length > max ? `${clean.slice(0, max).trim()}\n……（研究资产已截断，仅保留前部核心内容）` : clean
+}
+
+function researchAssetSectionTitle(asset: ResearchAsset) {
+  if (asset.type === 'quant_analysis_result') return '第四章 数据分析结果'
+  if (asset.type === 'survey_questionnaire' || asset.type === 'scale_schema') return '问卷设计与变量测量'
+  if (asset.type === 'kano_result') return 'KANO需求分析'
+  if (asset.type === 'ahp_result') return 'AHP评价指标体系'
+  if (asset.type === 'qualitative_coding') return '质性编码分析'
+  if (asset.type === 'questionnaire_review') return '问卷优化说明'
+  return '研究工具设计'
+}
+
+function researchAssetOrder(asset: ResearchAsset) {
+  if (asset.type === 'quant_analysis_result') return 4
+  if (asset.type === 'survey_questionnaire' || asset.type === 'scale_schema') return 3
+  if (asset.type === 'kano_result' || asset.type === 'ahp_result') return 4
+  if (asset.type === 'qualitative_coding') return 4
+  return 3
+}
+
+function buildResearchReferenceContext(assetIds: string[]) {
+  const assets = assetIds
+    .map(id => researchAssetStore.get(id))
+    .filter((asset): asset is ResearchAsset => Boolean(asset && asset.plainText.trim()))
+  if (assets.length === 0) return ''
+  return [
+    '【Stage3 调用的研究计算资产】',
+    '以下材料只作为论文表达和整合依据。不要机械粘贴原文；应结合当前章节任务转写为论文语言。',
+    ...assets.map((asset, index) => [
+      `${index + 1}. ${asset.title}`,
+      `类型：${asset.type}`,
+      `摘要：${asset.summary}`,
+      `内容：\n${clipResearchText(asset.plainText, 2600)}`,
+    ].join('\n')),
+  ].join('\n\n')
+}
+
+function promptGenerateResearchAssetSection(
+  asset: ResearchAsset,
+  projectTitle: string,
+  fullPaperText: string,
+  academicLevel: AcademicLevel,
+  styleGuide?: string
+): Message[] {
+  return [
+    {
+      role: 'system',
+      content: `你是论文表达中心。请把研究计算资产转写成论文正文小节，而不是原样粘贴材料。
+
+要求：
+1. 使用正式论文语言，结构清楚，避免口语化。
+2. 保留关键表格/问卷/统计结论的信息，但压缩冗余说明。
+3. 如果资产是问卷或量表，重点写研究工具设计、变量测量、题项构成和后续使用方式。
+4. 如果资产是分析结果，重点写样本、指标、结果含义和与论文主题的关系。
+5. 不编造资产中没有的数据和结论。
+6. 学段要求：${academicLevel}。
+${styleGuide ? `\n【风格档案】\n${styleGuide}` : ''}`,
+    },
+    {
+      role: 'user',
+      content: `论文题目：${projectTitle}
+
+建议小节标题：${researchAssetSectionTitle(asset)}
+
+【全文上下文】
+${clipResearchText(fullPaperText || '暂无已生成正文。', 3000)}
+
+【研究计算资产】
+标题：${asset.title}
+摘要：${asset.summary}
+内容：
+${clipResearchText(asset.plainText)}
+
+请生成可直接放入论文的正文小节。`,
+    },
+  ]
+}
+
+function promptPolishResearchAssetIntoSection(
+  asset: ResearchAsset,
+  sectionTitle: string,
+  currentContent: string,
+  projectTitle: string,
+  academicLevel: AcademicLevel,
+  styleGuide?: string
+): Message[] {
+  return [
+    {
+      role: 'system',
+      content: `你是论文表达中心。请把研究计算资产整合进当前论文小节。
+
+要求：
+1. 不是把资产原文附在末尾，而是改写、融入、承接当前小节。
+2. 保留当前小节已有论述中仍然有价值的内容。
+3. 根据资产类型决定写法：问卷/量表写方法与测量；分析结果写结果与解释；KANO/AHP写设计评价；质性编码写主题与编码。
+4. 不编造资产中没有的数据。
+5. 学段要求：${academicLevel}。
+${styleGuide ? `\n【风格档案】\n${styleGuide}` : ''}`,
+    },
+    {
+      role: 'user',
+      content: `论文题目：${projectTitle}
+当前小节：${sectionTitle}
+
+【当前小节原文】
+${currentContent.trim() || '当前小节尚无正文。'}
+
+【需要整合的研究计算资产】
+标题：${asset.title}
+摘要：${asset.summary}
+内容：
+${clipResearchText(asset.plainText)}
+
+请输出整合后的完整小节正文。`,
+    },
+  ]
 }
 
 function OutlineToDraftTransition({
@@ -323,7 +448,7 @@ function normalizeMeaningTitle(title: string): string {
 }
 
 function streamGPTText(
-  messages: ReturnType<typeof promptGenerateChapter>,
+  messages: Message[],
   signal?: AbortSignal,
   onChunk?: (text: string) => void
 ): Promise<string> {
@@ -444,6 +569,8 @@ export default function Stage3() {
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [showReferences, setShowReferences] = useState(false)
+  const [showResearchDrawer, setShowResearchDrawer] = useState(false)
+  const [researchReferenceAssetIds, setResearchReferenceAssetIds] = useState<string[]>([])
   const [isGeneratingFull, setIsGeneratingFull] = useState(false)
   const [isPreparingDraft, setIsPreparingDraft] = useState(() => {
     const outline = outlineStore.get(project.id)
@@ -1037,6 +1164,7 @@ export default function Stage3() {
         userInput: opinion,
         currentSectionId: activeSection.id,
       }),
+      buildResearchReferenceContext(researchReferenceAssetIds),
       activeStyleGuide ? `【/ 调用的风格档案】\n${activeStyleGuide}` : '',
       mentionContext,
     ].filter(Boolean).join('\n\n---\n\n')
@@ -1089,7 +1217,7 @@ export default function Stage3() {
       },
       abort.signal
     )
-  }, [activeSectionId, activeStyleGuide, buildCitationAwareContext, project.context.bannedPhrases, project.id, saveStageMessages, sections])
+  }, [activeSectionId, activeStyleGuide, buildCitationAwareContext, project.context.bannedPhrases, project.id, researchReferenceAssetIds, saveStageMessages, sections])
 
   const sendMessage = useCallback(async () => {
     const rawText = inputText.trim()
@@ -1255,11 +1383,14 @@ export default function Stage3() {
     const chapterOutline = outlineNode ? chapterChildrenToText(outlineNode) : targetSection.title
     const currentProject = projectStore.ensure(project.id)
     const { citationContext, citableSources } = buildCitationAwareContext(
-      buildAIContext({
-        projectId: project.id,
-        stage: 'stage3',
-        currentSectionId: targetSection.id,
-      })
+      [
+        buildAIContext({
+          projectId: project.id,
+          stage: 'stage3',
+          currentSectionId: targetSection.id,
+        }),
+        buildResearchReferenceContext(researchReferenceAssetIds),
+      ].filter(Boolean).join('\n\n---\n\n')
     )
     const fullOutlineSummary = outlineToText(outlineSections)
     const comprehensionSummary = currentProject.context.rawSummary ?? ''
@@ -1358,6 +1489,217 @@ export default function Stage3() {
     }
   }
 
+  const markResearchAssetUsed = (asset: ResearchAsset, sectionId?: string) => {
+    researchAssetStore.update(asset.id, {
+      status: 'used_in_paper',
+      linkedSectionIds: sectionId
+        ? Array.from(new Set([...(asset.linkedSectionIds ?? []), sectionId]))
+        : asset.linkedSectionIds,
+    })
+    if (asset.taskId) {
+      researchTaskStore.update(asset.taskId, {
+        status: 'inserted_into_paper',
+        nextActionLabel: '在 Stage3 润色并整合',
+      })
+    }
+  }
+
+  const addResearchAssetAsReference = (asset: ResearchAsset) => {
+    setResearchReferenceAssetIds(prev => Array.from(new Set([...prev, asset.id])))
+    const referenceMsg: ChatMessage = {
+      id: `s3_${uid()}`,
+      role: 'ai',
+      content: `已把「${asset.title}」加入 Stage3 参考上下文。之后修改或生成当前小节时，会把它作为研究依据，但不会直接插入正文。`,
+      timestamp: Date.now(),
+      projectId: project.id,
+      stage: 'stage3',
+    }
+    const nextMessages = [...messages, referenceMsg]
+    setMessages(nextMessages)
+    saveStageMessages(nextMessages)
+    setShowResearchDrawer(false)
+  }
+
+  const insertResearchAssetIntoCurrentSection = (asset: ResearchAsset) => {
+    const sourceLabel = `研究资产：${asset.title}`
+    const insertText = [
+      '',
+      `【${sourceLabel}】`,
+      asset.plainText.trim(),
+    ].join('\n')
+    const now = Date.now()
+
+    if (sections.length === 0) {
+      const content = insertText.trim()
+      const section: DocSection = {
+        id: `research-section-${asset.id}-${now}`,
+        projectId: project.id,
+        title: asset.type === 'quant_analysis_result' ? '数据分析结果' : '研究材料',
+        content,
+        editorDoc: paperTextToEditorDoc(content),
+        status: 'done',
+        lastModified: now,
+        order: 0,
+      }
+      setSections(persistSections([section], `插入研究资产：${asset.title}`))
+      setActiveSectionId(section.id)
+    } else {
+      const targetId = activeSectionId ?? sections[0].id
+      setSections(prev => persistSections(prev.map(section => {
+        if (section.id !== targetId) return section
+        const content = `${section.content.trimEnd()}${insertText}`
+        return {
+          ...section,
+          content,
+          editorDoc: paperTextToEditorDoc(content),
+          status: 'done',
+          lastModified: now,
+        }
+      }), `插入研究资产：${asset.title}`))
+      setActiveSectionId(targetId)
+    }
+
+    markResearchAssetUsed(asset, activeSectionId ?? sections[0]?.id ?? `research-section-${asset.id}-${now}`)
+    setShowResearchDrawer(false)
+  }
+
+  const generateResearchAssetChapter = async (asset: ResearchAsset) => {
+    if (isGeneratingFull || isLoading) return
+    const now = Date.now()
+    const sectionTitle = researchAssetSectionTitle(asset)
+    const section: DocSection = {
+      id: `research-generated-${asset.id}-${now}`,
+      projectId: project.id,
+      title: sectionTitle,
+      content: '',
+      editorDoc: paperTextToEditorDoc(''),
+      status: 'generating',
+      lastModified: now,
+      order: researchAssetOrder(asset),
+    }
+    setShowResearchDrawer(false)
+    setIsGeneratingFull(true)
+    setGeneratingProgress({ current: 1, total: 1 })
+    setSections(prev => persistSections([...prev, section], `创建研究章节：${sectionTitle}`))
+    setActiveSectionId(section.id)
+
+    const abort = new AbortController()
+    abortRef.current = abort
+    let fullContent = ''
+    try {
+      fullContent = await streamGPTText(
+        promptGenerateResearchAssetSection(
+          asset,
+          projectTitle,
+          sectionsToPlainText(sections, projectTitle),
+          academicLevel,
+          activeStyleGuide
+        ),
+        abort.signal,
+        streamed => {
+          setSections(prev => prev.map(item =>
+            item.id === section.id ? { ...item, content: stripCitationMarkers(streamed) } : item
+          ))
+        }
+      )
+      const doneSection: DocSection = {
+        ...section,
+        content: stripCitationMarkers(fullContent),
+        editorDoc: paperTextToEditorDoc(stripCitationMarkers(fullContent)),
+        status: 'done',
+        lastModified: Date.now(),
+      }
+      setSections(prev => persistSections(prev.map(item => item.id === section.id ? doneSection : item), `生成研究章节：${sectionTitle}`))
+      markResearchAssetUsed(asset, section.id)
+      versionStore.snapshot(`生成研究章节：${sectionTitle}`, project.id)
+    } catch (error) {
+      setSections(prev => prev.map(item => item.id === section.id ? { ...item, status: 'pending' } : item))
+      alert(`生成研究章节失败：${error instanceof Error ? error.message : '请稍后重试'}`)
+    } finally {
+      setIsGeneratingFull(false)
+      setGeneratingProgress({ current: 0, total: 0 })
+    }
+  }
+
+  const insertResearchAssetAndPolish = async (asset: ResearchAsset) => {
+    if (isLoading || isGeneratingFull) return
+    const now = Date.now()
+    let targetSection = sections.find(section => section.id === activeSectionId) ?? sections[0]
+
+    if (!targetSection) {
+      targetSection = {
+        id: `research-polished-${asset.id}-${now}`,
+        projectId: project.id,
+        title: researchAssetSectionTitle(asset),
+        content: '',
+        editorDoc: paperTextToEditorDoc(''),
+        status: 'pending',
+        lastModified: now,
+        order: researchAssetOrder(asset),
+      }
+      setSections(persistSections([targetSection], `创建研究整合章节：${targetSection.title}`))
+      setActiveSectionId(targetSection.id)
+    }
+
+    setShowResearchDrawer(false)
+    setIsLoading(true)
+    setStreamingId(targetSection.id)
+    setSections(prev => prev.map(section =>
+      section.id === targetSection.id ? { ...section, status: 'generating' } : section
+    ))
+
+    const abort = new AbortController()
+    abortRef.current = abort
+    let fullContent = ''
+    try {
+      await new Promise<void>((resolve, reject) => {
+        callDoubao(
+          promptPolishResearchAssetIntoSection(
+            asset,
+            targetSection.title,
+            targetSection.content,
+            projectTitle,
+            academicLevel,
+            activeStyleGuide
+          ),
+          {
+            onChunk: (chunk) => {
+              fullContent += chunk
+              setSections(prev => prev.map(section =>
+                section.id === targetSection.id ? { ...section, content: stripCitationMarkers(fullContent) } : section
+              ))
+            },
+            onDone: () => resolve(),
+            onError: reject,
+          },
+          abort.signal
+        )
+      })
+
+      setSections(prev => persistSections(prev.map(section =>
+        section.id === targetSection.id
+          ? {
+              ...section,
+              content: stripCitationMarkers(fullContent),
+              editorDoc: paperTextToEditorDoc(stripCitationMarkers(fullContent)),
+              status: 'done',
+              lastModified: Date.now(),
+            }
+          : section
+      ), `整合研究资产：${asset.title}`))
+      markResearchAssetUsed(asset, targetSection.id)
+      versionStore.snapshot(`整合研究资产：${asset.title}`, project.id)
+    } catch (error) {
+      setSections(prev => prev.map(section =>
+        section.id === targetSection.id ? { ...section, status: 'done' } : section
+      ))
+      alert(`插入并润色失败：${error instanceof Error ? error.message : '请稍后重试'}`)
+    } finally {
+      setIsLoading(false)
+      setStreamingId(null)
+    }
+  }
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
@@ -1372,7 +1714,7 @@ export default function Stage3() {
       <Sidebar />
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
         <TopBar
-          currentStep={2}
+          currentStep={3}
           right={
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {styleProfiles.length > 0 && (
@@ -1394,6 +1736,16 @@ export default function Stage3() {
               >
                 <BookOpen size={13} />
                 引用
+              </button>
+              <button
+                onClick={() => {
+                  setShowResearchDrawer(value => !value)
+                  setShowReferences(false)
+                }}
+                style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: `1px solid ${showResearchDrawer ? 'var(--color-accent)' : 'var(--color-border)'}`, background: showResearchDrawer ? 'var(--color-accent-light)' : 'transparent', color: showResearchDrawer ? 'var(--color-accent)' : 'var(--color-ink-3)', fontSize: 12, cursor: 'pointer' }}
+              >
+                <FlaskConical size={13} />
+                研究
               </button>
               <button
                 onClick={() => setShowHistory(value => !value)}
@@ -1685,6 +2037,17 @@ export default function Stage3() {
         stage="stage3"
         open={showReferences}
         onClose={() => setShowReferences(false)}
+      />
+      <ResearchDrawer
+        projectId={project.id}
+        open={showResearchDrawer}
+        activeSectionTitle={sections.find(section => section.id === activeSectionId)?.title}
+        onClose={() => setShowResearchDrawer(false)}
+        onOpenDetails={() => navigate(`/projects/${project.id}/research`)}
+        onInsertAsset={insertResearchAssetIntoCurrentSection}
+        onUseAsReference={addResearchAssetAsReference}
+        onGenerateChapter={generateResearchAssetChapter}
+        onInsertAndPolish={insertResearchAssetAndPolish}
       />
     </div>
   )

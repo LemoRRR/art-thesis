@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowRight, AtSign, BookOpen, CheckCircle2, Pencil, Sparkles } from 'lucide-react'
+import { ArrowRight, AtSign, BookOpen, CheckCircle2, FlaskConical, Pencil, Sparkles } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import {
   libraryStore,
@@ -108,7 +108,7 @@ export default function ProjectHome() {
               )}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
               {STAGES.map(stage => (
                 <button
                   key={stage.id}
@@ -140,6 +140,36 @@ export default function ProjectHome() {
                   </span>
                 </button>
               ))}
+              <button
+                onClick={() => navigate(`/projects/${project.id}/research`)}
+                style={{
+                  border: '1.5px solid var(--color-border)',
+                  borderRadius: 'var(--radius-lg)',
+                  background: 'var(--color-surface)',
+                  padding: 16,
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  fontFamily: 'var(--font-sans)',
+                  minHeight: 140,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 14, fontWeight: 650, color: 'var(--color-ink)', marginBottom: 8 }}>
+                    <FlaskConical size={15} color="var(--color-accent)" />
+                    F4 研究计算
+                  </span>
+                  <span style={{ display: 'block', fontSize: 12, lineHeight: 1.65, color: 'var(--color-ink-3)' }}>
+                    管理研究路线、量表、问卷模板、数据分析和结果插入
+                  </span>
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--color-accent)' }}>
+                  进入模块
+                  <ArrowRight size={12} />
+                </span>
+              </button>
             </div>
 
             <div

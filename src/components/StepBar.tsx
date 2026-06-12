@@ -3,18 +3,20 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { chatStore, outlineStore, projectStore, sectionStore } from '../lib/storage'
 
 interface StepBarProps {
-  current: 0 | 1 | 2   // 0=阶段一, 1=阶段二, 2=阶段三
+  current: 0 | 1 | 2 | 3
 }
 
 const STEPS = [
   { label: '材料理解', route: 'stage1' },
   { label: '大纲撰写', route: 'stage2' },
+  { label: 'F4 研究计算', route: 'research' },
   { label: '文章生成', route: 'stage3' },
 ]
 
 const STEP_COLORS = [
   { active: '#2D5A3D', light: '#EBF2ED', text: '#2D5A3D' },   // 绿
   { active: '#1A6B5A', light: '#E8F4F1', text: '#1A6B5A' },   // 青绿
+  { active: '#5A4D1A', light: '#F6F0D8', text: '#5A4D1A' },   // 金
   { active: '#2D5A3D', light: '#EBF2ED', text: '#2D5A3D' },   // 绿
 ]
 
@@ -30,7 +32,8 @@ export default function StepBar({ current }: StepBarProps) {
   const canAccess = [
     true,
     Boolean(current >= 1 || project.context.rawSummary || outline?.sections?.length || stage1Messages.length > 1),
-    Boolean(current >= 2 || sections.length > 0 || outline?.confirmedAt || outline?.sections?.length),
+    Boolean(current >= 2 || project.context.rawSummary || outline?.sections?.length || outline?.confirmedAt),
+    Boolean(current >= 3 || sections.length > 0 || outline?.confirmedAt || outline?.sections?.length),
   ]
 
   return (

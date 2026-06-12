@@ -988,8 +988,7 @@ export default function Stage2() {
   const confirmOutline = () => {
     if (!hasOutlineContent(outline)) return
     outlineStore.confirm(project.id)
-    sessionStorage.setItem(`outline_to_draft_transition_${project.id}`, String(Date.now()))
-    navigate(`/projects/${project.id}/stage3?transition=outline`, { state: { fromOutline: true } })
+    navigate(`/projects/${project.id}/research`)
   }
 
   const handleRegenerate = () => {
@@ -1152,14 +1151,14 @@ export default function Stage2() {
 
             <div style={{ padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <span style={{ fontSize: 12, color: 'var(--color-ink-3)', whiteSpace: 'pre-wrap' }}>
-                {hasOutlineContent(outline) ? `确认大纲后，AI 将按大纲逐章生成正文。\n${outlinePreview}` : '等待大纲生成'}
+                {hasOutlineContent(outline) ? `确认大纲后，先进入研究计算中心；如不需要量表或数据分析，可直接继续到文章生成。\n${outlinePreview}` : '等待大纲生成'}
               </span>
               <button
                 onClick={confirmOutline}
                 disabled={!hasOutlineContent(outline) || isGenerating}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', border: 'none', borderRadius: 'var(--radius-md)', background: !hasOutlineContent(outline) || isGenerating ? 'var(--color-border)' : 'var(--color-accent)', color: '#fff', fontSize: 13, fontWeight: 500, cursor: !hasOutlineContent(outline) || isGenerating ? 'not-allowed' : 'pointer', fontFamily: 'var(--font-sans)' }}
               >
-                进入全文生成
+                进入研究计算
                 <ArrowRight size={14} />
               </button>
             </div>

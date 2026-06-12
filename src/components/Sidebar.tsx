@@ -4,6 +4,7 @@ import {
   BookOpen,
   ChevronDown,
   Feather,
+  FlaskConical,
   Folder,
   LogIn,
   LogOut,
@@ -20,6 +21,7 @@ import { auth } from '../lib/auth'
 const NAV_ITEMS = [
   { label: '资料库', icon: BookOpen, path: '/library' },
   { label: '风格档案', icon: Type, path: '/style-profiles' },
+  { label: '研究计算', icon: FlaskConical, path: 'active-project-research' },
   { label: '项目', icon: Folder, path: '/projects' },
   { label: '应用', icon: Shapes, path: '/projects' },
   { label: '更多', icon: MoreHorizontal, path: '/projects' },
@@ -233,15 +235,19 @@ function Sidebar() {
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         {NAV_ITEMS.map(item => {
           const Icon = item.icon
+          const itemPath = item.path === 'active-project-research'
+            ? `/projects/${activeProjectId}/research`
+            : item.path
           const active =
             (item.label === '资料库' && location.pathname.startsWith('/library')) ||
             (item.label === '风格档案' && location.pathname.startsWith('/style-profiles')) ||
+            (item.label === '研究计算' && location.pathname.includes('/research')) ||
             (item.label === '项目' && location.pathname.startsWith('/projects'))
 
           return (
             <button
               key={item.label}
-              onClick={() => navigate(item.path)}
+              onClick={() => navigate(itemPath)}
               style={{
                 height: 30,
                 border: 'none',
