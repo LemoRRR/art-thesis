@@ -161,6 +161,14 @@ function researchAssetOrder(asset: ResearchAsset) {
   return 3
 }
 
+function isResearchAssetSection(section: DocSection) {
+  return section.id.startsWith('research-') ||
+    section.id.startsWith('research-section-') ||
+    section.id.startsWith('research-generated-') ||
+    section.id.startsWith('research-polished-') ||
+    Boolean(section.sourceRefs?.some(id => researchAssetStore.get(id)))
+}
+
 function buildResearchReferenceContext(assetIds: string[]) {
   const assets = assetIds
     .map(id => researchAssetStore.get(id))
@@ -689,7 +697,15 @@ export default function Stage3() {
     })
 
     sourceSections.forEach(section => {
-      if (!usedSectionIds.has(section.id)) removedSections.push(section)
+      if (usedSectionIds.has(section.id)) return
+      if (isResearchAssetSection(section)) {
+        nextSections.push({
+          ...section,
+          order: nextSections.length,
+        })
+        return
+      }
+      removedSections.push(section)
     })
 
     return { nextSections, addedOutlineSections, removedSections, notices }
@@ -1005,6 +1021,8 @@ export default function Stage3() {
     const savedMessages = chatStore.getByProject(project.id, 'stage3')
     const savedSections = sectionStore.getByProject(project.id)
     const outline = outlineStore.get(project.id)
+    const routeState = location.state as { insertedSectionId?: string } | null
+    const preferredActiveSectionId = routeState?.insertedSectionId
 
     if (savedMessages.length > 0) queueMicrotask(() => setMessages(savedMessages))
 
@@ -1060,7 +1078,11 @@ export default function Stage3() {
         queueMicrotask(() => {
           setIsPreparingDraft(false)
           setSections(formattedSections)
-          setActiveSectionId(formattedSections[0]?.id ?? null)
+          setActiveSectionId(
+            preferredActiveSectionId && formattedSections.some(section => section.id === preferredActiveSectionId)
+              ? preferredActiveSectionId
+              : formattedSections[0]?.id ?? null
+          )
           setAllGenerated(formattedSections.every(section => section.status === 'done'))
         })
         sectionStore.saveForProject(project.id, formattedSections)
@@ -1083,7 +1105,11 @@ export default function Stage3() {
         queueMicrotask(() => {
           setIsPreparingDraft(false)
           setSections(formattedSections)
-          setActiveSectionId(formattedSections[0]?.id ?? null)
+          setActiveSectionId(
+            preferredActiveSectionId && formattedSections.some(section => section.id === preferredActiveSectionId)
+              ? preferredActiveSectionId
+              : formattedSections[0]?.id ?? null
+          )
           setAllGenerated(formattedSections.every(section => section.status === 'done'))
         })
       }
@@ -1107,7 +1133,7 @@ export default function Stage3() {
     }
 
     projectStore.update(project.id, { currentStage: 'stage3' })
-  }, [generateAdditionalSections, project.id, reconcileSectionsWithOutline, saveStageMessages, startFullGeneration])
+  }, [generateAdditionalSections, location.state, project.id, reconcileSectionsWithOutline, saveStageMessages, startFullGeneration])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })

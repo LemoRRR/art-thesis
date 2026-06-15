@@ -1292,6 +1292,24 @@ function assetTypeLabel(type: ResearchAssetType): string {
   return labels[type]
 }
 
+function researchAssetSectionTitle(asset: ResearchAsset) {
+  if (asset.type === 'quant_analysis_result') return '第四章 数据分析结果'
+  if (asset.type === 'survey_questionnaire' || asset.type === 'scale_schema') return '问卷设计与变量测量'
+  if (asset.type === 'kano_result') return 'KANO需求分析'
+  if (asset.type === 'ahp_result') return 'AHP评价指标体系'
+  if (asset.type === 'qualitative_coding') return '质性编码分析'
+  if (asset.type === 'questionnaire_review') return '问卷优化说明'
+  return '研究工具设计'
+}
+
+function researchAssetOrder(asset: ResearchAsset) {
+  if (asset.type === 'quant_analysis_result') return 4
+  if (asset.type === 'survey_questionnaire' || asset.type === 'scale_schema') return 3
+  if (asset.type === 'kano_result' || asset.type === 'ahp_result') return 4
+  if (asset.type === 'qualitative_coding') return 4
+  return 3
+}
+
 export default function ResearchCenter() {
   const params = useParams()
   const navigate = useNavigate()
@@ -1533,11 +1551,7 @@ export default function ResearchCenter() {
   const insertIntoPaper = () => {
     if (!activeAsset || !activeText.trim()) return
     const isAnalysis = activeAsset.type === 'quant_analysis_result'
-    const title = isAnalysis
-      ? '第四章 数据分析结果'
-      : activeAsset.type === 'survey_questionnaire'
-        ? '问卷设计与变量测量'
-        : '研究工具设计'
+    const title = researchAssetSectionTitle(activeAsset)
     const content = [
       isAnalysis
         ? '本节由研究计算中心根据回收数据生成，后续可在 Stage3 中结合全文语境继续润色。'
@@ -1553,7 +1567,9 @@ export default function ResearchCenter() {
       content,
       editorDoc: paperTextToEditorDoc(content),
       status: 'done',
-      order: isAnalysis ? 4 : 2.5,
+      order: researchAssetOrder(activeAsset),
+      sourceRefs: [activeAsset.id],
+      generationPlan: `由研究计算资产「${activeAsset.title}」插入`,
     })
     researchAssetStore.update(activeAsset.id, {
       status: 'used_in_paper',
@@ -1567,6 +1583,7 @@ export default function ResearchCenter() {
     }
     refresh(activeAsset.id)
     setNotice('已插入 Stage3。文章生成时可以继续围绕这份量表/结果写作和润色。')
+    navigate(`/projects/${project.id}/stage3`, { state: { insertedSectionId: sectionId } })
   }
 
   if (isAssetPage) {
