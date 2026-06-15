@@ -174,6 +174,27 @@ export const referencesAPI = {
     }),
 }
 
+export interface ScholarPaper {
+  id: string
+  title: string
+  authors: string[]
+  year?: number
+  source?: string
+  doi?: string
+  url?: string
+  citedByCount?: number
+  abstract?: string
+}
+
+export const scholarAPI = {
+  search: (query: string, limit = 12) =>
+    request<{ provider: string; query: string; results: ScholarPaper[] }>(
+      `/api/scholar/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+      {},
+      30_000
+    ),
+}
+
 type SignedUploadResponse = {
   path: string
   token: string

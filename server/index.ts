@@ -9,6 +9,7 @@ import libraryRouter from './routes/library.js'
 import outlinesRouter from './routes/outlines.js'
 import projectsRouter from './routes/projects.js'
 import referencesRouter from './routes/references.js'
+import scholarRouter from './routes/scholar.js'
 import sectionsRouter from './routes/sections.js'
 import styleProfilesRouter from './routes/styleProfiles.js'
 import versionsRouter from './routes/versions.js'
@@ -37,6 +38,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'paper-ai-tool-api' })
 })
 
+app.use('/api/scholar', scholarRouter)
 app.use('/api/auth', authRouter)
 app.use('/api/projects', projectsRouter)
 app.use('/api/outlines', outlinesRouter)

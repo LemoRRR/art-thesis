@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { ChangeEvent, KeyboardEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { BookOpen, Paperclip, Send, ArrowRight, RefreshCw } from 'lucide-react'
+import { BookOpen, Paperclip, Send, ArrowRight, RefreshCw, Search } from 'lucide-react'
 import ReferencePanel from '../components/ReferencePanel'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import ChatBubble from '../components/ChatBubble'
 import MentionInput, { type MentionRef } from '../components/MentionInput'
 import { callGPT } from '../lib/ai'
-import { filesAPI, libraryAPI } from '../lib/api'
+import { filesAPI, libraryAPI, scholarAPI, type ScholarPaper } from '../lib/api'
 import { buildAIContext, buildMentionContext } from '../lib/context'
 import { promptChatFollowup, type AcademicLevel } from '../lib/prompts'
 import {
@@ -70,6 +70,10 @@ interface Stage1UploadedFile {
   error?: string
 }
 
+interface ScholarCandidate extends ScholarPaper {
+  savedItemId?: string
+}
+
 // AI 第一句话
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -93,6 +97,36 @@ function parseComprehensionReply(content: string): ParsedComprehension | null {
 
 function formatList(items?: string[]): string {
   return items?.map(item => item.trim()).filter(Boolean).join('；') ?? ''
+}
+
+function buildScholarQuery(projectTitle: string, model: ComprehensionModel | null): string {
+  const parts = [
+    projectTitle,
+    model?.researchObject,
+    model?.coreArguments?.slice(0, 3).join(' '),
+  ].filter(Boolean).join(' ')
+
+  return parts
+    .replace(/[《》“”"'【】]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180)
+}
+
+function scholarPaperToLibraryText(paper: ScholarPaper): string {
+  return [
+    `标题：${paper.title}`,
+    paper.authors.length ? `作者：${paper.authors.join('；')}` : '',
+    paper.year ? `年份：${paper.year}` : '',
+    paper.source ? `来源：${paper.source}` : '',
+    paper.doi ? `DOI：${paper.doi}` : '',
+    paper.url ? `链接：${paper.url}` : '',
+    paper.citedByCount !== undefined ? `OpenAlex引用次数：${paper.citedByCount}` : '',
+    '',
+    paper.abstract ? `摘要：\n${paper.abstract}` : '摘要：暂无公开摘要。',
+    '',
+    '使用提醒：该条目来自论文搜索结果，写作前建议用户核对原文、页码与最终参考文献格式。',
+  ].filter(Boolean).join('\n')
 }
 
 const PATH_LABELS: Record<string, string> = {
@@ -371,6 +405,10 @@ export default function Stage1() {
   const [showReferences, setShowReferences] = useState(false)
   const [comprehension, setComprehension] = useState<ComprehensionModel | null>(null)
   const [mentions, setMentions] = useState<MentionRef[]>([])
+  const [scholarQuery, setScholarQuery] = useState(() => buildScholarQuery(project.title, null))
+  const [scholarResults, setScholarResults] = useState<ScholarCandidate[]>([])
+  const [isSearchingScholar, setIsSearchingScholar] = useState(false)
+  const [scholarNotice, setScholarNotice] = useState('')
   const [selectedLevel, setSelectedLevel] = useState<AcademicLevel | ''>(() =>
     getSelectedAcademicLevel(project.context.writingRequirements)
   )
@@ -455,6 +493,12 @@ export default function Stage1() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    if (!scholarQuery.trim() || scholarQuery === project.title) {
+      setScholarQuery(buildScholarQuery(projectStore.ensure(project.id).title, comprehension))
+    }
+  }, [comprehension, project.id, project.title, scholarQuery])
 
   // 发送消息
   const sendMessage = useCallback(async () => {
@@ -659,6 +703,57 @@ export default function Stage1() {
     })
   }
 
+  const handleScholarSearch = async () => {
+    const query = scholarQuery.trim() || buildScholarQuery(projectStore.ensure(project.id).title, comprehension)
+    if (!query || isSearchingScholar) return
+    setScholarQuery(query)
+    setIsSearchingScholar(true)
+    setScholarNotice('')
+    try {
+      const response = await scholarAPI.search(query, 12)
+      setScholarResults(response.results)
+      setScholarNotice(response.results.length
+        ? `已从 ${response.provider} 搜到 ${response.results.length} 条候选文献。请勾选真正要用于论文的文献。`
+        : '暂未搜到合适文献，可以换成英文关键词或更具体的研究对象。'
+      )
+    } catch (error) {
+      setScholarNotice(`论文搜索失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setIsSearchingScholar(false)
+    }
+  }
+
+  const saveScholarPaper = (paper: ScholarCandidate) => {
+    if (paper.savedItemId) return
+    const existing = libraryStore.getAll().find(item =>
+      item.fileUrl === paper.url ||
+      (paper.doi && item.summary.includes(paper.doi)) ||
+      item.title.trim() === paper.title.trim()
+    )
+    const item = existing ?? libraryStore.add({
+      title: paper.title,
+      type: 'other',
+      fileName: paper.doi || paper.id,
+      fileUrl: paper.url,
+      text: scholarPaperToLibraryText(paper),
+      summary: [
+        paper.authors.length ? paper.authors.join('、') : '作者未知',
+        paper.year ? `${paper.year}` : '',
+        paper.source || '',
+        paper.doi ? `DOI：${paper.doi}` : '',
+      ].filter(Boolean).join('；'),
+      tags: ['论文搜索', 'OpenAlex', ...(paper.year ? [String(paper.year)] : [])],
+      extractStatus: 'done',
+      structureExtract: '外部论文检索结果：用于建立论文搜索候选文献池。',
+      viewpointsExtract: paper.abstract ? `摘要要点：${paper.abstract.slice(0, 800)}` : '',
+    })
+    projectStore.bindLibraryItem(project.id, item.id)
+    setScholarResults(results => results.map(result =>
+      result.id === paper.id ? { ...result, savedItemId: item.id } : result
+    ))
+    setScholarNotice(`已加入资料库并绑定当前论文：${paper.title}`)
+  }
+
   // 重新开始
   const handleReset = () => {
     if (!confirm('确认重新开始？当前所有记录将清空。')) return
@@ -846,6 +941,129 @@ export default function Stage1() {
                     )
                   })}
                 </div>
+              </div>
+            )}
+
+            {isCompleted && (
+              <div
+                style={{
+                  background: 'var(--color-surface)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '14px 16px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                  boxShadow: 'var(--shadow-sm)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--color-ink-3)', fontWeight: 500, letterSpacing: '0.05em' }}>
+                      论文搜索
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 13, lineHeight: 1.6, color: 'var(--color-ink-2)' }}>
+                      根据当前题目和材料理解检索外部论文。搜索结果需要人工确认后才会进入资料库，后续正文生成才可以引用。
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 11, color: 'var(--color-ink-3)', whiteSpace: 'nowrap' }}>OpenAlex</span>
+                </div>
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    value={scholarQuery}
+                    onChange={event => setScholarQuery(event.target.value)}
+                    placeholder="输入论文关键词，例如：非遗 短视频 传播意愿 青年用户"
+                    style={{
+                      flex: 1,
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'var(--color-bg)',
+                      color: 'var(--color-ink)',
+                      padding: '8px 10px',
+                      fontSize: 13,
+                      fontFamily: 'var(--font-sans)',
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    onClick={handleScholarSearch}
+                    disabled={isSearchingScholar}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid var(--color-accent)',
+                      background: 'var(--color-accent)',
+                      color: '#fff',
+                      fontSize: 12,
+                      cursor: isSearchingScholar ? 'wait' : 'pointer',
+                      opacity: isSearchingScholar ? 0.7 : 1,
+                      fontFamily: 'var(--font-sans)',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    <Search size={13} />
+                    {isSearchingScholar ? '搜索中' : '搜索论文'}
+                  </button>
+                </div>
+
+                {scholarNotice && (
+                  <div style={{ fontSize: 12, color: scholarNotice.includes('失败') ? '#b42318' : 'var(--color-accent)', lineHeight: 1.6 }}>
+                    {scholarNotice}
+                  </div>
+                )}
+
+                {scholarResults.length > 0 && (
+                  <div style={{ display: 'grid', gap: 8, maxHeight: 360, overflowY: 'auto', paddingRight: 2 }}>
+                    {scholarResults.map(paper => (
+                      <div
+                        key={paper.id}
+                        style={{
+                          border: '1px solid var(--color-border)',
+                          borderRadius: 8,
+                          padding: 10,
+                          background: 'var(--color-bg)',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 750, color: 'var(--color-ink)', lineHeight: 1.45 }}>
+                              {paper.title}
+                            </div>
+                            <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-ink-3)', lineHeight: 1.5 }}>
+                              {[paper.authors.slice(0, 3).join('、'), paper.year, paper.source, paper.citedByCount ? `引用 ${paper.citedByCount}` : ''].filter(Boolean).join(' · ')}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => saveScholarPaper(paper)}
+                            disabled={Boolean(paper.savedItemId)}
+                            style={{
+                              flexShrink: 0,
+                              padding: '5px 10px',
+                              borderRadius: 'var(--radius-sm)',
+                              border: `1px solid ${paper.savedItemId ? 'var(--color-border)' : 'var(--color-accent)'}`,
+                              background: paper.savedItemId ? 'transparent' : 'var(--color-accent-light)',
+                              color: paper.savedItemId ? 'var(--color-ink-3)' : 'var(--color-accent)',
+                              fontSize: 12,
+                              cursor: paper.savedItemId ? 'default' : 'pointer',
+                              fontFamily: 'var(--font-sans)',
+                            }}
+                          >
+                            {paper.savedItemId ? '已加入' : '加入资料库'}
+                          </button>
+                        </div>
+                        {paper.abstract && (
+                          <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.6, color: 'var(--color-ink-2)' }}>
+                            {paper.abstract.slice(0, 260)}{paper.abstract.length > 260 ? '…' : ''}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
