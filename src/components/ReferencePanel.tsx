@@ -9,6 +9,7 @@ import {
   type ReferenceSelection,
   type WorkflowStage,
 } from '../lib/storage'
+import { scholarAPI, type ScholarPaper } from '../lib/api'
 
 interface ReferencePanelProps {
   projectId: string
@@ -18,10 +19,53 @@ interface ReferencePanelProps {
   onChange?: (selection: ReferenceSelection) => void
 }
 
+interface ScholarCandidate extends ScholarPaper {
+  provider?: string
+  savedItemId?: string
+}
+
+function buildScholarQuery(
+  projectTitle: string,
+  context: { researchObject?: string; coreArguments?: string[] } | null
+): string {
+  return [
+    projectTitle,
+    context?.researchObject,
+    context?.coreArguments?.slice(0, 3).join(' '),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/[《》“”"'【】]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180)
+}
+
+function scholarPaperToLibraryText(paper: ScholarPaper): string {
+  return [
+    `标题：${paper.title}`,
+    paper.authors.length ? `作者：${paper.authors.join('；')}` : '',
+    paper.year ? `年份：${paper.year}` : '',
+    paper.source ? `来源：${paper.source}` : '',
+    paper.doi ? `DOI：${paper.doi}` : '',
+    paper.url ? `链接：${paper.url}` : '',
+    paper.citedByCount !== undefined ? `OpenAlex引用次数：${paper.citedByCount}` : '',
+    '',
+    paper.abstract ? `摘要：\n${paper.abstract}` : '摘要：暂无公开摘要。',
+    '',
+    '使用提醒：该条目来自论文搜索结果，写作前建议用户核对原文、页码与最终参考文献格式。',
+  ].filter(Boolean).join('\n')
+}
+
 export default function ReferencePanel({ projectId, stage, open, onClose, onChange }: ReferencePanelProps) {
+  const project = projectStore.ensure(projectId)
   const [selection, setSelection] = useState<ReferenceSelection>(() => referenceStore.get(projectId, stage))
   const [query, setQuery] = useState('')
-  const project = projectStore.ensure(projectId)
+  const [scholarQuery, setScholarQuery] = useState(() => buildScholarQuery(project.title, project.context))
+  const [scholarResults, setScholarResults] = useState<ScholarCandidate[]>([])
+  const [isSearchingScholar, setIsSearchingScholar] = useState(false)
+  const [scholarNotice, setScholarNotice] = useState('')
+  const showScholarSearch = stage === 'stage3'
   const libraryItems = libraryStore.getAll()
   const sections = sectionStore.getByProject(projectId)
   const filteredLibrary = useMemo(() => {
@@ -77,6 +121,63 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
 
   const toggleFlag = (key: 'includeProjectContext' | 'includeConversationSummary') => {
     saveSelection({ ...selection, [key]: !selection[key] })
+  }
+
+  const handleScholarSearch = async () => {
+    const searchText = scholarQuery.trim() || buildScholarQuery(project.title, project.context)
+    if (!searchText || isSearchingScholar) return
+
+    setScholarQuery(searchText)
+    setIsSearchingScholar(true)
+    setScholarNotice('')
+
+    try {
+      const response = await scholarAPI.search(searchText, 8)
+      setScholarResults(response.results.map(paper => ({ ...paper, provider: response.provider })))
+      setScholarNotice(response.results.length
+        ? `已从 ${response.provider} 搜到 ${response.results.length} 条候选文献。加入后会自动进入本章引用池。`
+        : '暂未搜到合适文献，可以换成英文关键词或更具体的研究对象。'
+      )
+    } catch (error) {
+      setScholarNotice(`论文搜索失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setIsSearchingScholar(false)
+    }
+  }
+
+  const saveScholarPaper = (paper: ScholarCandidate) => {
+    if (paper.savedItemId) return
+    const existing = libraryStore.getAll().find(item =>
+      item.fileUrl === paper.url ||
+      (paper.doi && item.summary.includes(paper.doi)) ||
+      item.title.trim() === paper.title.trim()
+    )
+    const item = existing ?? libraryStore.add({
+      title: paper.title,
+      type: 'other',
+      fileName: paper.doi || paper.id,
+      fileUrl: paper.url,
+      text: scholarPaperToLibraryText(paper),
+      summary: [
+        paper.authors.length ? paper.authors.join('、') : '作者未知',
+        paper.year ? `${paper.year}` : '',
+        paper.source || '',
+        paper.doi ? `DOI：${paper.doi}` : '',
+      ].filter(Boolean).join('；'),
+      tags: ['论文搜索', paper.provider || '外部检索', ...(paper.year ? [String(paper.year)] : [])],
+      extractStatus: 'done',
+      structureExtract: '外部论文检索结果：用于建立论文搜索候选文献池。',
+      viewpointsExtract: paper.abstract ? `摘要要点：${paper.abstract.slice(0, 800)}` : '',
+    })
+
+    projectStore.bindLibraryItem(projectId, item.id)
+    if (!selection.libraryItemIds.includes(item.id)) {
+      saveSelection({ ...selection, libraryItemIds: [item.id, ...selection.libraryItemIds] })
+    }
+    setScholarResults(results => results.map(result =>
+      result.id === paper.id ? { ...result, savedItemId: item.id } : result
+    ))
+    setScholarNotice(`已加入资料库，并绑定为当前正文可引用文献：${paper.title}`)
   }
 
   if (!open) return null
@@ -143,6 +244,114 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
             }}
           />
         </div>
+        {showScholarSearch && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: 10,
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--color-bg)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--color-ink)' }}>论文搜索</div>
+              <span style={{ fontSize: 10, color: 'var(--color-ink-3)' }}>外部检索</span>
+            </div>
+            <div style={{ marginTop: 7, display: 'flex', gap: 6 }}>
+              <input
+                value={scholarQuery}
+                onChange={event => setScholarQuery(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    handleScholarSearch()
+                  }
+                }}
+                placeholder="输入关键词或题目"
+                style={{
+                  minWidth: 0,
+                  flex: 1,
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--color-surface)',
+                  padding: '6px 8px',
+                  fontSize: 12,
+                  outline: 'none',
+                  fontFamily: 'var(--font-sans)',
+                }}
+              />
+              <button
+                onClick={handleScholarSearch}
+                disabled={isSearchingScholar}
+                style={{
+                  border: '1px solid var(--color-accent)',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--color-accent)',
+                  color: '#fff',
+                  padding: '0 9px',
+                  fontSize: 12,
+                  cursor: isSearchingScholar ? 'wait' : 'pointer',
+                  opacity: isSearchingScholar ? 0.7 : 1,
+                  fontFamily: 'var(--font-sans)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {isSearchingScholar ? '搜索中' : '搜索'}
+              </button>
+            </div>
+            {scholarNotice && (
+              <div style={{ marginTop: 7, fontSize: 11, lineHeight: 1.5, color: scholarNotice.includes('失败') ? '#b42318' : 'var(--color-accent)' }}>
+                {scholarNotice}
+              </div>
+            )}
+            {scholarResults.length > 0 && (
+              <div style={{ marginTop: 8, display: 'grid', gap: 7, maxHeight: 260, overflowY: 'auto' }}>
+                {scholarResults.map(paper => (
+                  <div
+                    key={paper.id}
+                    style={{
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'var(--color-surface)',
+                      padding: 8,
+                    }}
+                  >
+                    <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--color-ink)', lineHeight: 1.45 }}>
+                      {paper.title}
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 10, color: 'var(--color-ink-3)', lineHeight: 1.45 }}>
+                      {[paper.authors.slice(0, 2).join('、'), paper.year, paper.source].filter(Boolean).join(' · ')}
+                    </div>
+                    {paper.abstract && (
+                      <div style={{ marginTop: 5, fontSize: 11, color: 'var(--color-ink-2)', lineHeight: 1.5, maxHeight: 50, overflow: 'hidden' }}>
+                        {paper.abstract}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => saveScholarPaper(paper)}
+                      disabled={Boolean(paper.savedItemId)}
+                      style={{
+                        width: '100%',
+                        marginTop: 7,
+                        border: `1px solid ${paper.savedItemId ? 'var(--color-border)' : 'var(--color-accent)'}`,
+                        borderRadius: 'var(--radius-sm)',
+                        background: paper.savedItemId ? 'transparent' : 'var(--color-accent-light)',
+                        color: paper.savedItemId ? 'var(--color-ink-3)' : 'var(--color-accent)',
+                        padding: '5px 8px',
+                        fontSize: 12,
+                        cursor: paper.savedItemId ? 'default' : 'pointer',
+                        fontFamily: 'var(--font-sans)',
+                      }}
+                    >
+                      {paper.savedItemId ? '已加入本阶段引用' : '加入资料库并引用'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
