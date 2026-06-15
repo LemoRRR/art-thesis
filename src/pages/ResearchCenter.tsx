@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowRight,
   BarChart3,
@@ -85,6 +85,15 @@ interface KanoFeature {
 }
 
 type ResultView = 'questionnaire' | 'analysis' | 'full'
+
+interface MethodDraft {
+  mode: ToolMode
+  label: string
+  reason: string
+  dataNeeds: string
+  outlineRequirements: string
+  pendingTasks: string
+}
 
 const purposeOptions: Array<{
   value: WorkspacePurpose
@@ -339,6 +348,30 @@ function routeFromResearchPlan(plan: ResearchPlan | undefined, fallback: Inferre
     reason: plan.methodReason || fallback.reason,
     preferredMode,
     variables: variablesFromPlan(plan, fallback.variables),
+  }
+}
+
+function splitDraftList(value: string): string[] {
+  return value.split(/[；;、,\n]/).map(item => item.trim()).filter(Boolean)
+}
+
+function toolKeysForMode(mode: ToolMode): ResearchPlan['suggestedTools'] {
+  if (mode === 'survey') return ['scale_generation', 'hypothesis_model', 'survey_analysis']
+  if (mode === 'interview') return ['theme_extraction']
+  if (mode === 'kano') return ['kano']
+  if (mode === 'ahp') return ['ahp']
+  return ['grounded_coding', 'theme_extraction']
+}
+
+function createMethodDraft(route: InferredRoute, plan: ResearchPlan | undefined): MethodDraft {
+  const mode = plan ? preferredModeFromPlan(plan, route.preferredMode) : route.preferredMode
+  return {
+    mode,
+    label: plan?.methodLabel || route.label,
+    reason: plan?.methodReason || route.reason,
+    dataNeeds: plan?.dataNeeds.join('；') || '根据所选工具生成问卷、访谈或编码材料',
+    outlineRequirements: plan?.outlineRequirements.join('；') || '研究方法；数据分析；结果讨论',
+    pendingTasks: plan?.pendingResearchTasks.join('；') || '生成研究工具；等待用户收集数据；上传数据并分析',
   }
 }
 
@@ -1008,10 +1041,12 @@ function assetTypeLabel(type: ResearchAssetType): string {
 export default function ResearchCenter() {
   const params = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const project = projectStore.ensure(params.projectId)
+  const isAssetPage = location.pathname.endsWith('/assets')
   const sourceOptions = useMemo(() => getSourceOptions(project.id), [project.id])
   const defaultSourceKind = sourceOptions.find(option => option.available)?.kind ?? 'stage1'
-  const stage1ResearchPlan = project.context.researchPlan
+  const [stage1ResearchPlan, setStage1ResearchPlan] = useState<ResearchPlan | undefined>(project.context.researchPlan)
   const [sourceKind, setSourceKind] = useState<SourceKind>(defaultSourceKind)
   const source = sourceOptions.find(option => option.kind === sourceKind && option.available)
     ?? sourceOptions.find(option => option.available)
@@ -1022,6 +1057,8 @@ export default function ResearchCenter() {
   }, [project.title, source.text, stage1ResearchPlan])
   const [purpose, setPurpose] = useState<WorkspacePurpose>('generate')
   const [mode, setMode] = useState<ToolMode>(route.preferredMode)
+  const [isEditingMethod, setIsEditingMethod] = useState(false)
+  const [methodDraft, setMethodDraft] = useState<MethodDraft>(() => createMethodDraft(route, stage1ResearchPlan))
   const [tasks, setTasks] = useState<ResearchTask[]>(() => researchTaskStore.getByProject(project.id))
   const [assets, setAssets] = useState<ResearchAsset[]>(() => researchAssetStore.getByProject(project.id))
   const [activeAssetId, setActiveAssetId] = useState(() => assets[0]?.id ?? '')
@@ -1033,6 +1070,12 @@ export default function ResearchCenter() {
   useEffect(() => {
     setMode(route.preferredMode)
   }, [route.preferredMode])
+
+  useEffect(() => {
+    if (!isEditingMethod) {
+      setMethodDraft(createMethodDraft(route, stage1ResearchPlan))
+    }
+  }, [isEditingMethod, route, stage1ResearchPlan])
 
   const activeAsset = assets.find(asset => asset.id === activeAssetId) ?? assets[0] ?? null
   const activeText = draftText || activeAsset?.plainText || ''
@@ -1052,6 +1095,30 @@ export default function ResearchCenter() {
     setAssets(nextAssets)
     if (assetId) setActiveAssetId(assetId)
     else if (!activeAssetId && nextAssets[0]) setActiveAssetId(nextAssets[0].id)
+  }
+
+  const saveMethodDraft = () => {
+    const selectedTool = toolOptions.find(option => option.value === methodDraft.mode) ?? toolOptions[0]
+    const nextPlan: ResearchPlan = {
+      methodType: selectedTool.methodType,
+      methodLabel: methodDraft.label.trim() || selectedTool.label,
+      methodReason: methodDraft.reason.trim() || '由用户在研究计算页确认的研究方法路线。',
+      suggestedTools: toolKeysForMode(methodDraft.mode),
+      variables: route.variables,
+      dataNeeds: splitDraftList(methodDraft.dataNeeds),
+      outlineRequirements: splitDraftList(methodDraft.outlineRequirements),
+      pendingResearchTasks: splitDraftList(methodDraft.pendingTasks),
+    }
+    projectStore.update(project.id, {
+      context: {
+        ...project.context,
+        researchPlan: nextPlan,
+      },
+    })
+    setStage1ResearchPlan(nextPlan)
+    setMode(methodDraft.mode)
+    setIsEditingMethod(false)
+    setNotice('研究方法已更新，后续研究任务会按新的方法路线生成。')
   }
 
   const generateTool = () => {
@@ -1226,6 +1293,116 @@ export default function ResearchCenter() {
     setNotice('已插入 Stage3。文章生成时可以继续围绕这份量表/结果写作和润色。')
   }
 
+  if (isAssetPage) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', background: 'var(--color-bg)', overflow: 'hidden' }}>
+        <Sidebar />
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <TopBar
+            currentStep={2}
+            right={
+              <button onClick={() => navigate(`/projects/${project.id}/research`)} style={secondaryButtonStyle}>
+                返回研究流程
+                <ArrowRight size={13} />
+              </button>
+            }
+          />
+          <main style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
+            <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <section style={panelStyle}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--color-ink-3)', fontWeight: 800, letterSpacing: '0.05em' }}>研究资产库</div>
+                    <h1 style={{ margin: '6px 0 6px', fontSize: 20, color: 'var(--color-ink)' }}>{project.title}</h1>
+                    <div style={{ fontSize: 12, color: 'var(--color-ink-3)' }}>
+                      这里集中保存问卷、量表、上传数据、统计结果和可写入正文的研究文本。
+                    </div>
+                  </div>
+                  <span style={badgeStyle}>共 {assets.length} 个资产</span>
+                </div>
+              </section>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '360px minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>
+                <section style={panelStyle}>
+                  <div style={titleStyle}>全部资产</div>
+                  {assets.length === 0 ? (
+                    <div style={emptyStyle}>暂无资产。回到研究流程生成问卷、上传数据或生成分析后，会自动进入这里。</div>
+                  ) : (
+                    <div style={{ ...assetListStyle, maxHeight: 'calc(100vh - 260px)', overflowY: 'auto' }}>
+                      {assets.map(asset => (
+                        <button
+                          key={asset.id}
+                          onClick={() => {
+                            setActiveAssetId(asset.id)
+                            setDraftText('')
+                          }}
+                          style={{
+                            width: '100%',
+                            border: `1px solid ${asset.id === activeAsset?.id ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                            borderRadius: 8,
+                            background: asset.id === activeAsset?.id ? 'var(--color-accent-light)' : 'transparent',
+                            padding: 10,
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            fontFamily: 'var(--font-sans)',
+                          }}
+                        >
+                          <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {asset.title}
+                            </div>
+                            <span style={assetChipStyle}>{assetTypeLabel(asset.type)}</span>
+                          </div>
+                          <div style={{ marginTop: 5, fontSize: 11, lineHeight: 1.5, color: 'var(--color-ink-3)' }}>{asset.summary}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                <section style={panelStyle}>
+                  {!activeAsset ? (
+                    <div style={emptyStyle}>请选择左侧资产查看内容。</div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', marginBottom: 12 }}>
+                        <div>
+                          <div style={{ fontSize: 16, fontWeight: 850, color: 'var(--color-ink)' }}>{activeAsset.title}</div>
+                          <div style={{ marginTop: 5, fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.6 }}>{activeAsset.summary}</div>
+                        </div>
+                        <span style={assetChipStyle}>{assetTypeLabel(activeAsset.type)}</span>
+                      </div>
+                      <textarea
+                        value={activeDisplayText}
+                        readOnly={isKanoAsset && resultView !== 'full' && !draftText}
+                        onChange={event => setDraftText(event.target.value)}
+                        style={{ ...editorStyle, minHeight: 'calc(100vh - 390px)' }}
+                      />
+                      <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        <button onClick={() => downloadText(`${activeAsset.title}.txt`, activeText)} style={secondaryButtonStyle}>
+                          <Download size={13} />
+                          导出文本
+                        </button>
+                        <button onClick={saveEditedVersion} disabled={!activeText.trim()} style={secondaryButtonStyle}>
+                          <Save size={13} />
+                          保存新版本
+                        </button>
+                        <button onClick={insertIntoPaper} style={primaryButtonStyle}>
+                          <CheckCircle2 size={13} />
+                          插入 Stage3
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </section>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--color-bg)', overflow: 'hidden' }}>
       <Sidebar />
@@ -1254,8 +1431,96 @@ export default function ResearchCenter() {
                     : '当前项目还没有 Stage1 方法建议。系统会先根据题目、大纲和已有正文做临时判断，后续可回到 Stage1 重新确认。'}
                 </div>
               </div>
-              <span style={badgeStyle}>{stage1ResearchPlan ? '来自 Stage1' : '临时判断'}</span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                <span style={badgeStyle}>{stage1ResearchPlan ? '已确认' : '临时判断'}</span>
+                <button
+                  onClick={() => {
+                    setMethodDraft(createMethodDraft(route, stage1ResearchPlan))
+                    setIsEditingMethod(value => !value)
+                  }}
+                  style={secondaryButtonStyle}
+                >
+                  <Pencil size={13} />
+                  修改方法
+                </button>
+                <button onClick={() => navigate(`/projects/${project.id}/research/assets`)} style={secondaryButtonStyle}>
+                  <FileSpreadsheet size={13} />
+                  资产库
+                </button>
+              </div>
             </div>
+            {isEditingMethod && (
+              <div style={methodEditorStyle}>
+                <div style={{ display: 'grid', gridTemplateColumns: '180px minmax(0, 1fr)', gap: 10 }}>
+                  <label style={fieldLabelStyle}>
+                    研究工具
+                    <select
+                      value={methodDraft.mode}
+                      onChange={event => {
+                        const nextMode = event.target.value as ToolMode
+                        const selectedTool = toolOptions.find(option => option.value === nextMode) ?? toolOptions[0]
+                        setMethodDraft(draft => ({
+                          ...draft,
+                          mode: nextMode,
+                          label: selectedTool.label,
+                        }))
+                      }}
+                      style={selectStyle}
+                    >
+                      {toolOptions.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={fieldLabelStyle}>
+                    方法名称
+                    <input
+                      value={methodDraft.label}
+                      onChange={event => setMethodDraft(draft => ({ ...draft, label: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                </div>
+                <label style={fieldLabelStyle}>
+                  方法理由
+                  <textarea
+                    value={methodDraft.reason}
+                    onChange={event => setMethodDraft(draft => ({ ...draft, reason: event.target.value }))}
+                    style={{ ...inputStyle, minHeight: 64, resize: 'vertical' }}
+                  />
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+                  <label style={fieldLabelStyle}>
+                    需要收集
+                    <textarea
+                      value={methodDraft.dataNeeds}
+                      onChange={event => setMethodDraft(draft => ({ ...draft, dataNeeds: event.target.value }))}
+                      style={{ ...inputStyle, minHeight: 74, resize: 'vertical' }}
+                    />
+                  </label>
+                  <label style={fieldLabelStyle}>
+                    适用章节
+                    <textarea
+                      value={methodDraft.outlineRequirements}
+                      onChange={event => setMethodDraft(draft => ({ ...draft, outlineRequirements: event.target.value }))}
+                      style={{ ...inputStyle, minHeight: 74, resize: 'vertical' }}
+                    />
+                  </label>
+                  <label style={fieldLabelStyle}>
+                    后续任务
+                    <textarea
+                      value={methodDraft.pendingTasks}
+                      onChange={event => setMethodDraft(draft => ({ ...draft, pendingTasks: event.target.value }))}
+                      style={{ ...inputStyle, minHeight: 74, resize: 'vertical' }}
+                    />
+                  </label>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <button onClick={() => setIsEditingMethod(false)} style={secondaryButtonStyle}>取消</button>
+                  <button onClick={saveMethodDraft} style={primaryButtonStyle}>保存方法</button>
+                </div>
+              </div>
+            )}
             <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
               <MiniInfo label="推荐方法" value={stage1ResearchPlan?.methodLabel || route.label} />
               <MiniInfo label="适用章节" value={stage1ResearchPlan?.outlineRequirements.join('；') || '研究方法 / 数据分析 / 结果讨论'} />
@@ -1266,7 +1531,7 @@ export default function ResearchCenter() {
               <strong>方法理由：</strong>{stage1ResearchPlan?.methodReason || route.reason}
             </div>
           </section>
-          <div style={{ maxWidth: 1280, margin: '0 auto', display: 'grid', gridTemplateColumns: 'minmax(680px, 1fr) 280px', gap: 14, alignItems: 'start' }}>
+          <div style={{ maxWidth: 1280, margin: '0 auto', display: 'grid', gridTemplateColumns: 'minmax(680px, 1fr)', gap: 14, alignItems: 'start' }}>
             <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <section style={stepPanelStyle}>
                 <StepTitle number="1" icon={<ClipboardList size={15} />} title="选择目的" />
@@ -1516,47 +1781,6 @@ export default function ResearchCenter() {
               </section>
             </section>
 
-            <aside style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <section style={compactPanelStyle}>
-                <div style={titleStyle}>最近资产</div>
-                {assets.length === 0 ? (
-                  <div style={emptyStyle}>暂无归档。生成后的量表、上传数据和分析结果都会保存在这里。</div>
-                ) : (
-                  <>
-                    <div style={assetListStyle}>
-                      {assets.slice(0, 6).map(asset => (
-                        <button
-                          key={asset.id}
-                          onClick={() => {
-                            setActiveAssetId(asset.id)
-                            setDraftText('')
-                          }}
-                          style={{
-                            width: '100%',
-                            border: `1px solid ${asset.id === activeAsset?.id ? 'var(--color-accent)' : 'var(--color-border)'}`,
-                            borderRadius: 8,
-                            background: asset.id === activeAsset?.id ? 'var(--color-accent-light)' : 'transparent',
-                            padding: 9,
-                            textAlign: 'left',
-                            cursor: 'pointer',
-                            fontFamily: 'var(--font-sans)',
-                          }}
-                        >
-                          <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--color-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {asset.title}
-                            </div>
-                            <span style={assetChipStyle}>{assetTypeLabel(asset.type)}</span>
-                          </div>
-                          <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.45, color: 'var(--color-ink-3)' }}>{asset.summary}</div>
-                        </button>
-                      ))}
-                    </div>
-                    {assets.length > 6 && <div style={assetCountStyle}>共 {assets.length} 个资产，显示最近 6 个</div>}
-                  </>
-                )}
-              </section>
-            </aside>
           </div>
         </main>
       </div>
@@ -1600,9 +1824,41 @@ const panelStyle = {
   boxShadow: 'var(--shadow-sm)',
 }
 
-const compactPanelStyle = {
-  ...panelStyle,
+const methodEditorStyle = {
+  marginTop: 14,
+  border: '1px solid var(--color-border)',
+  borderRadius: 8,
+  background: 'var(--color-bg)',
   padding: 12,
+  display: 'flex',
+  flexDirection: 'column' as const,
+  gap: 10,
+}
+
+const fieldLabelStyle = {
+  display: 'flex',
+  flexDirection: 'column' as const,
+  gap: 6,
+  fontSize: 11,
+  fontWeight: 800,
+  color: 'var(--color-ink-3)',
+}
+
+const inputStyle = {
+  border: '1px solid var(--color-border)',
+  borderRadius: 8,
+  background: 'var(--color-surface)',
+  color: 'var(--color-ink)',
+  padding: '9px 10px',
+  fontFamily: 'var(--font-sans)',
+  fontSize: 13,
+  lineHeight: 1.5,
+  outline: 'none',
+}
+
+const selectStyle = {
+  ...inputStyle,
+  height: 38,
 }
 
 const stepPanelStyle = {
@@ -1752,12 +2008,6 @@ const assetChipStyle = {
   fontSize: 10,
   color: 'var(--color-accent)',
   background: 'var(--color-bg)',
-}
-
-const assetCountStyle = {
-  marginTop: 8,
-  fontSize: 11,
-  color: 'var(--color-ink-3)',
 }
 
 const kanoConfirmStyle = {

@@ -120,6 +120,7 @@ export default function App() {
             <Route path="/projects/:projectId" element={<ProjectHome />} />
             <Route path="/projects/:projectId/stage1" element={<Stage1 />} />
             <Route path="/projects/:projectId/stage2" element={<Stage2 />} />
+            <Route path="/projects/:projectId/research/assets" element={<ResearchCenter />} />
             <Route path="/projects/:projectId/research" element={<ResearchCenter />} />
             <Route path="/projects/:projectId/stage3" element={<Stage3 />} />
             <Route path="/stage1" element={<Stage1 />} />
