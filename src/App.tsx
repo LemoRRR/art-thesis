@@ -31,6 +31,7 @@ function AuthGuard({ children }: { children: ReactNode }) {
 
 function RemoteDataGate({ children }: { children: ReactNode }) {
   const location = useLocation()
+  const isAuthEntryRoute = location.pathname === '/login' || location.pathname === '/demo'
   const [ready, setReady] = useState(!auth.isLoggedIn())
   const [error, setError] = useState('')
   const [redirectToLogin, setRedirectToLogin] = useState(false)
@@ -38,17 +39,17 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const handleAuthExpired = () => {
-      if (auth.isAuthRequired() && location.pathname !== '/login') {
+      if (auth.isAuthRequired() && !isAuthEntryRoute) {
         setRedirectToLogin(true)
       }
     }
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
-  }, [location.pathname])
+  }, [isAuthEntryRoute])
 
   useEffect(() => {
     let cancelled = false
-    if (!auth.isLoggedIn() || location.pathname === '/login' || syncedRef.current) {
+    if (!auth.isLoggedIn() || isAuthEntryRoute || syncedRef.current) {
       setReady(true)
       return
     }
@@ -68,7 +69,7 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
       })
       .finally(() => {
         if (!cancelled) {
-          if (auth.isAuthRequired() && !auth.isLoggedIn() && location.pathname !== '/login') {
+          if (auth.isAuthRequired() && !auth.isLoggedIn() && !isAuthEntryRoute) {
             setRedirectToLogin(true)
           }
           syncedRef.current = true
@@ -79,7 +80,7 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [location.pathname])
+  }, [isAuthEntryRoute, location.pathname])
 
   if (redirectToLogin) {
     const redirect = `${location.pathname}${location.search}${location.hash}`
