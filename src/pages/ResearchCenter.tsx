@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
+import { callGPT, type Message } from '../lib/ai'
 import { paperTextToEditorDoc } from '../lib/editorDocument'
 import {
   outlineStore,
@@ -373,6 +374,86 @@ function createMethodDraft(route: InferredRoute, plan: ResearchPlan | undefined)
     outlineRequirements: plan?.outlineRequirements.join('；') || '研究方法；数据分析；结果讨论',
     pendingTasks: plan?.pendingResearchTasks.join('；') || '生成研究工具；等待用户收集数据；上传数据并分析',
   }
+}
+
+function streamResearchText(messages: Message[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let fullContent = ''
+    callGPT(messages, {
+      onChunk: (chunk) => {
+        fullContent += chunk
+      },
+      onDone: () => resolve(fullContent.trim()),
+      onError: reject,
+    })
+  })
+}
+
+function buildQuestionnairePrompt(
+  mode: ToolMode,
+  title: string,
+  source: SourceContext,
+  route: InferredRoute,
+  templateText: string,
+): Message[] {
+  const isKano = mode === 'kano'
+  const taskName = isKano ? 'KANO需求问卷' : '学术量化问卷/量表'
+  const methodRules = isKano
+    ? [
+      '必须采用KANO模型：每个具体设计触点或传播要素都要有正向题和反向题。',
+      '必须包含KANO五级选项：非常喜欢、理所当然、无所谓、勉强接受、非常不喜欢。',
+      '必须输出Kano分析框架、Kano判断矩阵、Better-Worse系数说明、数据编码表头建议。',
+      '不要只生成4组题；如果材料足够，建议6-10组KANO要素。',
+      'KANO题项必须是具体触点，不要把“传播意愿”“文化认同”这类结果变量直接写成KANO功能项。',
+    ]
+    : [
+      '必须采用论文量化研究常用问卷结构：筛选题、基本信息、变量量表题、注意力检测、开放题。',
+      '每个核心变量至少3个题项，题项要能支持信度、效度、相关、回归或中介分析。',
+      '必须写清楚变量定义、题项编号、李克特5分制说明、反向题和计分规则。',
+      '如果题目存在影响机制，要给出假设模型和可检验假设。',
+    ]
+
+  return [
+    {
+      role: 'system',
+      content: [
+        '你是艺术学、传播学、设计学论文研究方法专家，擅长为本科/硕士/期刊论文设计正式问卷。',
+        '你生成的是可供学生后续复制到问卷星、金数据或论文附录中的研究工具，不是随手练习题。',
+        '要求学术化、完整、可执行，但不要编造已经回收的数据或分析结论。',
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: [
+        `请根据以下论文信息生成一份正式的${taskName}。`,
+        '',
+        '【论文题目】',
+        title,
+        '',
+        '【研究路线】',
+        route.label,
+        route.reason,
+        '',
+        '【变量线索】',
+        `自变量/影响因素：${route.variables.independent.join('、') || '请从材料中提炼'}`,
+        `中介变量：${route.variables.mediator.join('、') || '如不适合可不设置'}`,
+        `因变量/结果变量：${route.variables.dependent.join('、') || '请从材料中提炼'}`,
+        '',
+        `【当前使用的论文上下文：${source.label}】`,
+        source.text.slice(0, 9000),
+        '',
+        '【必须遵守的生成规则】',
+        ...methodRules.map((rule, index) => `${index + 1}. ${rule}`),
+        `${methodRules.length + 1}. 问卷说明必须匹配论文题目，不得出现其他论文题目或旧案例。`,
+        `${methodRules.length + 2}. 题项要围绕题目中的研究对象、平台、用户群体和传播机制展开。`,
+        `${methodRules.length + 3}. 输出必须包含：问卷正文、变量/维度说明、数据编码与后续分析建议。`,
+        `${methodRules.length + 4}. 语言应符合中文学术论文研究方法写法，避免营销文案和口语化表达。`,
+        '',
+        '【可参考的标准结构，不要机械照抄，可按论文对象优化】',
+        templateText.slice(0, 9000),
+      ].join('\n'),
+    },
+  ]
 }
 
 function createVariable(name: string, role: ScaleVariable['role'], index: number): ScaleVariable {
@@ -1232,6 +1313,7 @@ export default function ResearchCenter() {
   const [mode, setMode] = useState<ToolMode>(route.preferredMode)
   const [isEditingMethod, setIsEditingMethod] = useState(false)
   const [methodDraft, setMethodDraft] = useState<MethodDraft>(() => createMethodDraft(route, stage1ResearchPlan))
+  const [isGeneratingTool, setIsGeneratingTool] = useState(false)
   const [tasks, setTasks] = useState<ResearchTask[]>(() => researchTaskStore.getByProject(project.id))
   const [assets, setAssets] = useState<ResearchAsset[]>(() => researchAssetStore.getByProject(project.id))
   const [activeAssetId, setActiveAssetId] = useState(() => assets[0]?.id ?? '')
@@ -1294,7 +1376,10 @@ export default function ResearchCenter() {
     setNotice('研究方法已更新，后续研究任务会按新的方法路线生成。')
   }
 
-  const generateTool = () => {
+  const generateTool = async () => {
+    if (isGeneratingTool) return
+    setIsGeneratingTool(true)
+    setNotice(mode === 'survey' || mode === 'kano' ? '正在调用 AI 生成学术问卷，请稍候…' : '正在生成研究工具…')
     const task = researchTaskStore.add({
       projectId: project.id,
       title: `${activeOption.label}生成与回流`,
@@ -1303,21 +1388,39 @@ export default function ResearchCenter() {
       nextActionLabel: mode === 'survey' ? '导出问卷并收集数据' : '导出研究工具并收集材料',
     })
     const generated = buildResearchTool(mode, project.title, source, route)
+    let generatedText = generated.text
+    let usedAI = false
+    if (mode === 'survey' || mode === 'kano') {
+      try {
+        const aiText = await streamResearchText(buildQuestionnairePrompt(mode, project.title, source, route, generated.text))
+        if (aiText.length > 500) {
+          generatedText = aiText
+          usedAI = true
+        }
+      } catch (error) {
+        console.warn('[ResearchCenter] AI questionnaire generation failed, fallback to template', error)
+        setNotice(`AI 问卷生成失败，已使用标准模板兜底：${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
     const asset = researchAssetStore.add({
       projectId: project.id,
       taskId: task.id,
       type: activeOption.assetType,
       title: `${project.title}-${activeOption.label}`,
-      summary: `依据${source.label}生成；${activeOption.outcome}`,
+      summary: `${usedAI ? 'AI依据' : '依据'}${source.label}生成；${activeOption.outcome}`,
       source: 'generated_from_project',
-      structuredData: generated.data,
-      plainText: generated.text,
+      structuredData: {
+        ...(typeof generated.data === 'object' && generated.data ? generated.data as Record<string, unknown> : { value: generated.data }),
+        generatedByAI: usedAI,
+      },
+      plainText: generatedText,
       status: 'confirmed',
     })
     setDraftText('')
     setResultView(mode === 'kano' ? 'questionnaire' : 'full')
     refresh(asset.id)
-    setNotice(`已根据${source.label}生成${activeOption.label}，并保存到研究计算资产。`)
+    setNotice(`已${usedAI ? '调用 AI ' : ''}根据${source.label}生成${activeOption.label}，并保存到研究计算资产。`)
+    setIsGeneratingTool(false)
   }
 
   const saveEditedVersion = () => {
@@ -1811,8 +1914,12 @@ export default function ResearchCenter() {
                           </div>
                         </div>
                       )}
-                      <button onClick={generateTool} style={{ ...primaryButtonStyle, width: 'fit-content' }}>
-                        根据{source.label}生成{activeOption.label}
+                      <button
+                        onClick={() => void generateTool()}
+                        disabled={isGeneratingTool}
+                        style={{ ...primaryButtonStyle, width: 'fit-content', opacity: isGeneratingTool ? 0.65 : 1 }}
+                      >
+                        {isGeneratingTool ? 'AI 正在生成…' : `根据${source.label}生成${activeOption.label}`}
                       </button>
                     </>
                   )}
