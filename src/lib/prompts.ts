@@ -77,13 +77,15 @@ export function promptChatFollowup(
 - 如果用户只提供题目、大纲或想法，判断为从 0 生成路径
 - 不要模仿上传材料的语言风格，不要改写原文
 - 重点整理：路径类型、输入类型、主题判断、材料可写方向、可展开论点、材料缺口/风险、推荐题目、学段建议
+- 同时判断研究方法路线：定性、定量、混合、设计评价、案例研究、理论分析或暂不建议；这一步只做建议，后续由用户确认
+- 如果建议定量/设计评价，说明适合生成哪些问卷、量表、KANO、AHP、数据表；如果建议定性，说明适合访谈、编码、主题提取或案例分析
 - 不需要输出“大纲生成建议”
 - 只要材料或输入已经足够形成初步理解，就输出“【理解完成】”和 JSON，让界面可以进入论文规格选择
 - 如果信息非常少，也先给出谨慎建议，并在风险里说明缺口，不要卡住流程
 ${referenceContext ? `\n用户已提供的材料信息：\n${referenceContext}\n` : ''}
 回复先用简短自然语言说明你读到了什么，再在末尾另起一行输出以下内容（不要加代码块）：
 【理解完成】
-{"paperTitle":"最推荐的论文题目","recommendedTitles":["题目1","题目2","题目3"],"pathType":"existing_paper_revision|from_scratch_generation","inputType":"paper|outline|topic|mixed_material","hasDetectedOutline":true,"hasDetectedDraft":true,"materialTopic":"材料主题或研究对象","researchObject":"研究对象","writingBoundary":"写作边界","possibleDirections":["可写方向1","可写方向2","可写方向3"],"keyArguments":["核心论点1","核心论点2","核心论点3"],"coreArguments":["核心论点1","核心论点2","核心论点3"],"risks":["材料缺口或风险1","材料缺口或风险2"],"academicLevelSuggestion":"本科|硕士|期刊|其他","academicLevelReason":"学段建议理由","academicLevel":"待用户确认","difficulty":"建议写作难度","outlineSummary":"如果识别到大纲，概括大纲结构；没有则为空","draftSummary":"如果识别到正文，概括正文内容；没有则为空","nextStepRecommendation":"generate_outline|confirm_detected_outline|revise_existing_draft|write_from_outline","coreSummary":"对材料和写作可能性的总结，两到三句话"}`,
+{"paperTitle":"最推荐的论文题目","recommendedTitles":["题目1","题目2","题目3"],"pathType":"existing_paper_revision|from_scratch_generation","inputType":"paper|outline|topic|mixed_material","hasDetectedOutline":true,"hasDetectedDraft":true,"materialTopic":"材料主题或研究对象","researchObject":"研究对象","writingBoundary":"写作边界","possibleDirections":["可写方向1","可写方向2","可写方向3"],"keyArguments":["核心论点1","核心论点2","核心论点3"],"coreArguments":["核心论点1","核心论点2","核心论点3"],"risks":["材料缺口或风险1","材料缺口或风险2"],"academicLevelSuggestion":"本科|硕士|期刊|其他","academicLevelReason":"学段建议理由","academicLevel":"待用户确认","difficulty":"建议写作难度","outlineSummary":"如果识别到大纲，概括大纲结构；没有则为空","draftSummary":"如果识别到正文，概括正文内容；没有则为空","nextStepRecommendation":"generate_outline|confirm_detected_outline|revise_existing_draft|write_from_outline","researchPlan":{"methodType":"theoretical|case_study|quantitative|qualitative|mixed|design_evaluation","methodLabel":"研究方法建议名称，如质性访谈研究/问卷量化研究/混合研究/设计评价研究/理论分析","methodReason":"为什么该论文适合这种方法，1-2句话","suggestedTools":["scale_generation|hypothesis_model|survey_analysis|mediation|kano|ahp|grounded_coding|emotion_coding|theme_extraction|case_summary"],"variables":{"independent":["自变量或影响因素"],"dependent":["因变量或结果变量"],"mediator":["中介变量"],"moderator":[],"control":[]},"dataNeeds":["用户后续需要收集的数据或材料"],"outlineRequirements":["建议放入或预留的大纲章节"],"pendingResearchTasks":["后续可在研究方法工作台创建的任务"]},"coreSummary":"对材料和写作可能性的总结，两到三句话"}`,
     },
     ...history,
     { role: 'user', content: userInput },

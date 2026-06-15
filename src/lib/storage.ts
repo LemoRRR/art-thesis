@@ -182,6 +182,7 @@ export interface ComprehensionModel {
   outlineSummary?: string
   draftSummary?: string
   nextStepRecommendation?: 'generate_outline' | 'confirm_detected_outline' | 'revise_existing_draft' | 'write_from_outline'
+  researchPlan?: ResearchPlan
 }
 
 export interface ResearchPlan {

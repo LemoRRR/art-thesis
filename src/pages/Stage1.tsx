@@ -19,6 +19,9 @@ import {
   type ChatMessage,
   type ComprehensionModel,
   type LibraryItem,
+  type ResearchMethodType,
+  type ResearchPlan,
+  type ResearchToolKey,
 } from '../lib/storage'
 import type { Message } from '../lib/ai'
 
@@ -49,6 +52,15 @@ interface ParsedComprehension {
   outlineSummary?: string
   draftSummary?: string
   nextStepRecommendation?: 'generate_outline' | 'confirm_detected_outline' | 'revise_existing_draft' | 'write_from_outline'
+  researchPlan?: Partial<ResearchPlan>
+  researchMethodType?: string
+  researchMethodLabel?: string
+  researchMethodReason?: string
+  suggestedResearchTools?: string[]
+  dataToCollect?: string[]
+  targetChapter?: string
+  expectedFindings?: string
+  researchTaskRecommendation?: string
 }
 
 interface Stage1UploadedFile {
@@ -139,6 +151,83 @@ function withSelectedAcademicLevel(requirements: string[] = [], level: AcademicL
   ]
 }
 
+function toStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map(item => String(item).trim()).filter(Boolean)
+  }
+  if (typeof value === 'string') {
+    return value.split(/[；;、,\n]/).map(item => item.trim()).filter(Boolean)
+  }
+  return []
+}
+
+function normalizeResearchMethodType(value?: string): ResearchMethodType {
+  if (!value) return 'theoretical'
+  if (/混合/.test(value)) return 'mixed'
+  if (/定量|量化|问卷|变量|统计|信度|效度|回归|中介/.test(value)) return 'quantitative'
+  if (/定性|质性|访谈|扎根|编码|主题|文本/.test(value)) return 'qualitative'
+  if (/设计评价|KANO|AHP|需求|评价模型/.test(value)) return 'design_evaluation'
+  if (/案例/.test(value)) return 'case_study'
+  return 'theoretical'
+}
+
+function normalizeResearchToolKey(value: string): ResearchToolKey | null {
+  const lower = value.toLowerCase()
+  if (/scale_generation|量表|问卷|题项/.test(lower)) return 'scale_generation'
+  if (/hypothesis_model|假设|模型|变量/.test(lower)) return 'hypothesis_model'
+  if (/survey_analysis|数据分析|描述统计|信度|效度|相关|回归/.test(lower)) return 'survey_analysis'
+  if (/mediation|中介/.test(lower)) return 'mediation'
+  if (/kano|需求分析/.test(lower)) return 'kano'
+  if (/ahp|层次分析|权重/.test(lower)) return 'ahp'
+  if (/grounded_coding|扎根|开放编码|主轴编码|选择编码/.test(lower)) return 'grounded_coding'
+  if (/emotion_coding|情感/.test(lower)) return 'emotion_coding'
+  if (/theme_extraction|主题/.test(lower)) return 'theme_extraction'
+  if (/case_summary|案例/.test(lower)) return 'case_summary'
+  return null
+}
+
+function buildResearchPlan(parsed: ParsedComprehension): ResearchPlan | undefined {
+  const plan = parsed.researchPlan ?? {}
+  const methodType = normalizeResearchMethodType(
+    String(plan.methodType ?? parsed.researchMethodType ?? plan.methodLabel ?? parsed.researchMethodLabel ?? '')
+  )
+  const suggestedTools = toStringArray(plan.suggestedTools ?? parsed.suggestedResearchTools)
+    .map(normalizeResearchToolKey)
+    .filter((item): item is ResearchToolKey => Boolean(item))
+  const dataNeeds = toStringArray(plan.dataNeeds ?? parsed.dataToCollect)
+  const outlineRequirements = toStringArray(plan.outlineRequirements ?? parsed.targetChapter)
+  const pendingResearchTasks = toStringArray(plan.pendingResearchTasks ?? parsed.researchTaskRecommendation)
+  const variables = plan.variables
+
+  if (
+    methodType === 'theoretical' &&
+    suggestedTools.length === 0 &&
+    dataNeeds.length === 0 &&
+    !plan.methodReason &&
+    !parsed.researchMethodReason
+  ) {
+    return undefined
+  }
+
+  return {
+    methodType,
+    methodLabel: String(plan.methodLabel ?? parsed.researchMethodLabel ?? (
+      methodType === 'quantitative' ? '量化问卷研究'
+        : methodType === 'qualitative' ? '质性研究'
+          : methodType === 'mixed' ? '混合研究'
+            : methodType === 'design_evaluation' ? '设计评价研究'
+              : methodType === 'case_study' ? '案例研究'
+                : '理论分析'
+    )),
+    methodReason: String(plan.methodReason ?? parsed.researchMethodReason ?? parsed.expectedFindings ?? '系统根据 Stage1 材料理解给出的研究方法建议，后续可由用户确认或调整。'),
+    suggestedTools,
+    variables: variables && typeof variables === 'object' ? variables : undefined,
+    dataNeeds,
+    outlineRequirements,
+    pendingResearchTasks,
+  }
+}
+
 function buildComprehensionModel(parsed: ParsedComprehension): ComprehensionModel {
   const topic = parsed.materialTopic || parsed.researchObject || ''
   const possibleDirections = formatList(parsed.possibleDirections)
@@ -146,6 +235,7 @@ function buildComprehensionModel(parsed: ParsedComprehension): ComprehensionMode
   const keyArguments = formatList(coreArguments)
   const risks = formatList(parsed.risks)
   const summary = parsed.coreSummary || parsed.coreClaims || ''
+  const researchPlan = buildResearchPlan(parsed)
   const rawSummary = [
     parsed.pathType ? `路径判断：${PATH_LABELS[parsed.pathType] ?? parsed.pathType}` : '',
     parsed.inputType ? `输入类型：${INPUT_LABELS[parsed.inputType] ?? parsed.inputType}` : '',
@@ -160,6 +250,9 @@ function buildComprehensionModel(parsed: ParsedComprehension): ComprehensionMode
     parsed.outlineSummary ? `大纲识别：${parsed.outlineSummary}` : '',
     parsed.draftSummary ? `正文识别：${parsed.draftSummary}` : '',
     parsed.nextStepRecommendation ? `建议下一步：${NEXT_STEP_LABELS[parsed.nextStepRecommendation] ?? parsed.nextStepRecommendation}` : '',
+    researchPlan ? `研究方法建议：${researchPlan.methodLabel}。${researchPlan.methodReason}` : '',
+    researchPlan?.dataNeeds.length ? `数据收集建议：${researchPlan.dataNeeds.join('；')}` : '',
+    researchPlan?.outlineRequirements.length ? `方法章节建议：${researchPlan.outlineRequirements.join('；')}` : '',
     risks ? `材料缺口/风险：${risks}` : '',
     `建议难度：${parsed.difficulty || '待选择论文规格后细化'}`,
   ].filter(Boolean).join('\n')
@@ -179,6 +272,7 @@ function buildComprehensionModel(parsed: ParsedComprehension): ComprehensionMode
     outlineSummary: parsed.outlineSummary,
     draftSummary: parsed.draftSummary,
     nextStepRecommendation: parsed.nextStepRecommendation,
+    researchPlan,
   }
 }
 
@@ -204,6 +298,7 @@ function formatComprehensionReply(content: string, parsed: ParsedComprehension):
   const risks = formatList(parsed.risks)
   const summary = parsed.coreSummary || parsed.coreClaims
   const titles = parsed.recommendedTitles?.length ? parsed.recommendedTitles.join('；') : paperTitle
+  const researchPlan = buildResearchPlan(parsed)
   return [
     lead || '我已经读取并整理了你提供的材料，可以进入下一步。',
     '',
@@ -218,6 +313,9 @@ function formatComprehensionReply(content: string, parsed: ParsedComprehension):
     argumentsText ? `核心论点：${argumentsText}` : '',
     parsed.academicLevelSuggestion ? `AI 学段建议：${parsed.academicLevelSuggestion}` : '',
     parsed.academicLevelReason ? `建议理由：${parsed.academicLevelReason}` : '',
+    researchPlan ? `研究方法建议：${researchPlan.methodLabel}` : '',
+    researchPlan ? `方法理由：${researchPlan.methodReason}` : '',
+    researchPlan?.dataNeeds.length ? `数据收集建议：${researchPlan.dataNeeds.join('；')}` : '',
     parsed.nextStepRecommendation ? `建议下一步：${NEXT_STEP_LABELS[parsed.nextStepRecommendation] ?? parsed.nextStepRecommendation}` : '',
     risks ? `材料缺口/风险：${risks}` : '',
     `推荐题目：${titles}`,
@@ -314,6 +412,7 @@ export default function Stage1() {
             outlineSummary: currentProject.context.outlineSummary,
             draftSummary: currentProject.context.draftSummary,
             nextStepRecommendation: currentProject.context.nextStepRecommendation,
+            researchPlan: currentProject.context.researchPlan,
           }
         : null
 
@@ -346,6 +445,7 @@ export default function Stage1() {
     project.context.academicLevel,
     project.context.rawSummary,
     project.context.researchObject,
+    project.context.researchPlan,
     project.context.writingBoundary,
     project.id,
     writingRequirementsKey,
@@ -475,6 +575,7 @@ export default function Stage1() {
                   outlineSummary: model.outlineSummary,
                   draftSummary: model.draftSummary,
                   nextStepRecommendation: model.nextStepRecommendation,
+                  researchPlan: model.researchPlan,
                 },
                 currentStage: inferredLevel ? 'stage2' : 'stage1',
               })
@@ -683,6 +784,9 @@ export default function Stage1() {
                   { label: '主题判断', value: comprehension.researchObject },
                   { label: '核心论点', value: formatList(comprehension.coreArguments) },
                   { label: 'AI 学段建议', value: [comprehension.academicLevelSuggestion, comprehension.academicLevelReason].filter(Boolean).join('：') },
+                  { label: '研究方法', value: comprehension.researchPlan ? `${comprehension.researchPlan.methodLabel}：${comprehension.researchPlan.methodReason}` : '' },
+                  { label: '数据收集', value: comprehension.researchPlan?.dataNeeds.join('；') },
+                  { label: '后续任务', value: comprehension.researchPlan?.pendingResearchTasks.join('；') },
                   { label: '建议下一步', value: comprehension.nextStepRecommendation ? NEXT_STEP_LABELS[comprehension.nextStepRecommendation] : '' },
                   { label: '材料建议', value: comprehension.rawSummary },
                   { label: '论文规格', value: selectedLevel || '待选择' },

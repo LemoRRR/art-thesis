@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowRight,
@@ -25,6 +25,7 @@ import {
   type ResearchAsset,
   type ResearchAssetType,
   type ResearchMethodType,
+  type ResearchPlan,
   type ResearchTask,
   type ScaleAssetData,
   type ScaleVariable,
@@ -307,6 +308,37 @@ function inferRoute(title: string, sourceText: string): InferredRoute {
     reason: '当前题目和大纲包含“影响研究/意愿/体验”等变量关系，建议先生成量表并预留第四章数据分析。',
     preferredMode: 'survey',
     variables,
+  }
+}
+
+function variablesFromPlan(plan: ResearchPlan | undefined, fallback: InferredRoute['variables']): InferredRoute['variables'] {
+  if (!plan?.variables) return fallback
+  return {
+    independent: plan.variables.independent?.length ? plan.variables.independent : fallback.independent,
+    mediator: plan.variables.mediator?.length ? plan.variables.mediator : fallback.mediator,
+    dependent: plan.variables.dependent?.length ? plan.variables.dependent : fallback.dependent,
+  }
+}
+
+function preferredModeFromPlan(plan: ResearchPlan | undefined, fallback: ToolMode): ToolMode {
+  if (!plan) return fallback
+  if (plan.suggestedTools.includes('kano')) return 'kano'
+  if (plan.suggestedTools.includes('ahp')) return 'ahp'
+  if (plan.suggestedTools.some(tool => tool === 'grounded_coding' || tool === 'emotion_coding' || tool === 'theme_extraction')) return 'coding'
+  if (plan.methodType === 'qualitative' || plan.suggestedTools.includes('case_summary')) return 'interview'
+  if (plan.methodType === 'design_evaluation') return plan.suggestedTools.includes('ahp') ? 'ahp' : 'kano'
+  if (plan.methodType === 'quantitative' || plan.methodType === 'mixed') return 'survey'
+  return fallback
+}
+
+function routeFromResearchPlan(plan: ResearchPlan | undefined, fallback: InferredRoute): InferredRoute {
+  if (!plan) return fallback
+  const preferredMode = preferredModeFromPlan(plan, fallback.preferredMode)
+  return {
+    label: plan.methodLabel || fallback.label,
+    reason: plan.methodReason || fallback.reason,
+    preferredMode,
+    variables: variablesFromPlan(plan, fallback.variables),
   }
 }
 
@@ -979,11 +1011,15 @@ export default function ResearchCenter() {
   const project = projectStore.ensure(params.projectId)
   const sourceOptions = useMemo(() => getSourceOptions(project.id), [project.id])
   const defaultSourceKind = sourceOptions.find(option => option.available)?.kind ?? 'stage1'
+  const stage1ResearchPlan = project.context.researchPlan
   const [sourceKind, setSourceKind] = useState<SourceKind>(defaultSourceKind)
   const source = sourceOptions.find(option => option.kind === sourceKind && option.available)
     ?? sourceOptions.find(option => option.available)
     ?? sourceOptions[2]
-  const route = useMemo(() => inferRoute(project.title, source.text), [project.title, source.text])
+  const route = useMemo(() => {
+    const fallback = inferRoute(project.title, source.text)
+    return routeFromResearchPlan(stage1ResearchPlan, fallback)
+  }, [project.title, source.text, stage1ResearchPlan])
   const [purpose, setPurpose] = useState<WorkspacePurpose>('generate')
   const [mode, setMode] = useState<ToolMode>(route.preferredMode)
   const [tasks, setTasks] = useState<ResearchTask[]>(() => researchTaskStore.getByProject(project.id))
@@ -993,6 +1029,10 @@ export default function ResearchCenter() {
   const [uploadedName, setUploadedName] = useState('')
   const [notice, setNotice] = useState('')
   const [resultView, setResultView] = useState<ResultView>('questionnaire')
+
+  useEffect(() => {
+    setMode(route.preferredMode)
+  }, [route.preferredMode])
 
   const activeAsset = assets.find(asset => asset.id === activeAssetId) ?? assets[0] ?? null
   const activeText = draftText || activeAsset?.plainText || ''
@@ -1201,6 +1241,31 @@ export default function ResearchCenter() {
         />
 
         <main style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
+          <section style={{ ...panelStyle, maxWidth: 1280, margin: '0 auto 14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--color-ink-3)', fontWeight: 800, letterSpacing: '0.05em' }}>
+                  当前论文研究方法
+                </div>
+                <h1 style={{ margin: '6px 0 8px', fontSize: 18, color: 'var(--color-ink)' }}>{project.title}</h1>
+                <div style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--color-ink-3)' }}>
+                  {stage1ResearchPlan
+                    ? '已读取 Stage1 的定性/定量判断。下方研究任务会优先沿用这个方法建议，不需要用户重复提供题目、大纲或材料。'
+                    : '当前项目还没有 Stage1 方法建议。系统会先根据题目、大纲和已有正文做临时判断，后续可回到 Stage1 重新确认。'}
+                </div>
+              </div>
+              <span style={badgeStyle}>{stage1ResearchPlan ? '来自 Stage1' : '临时判断'}</span>
+            </div>
+            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
+              <MiniInfo label="推荐方法" value={stage1ResearchPlan?.methodLabel || route.label} />
+              <MiniInfo label="适用章节" value={stage1ResearchPlan?.outlineRequirements.join('；') || '研究方法 / 数据分析 / 结果讨论'} />
+              <MiniInfo label="需要收集" value={stage1ResearchPlan?.dataNeeds.join('；') || '根据所选工具生成问卷、访谈或编码材料'} />
+              <MiniInfo label="下一步任务" value={stage1ResearchPlan?.pendingResearchTasks.join('；') || '生成研究工具并等待用户收集数据'} />
+            </div>
+            <div style={{ marginTop: 12, fontSize: 12, lineHeight: 1.75, color: 'var(--color-ink-2)', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 8, padding: 12 }}>
+              <strong>方法理由：</strong>{stage1ResearchPlan?.methodReason || route.reason}
+            </div>
+          </section>
           <div style={{ maxWidth: 1280, margin: '0 auto', display: 'grid', gridTemplateColumns: 'minmax(680px, 1fr) 280px', gap: 14, alignItems: 'start' }}>
             <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <section style={stepPanelStyle}>
