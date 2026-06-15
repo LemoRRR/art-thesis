@@ -567,6 +567,15 @@ function inferKanoFeatures(title: string, sourceText: string): KanoFeature[] {
         reason: '非遗视觉符号是内容识别的基础，缺失会直接影响理解。',
       },
       {
+        dimension: '真实性表达',
+        name: '非遗技艺真实性与原生语境保留',
+        description: '关于非遗内容是否保留真实技艺、传承人、地域语境和工艺细节',
+        positive: '如果短视频能够呈现真实的非遗技艺过程、传承人身份或地域文化语境，您的感受是？',
+        negative: '如果短视频弱化真实技艺过程，只以流行化包装替代非遗原有语境，您的感受是？',
+        expectedType: 'M',
+        reason: '真实性是非遗传播可信度和文化认同形成的基础条件。',
+      },
+      {
         dimension: '文化说明',
         name: '创作过程与文化背景讲解',
         description: '关于工艺过程、历史来源或文化含义的解释',
@@ -574,6 +583,15 @@ function inferKanoFeatures(title: string, sourceText: string): KanoFeature[] {
         negative: '如果短视频只展示结果，不说明工艺过程或文化背景，您的感受是？',
         expectedType: 'O',
         reason: '讲解越充分，越能提高文化理解和传播意愿。',
+      },
+      {
+        dimension: '视听质量',
+        name: '画面质感与声音设计',
+        description: '关于镜头清晰度、色彩风格、音乐音效和整体视听完成度',
+        positive: '如果短视频具有清晰画面、稳定镜头、适配音乐和较高视听完成度，您的感受是？',
+        negative: '如果短视频画面粗糙、声音杂乱或剪辑完成度较低，您的感受是？',
+        expectedType: 'O',
+        reason: '视听质量会影响青年用户的观看体验和停留意愿。',
       },
       {
         dimension: '叙事节奏',
@@ -585,6 +603,15 @@ function inferKanoFeatures(title: string, sourceText: string): KanoFeature[] {
         reason: '青年化叙事直接影响观看体验，越适配越有利于传播。',
       },
       {
+        dimension: '情感共鸣',
+        name: '个体故事与情感连接',
+        description: '关于传承人故事、用户生活经验和情感记忆的连接方式',
+        positive: '如果短视频通过传承人故事、生活场景或情感化表达增强您对非遗的共鸣，您的感受是？',
+        negative: '如果短视频只罗列信息，缺少人物故事或情感连接，您的感受是？',
+        expectedType: 'A',
+        reason: '情感共鸣不是基本信息条件，但能显著提升主动分享和讨论意愿。',
+      },
+      {
         dimension: '互动传播',
         name: '评论、转发与二创参与引导',
         description: '关于评论话题、转发提示或二创挑战等互动机制',
@@ -592,6 +619,15 @@ function inferKanoFeatures(title: string, sourceText: string): KanoFeature[] {
         negative: '如果短视频没有任何互动或转发引导，只让用户被动观看，您的感受是？',
         expectedType: 'A',
         reason: '互动引导不是基本内容条件，但能带来额外参与动机。',
+      },
+      {
+        dimension: '平台适配',
+        name: '平台算法与社交传播适配',
+        description: '关于话题标签、热点结合、封面标题和平台推荐机制适配',
+        positive: '如果短视频能通过合适的话题标签、封面标题和热点结合提升被看见与转发的可能，您的感受是？',
+        negative: '如果短视频缺少平台化表达，标题、封面和标签都难以吸引点击，您的感受是？',
+        expectedType: 'A',
+        reason: '平台适配会提高传播效率，但通常属于额外增益型要素。',
       },
     ]
   }
@@ -661,23 +697,51 @@ function inferKanoFeatures(title: string, sourceText: string): KanoFeature[] {
 function formatKanoQuestionnaire(title: string, features: KanoFeature[]): string {
   return [
     '【问卷正文】',
+    `问卷标题：${title}调查问卷`,
     `研究题目：${title}`,
-    '调研对象：普通读者 / 消费者',
-    `问题数量：${features.length} 组 × 2 题 = ${features.length * 2} 题`,
+    '调研对象：18-35岁、有短视频平台使用经验的青年用户',
+    `核心题项：${features.length} 组 KANO 正反题，共 ${features.length * 2} 题；另含筛选题、基本信息、平台使用情况、传播意愿量表与注意力检测题。`,
     '',
-    '您好！本研究探讨古籍版式美学在现代书籍设计中的应用，问卷约需 5 分钟。每组题目包含正向（有某特征时的感受）和反向（无该特征时的感受）两问，请如实作答，没有对错之分。',
+    '【问卷说明】',
+    `您好！本问卷旨在了解短视频平台中非遗内容的视觉呈现、文化表达与互动机制对青年用户传播意愿的影响。问卷仅用于学术研究，采用匿名方式收集数据，所有答案没有对错之分，请您根据真实观看经验和主观感受作答。预计填写时间约为 6-8 分钟。`,
+    '',
+    '【一、筛选题】',
+    'S1. 您是否使用过抖音、快手、B站、小红书、视频号等短视频或视频社交平台？',
+    'A. 是',
+    'B. 否（选择此项可结束问卷）',
+    '',
+    'S2. 您是否在短视频平台上浏览、点赞、收藏、评论或转发过非遗、传统工艺、民俗文化、传统艺术等相关内容？',
+    'A. 经常',
+    'B. 偶尔',
+    'C. 听说过但很少接触',
+    'D. 从未接触（选择此项可结束问卷或作为低接触样本单独标记）',
+    '',
+    '【二、基本信息】',
+    'D1. 您的性别：男 / 女 / 其他 / 不便透露',
+    'D2. 您的年龄：18岁以下 / 18-25岁 / 26-30岁 / 31-35岁 / 36岁及以上',
+    'D3. 您的最高学历：高中及以下 / 专科 / 本科 / 硕士及以上',
+    'D4. 您目前的身份：在校学生 / 企业职员 / 自由职业 / 文创或艺术相关从业者 / 其他',
+    '',
+    '【三、短视频平台使用情况】',
+    'U1. 您平均每天使用短视频平台的时长：30分钟以内 / 30分钟-1小时 / 1-2小时 / 2小时以上',
+    'U2. 您观看非遗或传统文化类短视频的频率：几乎不看 / 偶尔观看 / 有时观看 / 经常观看',
+    'U3. 您最常接触此类内容的平台：抖音 / 快手 / B站 / 小红书 / 视频号 / 其他',
+    'U4. 您接触此类内容的主要方式：平台推荐 / 主动搜索 / 朋友分享 / 关注账号更新 / 课程或工作需要',
+    '',
+    '【四、KANO需求题项】',
+    '说明：以下每组问题均包含“如果具备该特征”和“如果不具备该特征”两种情境，请分别选择您的真实感受。选项含义为：非常喜欢 / 理所当然 / 无所谓 / 勉强接受 / 非常不喜欢。',
     '',
     ...features.flatMap((feature, index) => [
-      `第${index + 1}部分：${feature.dimension}`,
-      feature.description,
-      `Q${index * 2 + 1} 正向`,
+      `K${index + 1}. ${feature.dimension}：${feature.name}`,
+      `测量说明：${feature.description}`,
+      `K${index + 1}a 正向题`,
       feature.positive,
       '非常喜欢',
       '理所当然',
       '无所谓',
       '勉强接受',
       '非常不喜欢',
-      `Q${index * 2 + 2} 反向`,
+      `K${index + 1}b 反向题`,
       feature.negative,
       '非常喜欢',
       '理所当然',
@@ -686,6 +750,20 @@ function formatKanoQuestionnaire(title: string, features: KanoFeature[]): string
       '非常不喜欢',
       '',
     ]),
+    '【五、传播意愿量表】',
+    '说明：以下题项采用李克特5分制，1=非常不同意，2=不同意，3=一般，4=同意，5=非常同意。',
+    'W1. 如果非遗短视频在视觉呈现上具有较强识别度，我愿意点赞或收藏该类内容。',
+    'W2. 如果非遗短视频能够清楚解释文化内涵，我愿意将其推荐给朋友或同学。',
+    'W3. 如果非遗短视频具有较强叙事吸引力，我愿意在评论区参与讨论。',
+    'W4. 如果非遗短视频设置了合适的互动话题或二创活动，我愿意参与转发或二次创作。',
+    'W5. 总体而言，我愿意持续关注并传播优质非遗短视频内容。',
+    '',
+    '【六、注意力检测】',
+    'C1. 为保证问卷质量，请您在本题选择“同意”。',
+    '',
+    '【七、开放题】',
+    'O1. 您认为当前短视频平台中的非遗内容最需要改进的地方是什么？',
+    'O2. 哪类非遗短视频最容易让您产生转发、评论或分享的意愿？请简要说明原因。',
   ].join('\n')
 }
 
@@ -711,11 +789,13 @@ function formatKanoAnalysis(features: KanoFeature[]): string {
     '【数据处理步骤】',
     '① 个体分类：每位受访者每组题目 → 对照判断矩阵 → 得出该维度的需求类型（M/O/A/I）。',
     '② 频次汇总：每个维度统计各类型人数比例，取最多的类型为该维度结论。',
-    '③ 优先级排序：M > O > A > I；论文中可据此建议哪些要素是再生设计不可缺失的。',
-    '④ 与案例分析对照：将Kano结果与案例分析结合，检验成功案例是否命中高优先级要素。',
+    '③ Better-Worse 系数：Better=(A+O)/(A+O+M+I)，Worse=-(O+M)/(A+O+M+I)，用于判断该要素对满意提升和不满降低的作用强度。',
+    '④ 优先级排序：结合需求类型、Better-Worse 系数和传播意愿均值，判断哪些要素应优先进入内容优化策略。',
+    '⑤ 与传播意愿量表联动：将 W1-W5 求均值作为“传播意愿”变量，可进一步与Kano分类结果做交叉分析或分组比较。',
+    '⑥ 与案例分析对照：将Kano结果与具体非遗短视频案例结合，检验高优先级要素是否在优秀案例中得到体现。',
     '',
     '【使用建议】',
-    '建议样本量至少 30 人；如能区分“读过古籍/古典书籍”和“没读过”两组，可做分层对比。频次分布表建议放入论文附录，以增强研究规范性。',
+    '建议正式样本量不少于 100 份；若用于课程论文或本科论文，可先进行 30 份左右预测试，检查题项理解度、无效样本比例和开放题反馈。正式论文中建议报告样本结构、Kano分类频次、Better-Worse系数、传播意愿描述统计及典型开放回答。',
   ].join('\n')
 }
 
@@ -920,10 +1000,52 @@ function buildDataTemplate(asset: ResearchAsset | null): string {
   if (asset.type === 'kano_result') {
     const data = asset.structuredData as { features?: KanoFeature[] }
     const features = data.features ?? []
-    const headers = ['respondent_id', 'gender', 'age', ...features.flatMap((_, index) => [`K${index + 1}_positive`, `K${index + 1}_negative`])]
+    const headers = [
+      'respondent_id',
+      'S1_platform_use',
+      'S2_heritage_exposure',
+      'gender',
+      'age',
+      'education',
+      'occupation',
+      'daily_usage',
+      'heritage_video_frequency',
+      'main_platform',
+      'access_path',
+      ...features.flatMap((_, index) => [`K${index + 1}a_positive`, `K${index + 1}b_negative`]),
+      'W1',
+      'W2',
+      'W3',
+      'W4',
+      'W5',
+      'C1_attention_check',
+      'O1_problem',
+      'O2_share_reason',
+    ]
     return [
       headers.join(','),
-      ['1', '女', '18-25', ...features.flatMap(() => ['', ''])].join(','),
+      [
+        '1',
+        '是',
+        '偶尔',
+        '女',
+        '18-25岁',
+        '本科',
+        '在校学生',
+        '1-2小时',
+        '有时观看',
+        '抖音',
+        '平台推荐',
+        ...features.flatMap(() => ['', '']),
+        '',
+        '',
+        '',
+        '',
+        '',
+        '同意',
+        '',
+        '',
+      ].join(','),
     ].join('\n')
   }
   if (asset.type !== 'survey_questionnaire') return ''
@@ -993,28 +1115,79 @@ function buildWjxPasteText(asset: ResearchAsset | null): string {
     const features = data.features ?? []
     if (!features.length) return ''
     const kanoOptions = ['非常喜欢', '理所当然', '无所谓', '勉强接受', '非常不喜欢']
+    const likertOptions = ['1 非常不同意', '2 不同意', '3 一般', '4 同意', '5 非常同意']
     const lines = [
       asset.title,
       '',
-      '您好！本问卷用于了解读者/消费者对相关设计要素的需求偏好。每组题目包含正向和反向两问，请根据真实感受选择。',
+      '您好！本问卷旨在了解短视频平台中非遗内容的视觉呈现、文化表达与互动机制对青年用户传播意愿的影响。问卷仅用于学术研究，采用匿名方式收集数据，所有答案没有对错之分，请根据真实观看经验和主观感受作答。',
       '',
-      '1. 您是否读过古籍或古典风格书籍？',
-      '经常阅读',
-      '偶尔阅读',
-      '几乎没有',
+      '1. 您是否使用过抖音、快手、B站、小红书、视频号等短视频或视频社交平台？',
+      '是',
+      '否',
+      '',
+      '2. 您是否在短视频平台上浏览、点赞、收藏、评论或转发过非遗、传统工艺、民俗文化、传统艺术等相关内容？',
+      '经常',
+      '偶尔',
+      '听说过但很少接触',
+      '从未接触',
+      '',
+      '3. 您的性别是？',
+      '男',
+      '女',
+      '其他 / 不便透露',
+      '',
+      '4. 您的年龄是？',
+      '18岁以下',
+      '18-25岁',
+      '26-30岁',
+      '31-35岁',
+      '36岁及以上',
+      '',
+      '5. 您的最高学历是？',
+      '高中及以下',
+      '专科',
+      '本科',
+      '硕士及以上',
+      '',
+      '6. 您平均每天使用短视频平台的时长是？',
+      '30分钟以内',
+      '30分钟-1小时',
+      '1-2小时',
+      '2小时以上',
       '',
     ]
-    let questionNo = 2
+    let questionNo = 7
     features.forEach(feature => {
-      lines.push(`${questionNo}. ${feature.positive}`)
+      lines.push(`${questionNo}. [${feature.dimension}] ${feature.positive}`)
       lines.push(...kanoOptions)
       lines.push('')
       questionNo += 1
-      lines.push(`${questionNo}. ${feature.negative}`)
+      lines.push(`${questionNo}. [${feature.dimension}] ${feature.negative}`)
       lines.push(...kanoOptions)
       lines.push('')
       questionNo += 1
     })
+    const willingnessItems = [
+      '如果非遗短视频在视觉呈现上具有较强识别度，我愿意点赞或收藏该类内容。',
+      '如果非遗短视频能够清楚解释文化内涵，我愿意将其推荐给朋友或同学。',
+      '如果非遗短视频具有较强叙事吸引力，我愿意在评论区参与讨论。',
+      '如果非遗短视频设置了合适的互动话题或二创活动，我愿意参与转发或二次创作。',
+      '总体而言，我愿意持续关注并传播优质非遗短视频内容。',
+    ]
+    willingnessItems.forEach(item => {
+      lines.push(`${questionNo}. ${item}`)
+      lines.push(...likertOptions)
+      lines.push('')
+      questionNo += 1
+    })
+    lines.push(`${questionNo}. 为保证问卷质量，请您在本题选择“同意”。`)
+    lines.push(...likertOptions)
+    lines.push('')
+    questionNo += 1
+    lines.push(`${questionNo}. 您认为当前短视频平台中的非遗内容最需要改进的地方是什么？`)
+    lines.push('')
+    questionNo += 1
+    lines.push(`${questionNo}. 哪类非遗短视频最容易让您产生转发、评论或分享的意愿？请简要说明原因。`)
     return lines.join('\n').trim()
   }
 
