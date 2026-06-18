@@ -94,7 +94,9 @@ function normalizeCrossrefWork(work: CrossrefWork) {
   }
 }
 
-type ScholarPaper = ReturnType<typeof normalizeOpenAlexWork>
+type ScholarPaper = ReturnType<typeof normalizeOpenAlexWork> & {
+  relevanceReason?: string
+}
 
 interface CitationEvidencePoint {
   claim: string
