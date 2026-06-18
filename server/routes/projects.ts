@@ -1,12 +1,14 @@
 import { Router } from 'express'
-import { supabase } from '../lib/supabase'
-import { requireAuth, type AuthRequest } from '../middleware/auth'
+import { removeUndefined } from '../lib/object.js'
+import { createUserClient } from '../lib/supabase.js'
+import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
 router.use(requireAuth)
 
 router.get('/', async (req: AuthRequest, res) => {
-  const { data, error } = await supabase
+  const db = createUserClient(req.accessToken!)
+  const { data, error } = await db
     .from('projects')
     .select('*')
     .eq('user_id', req.userId)
@@ -20,10 +22,18 @@ router.get('/', async (req: AuthRequest, res) => {
 })
 
 router.post('/', async (req: AuthRequest, res) => {
-  const { title = '未命名论文', description = '' } = req.body
-  const { data, error } = await supabase
+  const db = createUserClient(req.accessToken!)
+  const {
+    id,
+    title = '未命名论文',
+    description = '',
+    current_stage = 'stage1',
+    context = {},
+    library_item_ids = [],
+  } = req.body
+  const { data, error } = await db
     .from('projects')
-    .insert({ user_id: req.userId, title, description })
+    .insert(removeUndefined({ id, user_id: req.userId, title, description, current_stage, context, library_item_ids }))
     .select()
     .single()
 
@@ -35,7 +45,8 @@ router.post('/', async (req: AuthRequest, res) => {
 })
 
 router.get('/:id', async (req: AuthRequest, res) => {
-  const { data, error } = await supabase
+  const db = createUserClient(req.accessToken!)
+  const { data, error } = await db
     .from('projects')
     .select('*')
     .eq('id', req.params.id)
@@ -50,9 +61,10 @@ router.get('/:id', async (req: AuthRequest, res) => {
 })
 
 router.patch('/:id', async (req: AuthRequest, res) => {
+  const db = createUserClient(req.accessToken!)
   const { title, description, current_stage, context, library_item_ids } = req.body
-  const patch = { title, description, current_stage, context, library_item_ids }
-  const { data, error } = await supabase
+  const patch = removeUndefined({ title, description, current_stage, context, library_item_ids })
+  const { data, error } = await db
     .from('projects')
     .update(patch)
     .eq('id', req.params.id)
@@ -68,7 +80,8 @@ router.patch('/:id', async (req: AuthRequest, res) => {
 })
 
 router.delete('/:id', async (req: AuthRequest, res) => {
-  const { error } = await supabase
+  const db = createUserClient(req.accessToken!)
+  const { error } = await db
     .from('projects')
     .delete()
     .eq('id', req.params.id)

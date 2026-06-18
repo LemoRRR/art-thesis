@@ -1,6 +1,7 @@
+import type { ReactNode } from 'react'
 import { useState } from 'react'
 import { X, RotateCcw, Eye, Clock } from 'lucide-react'
-import { versionStore, type VersionSnapshot } from '../lib/storage'
+import { versionStore, type OutlineSection, type VersionSnapshot } from '../lib/storage'
 
 interface VersionPanelProps {
   projectId: string
@@ -11,14 +12,42 @@ interface VersionPanelProps {
 export default function VersionPanel({ projectId, onClose, onRestore }: VersionPanelProps) {
   const versions = versionStore.getByProject(projectId)
   const [previewId, setPreviewId] = useState<string | null>(null)
+  const [now] = useState(() => Date.now())
 
   function formatTime(ts: number): string {
-    const now = Date.now()
     const diff = now - ts
     if (diff < 60_000)  return '刚刚'
     if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`
     if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} 小时前`
     return new Date(ts).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  }
+
+  function renderOutlinePreview(sections: OutlineSection[], depth = 0): ReactNode {
+    return sections.map(section => (
+      <div key={section.id} style={{ marginBottom: 4, paddingLeft: depth * 10 }}>
+        <span style={{ fontWeight: depth === 0 ? 600 : 500, color: 'var(--color-ink-2)' }}>
+          {section.order} {section.title.slice(0, 24)}
+        </span>
+        {section.children?.length ? renderOutlinePreview(section.children, depth + 1) : null}
+      </div>
+    ))
+  }
+
+  function renderSnapshotPreview(snapshot: VersionSnapshot): ReactNode {
+    if (snapshot.outline?.sections?.length) return renderOutlinePreview(snapshot.outline.sections)
+
+    return snapshot.sections.map(section => (
+      <div key={section.id} style={{ marginBottom: 4 }}>
+        <span style={{ fontWeight: 500, color: 'var(--color-ink-2)' }}>
+          {section.title.slice(0, 20)}
+        </span>
+        {section.content && (
+          <span style={{ marginLeft: 4 }}>
+            · {section.content.slice(0, 40)}…
+          </span>
+        )}
+      </div>
+    ))
   }
 
   const handleRestore = (snapshot: VersionSnapshot) => {
@@ -175,18 +204,7 @@ export default function VersionPanel({ projectId, onClose, onRestore }: VersionP
                     overflowY: 'auto',
                   }}
                 >
-                  {v.sections.map(s => (
-                    <div key={s.id} style={{ marginBottom: 4 }}>
-                      <span style={{ fontWeight: 500, color: 'var(--color-ink-2)' }}>
-                        {s.title.slice(0, 20)}
-                      </span>
-                      {s.content && (
-                        <span style={{ marginLeft: 4 }}>
-                          · {s.content.slice(0, 40)}…
-                        </span>
-                      )}
-                    </div>
-                  ))}
+                  {renderSnapshotPreview(v)}
                 </div>
               )}
             </div>

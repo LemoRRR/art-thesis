@@ -1,6 +1,6 @@
 import { Router } from 'express'
-import { callAIStream } from '../lib/ai'
-import { requireAuth } from '../middleware/auth'
+import { callAIStream } from '../lib/ai.js'
+import { requireAuth } from '../middleware/auth.js'
 
 const router = Router()
 router.use(requireAuth)

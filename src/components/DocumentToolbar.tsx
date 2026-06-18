@@ -7,8 +7,32 @@ interface DocumentToolbarProps {
   disabled?: boolean
 }
 
-const runCommand = (command: string, value?: string) => {
-  document.execCommand(command, false, value)
+export type PaperEditorToolbarCommand =
+  | { type: 'toggleBold' }
+  | { type: 'toggleItalic' }
+  | { type: 'toggleUnderline' }
+  | { type: 'setTextAlign'; value: 'left' | 'center' | 'right' | 'justify' }
+  | { type: 'setFontFamily'; value: string }
+  | { type: 'setFontSize'; value: string }
+
+export const PAPER_EDITOR_TOOLBAR_EVENT = 'paper-editor-toolbar-command'
+
+const fontOptions = [
+  { label: '宋体', value: 'SimSun' },
+  { label: '微软雅黑', value: 'Microsoft YaHei' },
+  { label: '黑体', value: 'SimHei' },
+  { label: 'Times New Roman', value: 'Times New Roman' },
+]
+
+const sizeOptions = [
+  { label: '小五', value: '14px' },
+  { label: '小四', value: '16px' },
+  { label: '四号', value: '18.67px' },
+  { label: '三号', value: '21.33px' },
+]
+
+function dispatchEditorCommand(command: PaperEditorToolbarCommand) {
+  window.dispatchEvent(new CustomEvent(PAPER_EDITOR_TOOLBAR_EVENT, { detail: command }))
 }
 
 export default function DocumentToolbar({ onCopy, onExportWord, disabled }: DocumentToolbarProps) {
@@ -26,38 +50,43 @@ export default function DocumentToolbar({ onCopy, onExportWord, disabled }: Docu
       }}
     >
       <select
-        defaultValue="宋体"
-        onChange={event => runCommand('fontName', event.target.value)}
+        defaultValue="SimSun"
+        onChange={event => dispatchEditorCommand({ type: 'setFontFamily', value: event.target.value })}
         style={selectStyle}
+        title="字体"
       >
-        <option value="宋体">宋体</option>
-        <option value="SimSun">SimSun</option>
-        <option value="Microsoft YaHei">微软雅黑</option>
-        <option value="Times New Roman">Times New Roman</option>
+        {fontOptions.map(option => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
       </select>
 
       <select
-        defaultValue="3"
-        onChange={event => runCommand('fontSize', event.target.value)}
-        style={{ ...selectStyle, width: 58 }}
+        defaultValue="16px"
+        onChange={event => dispatchEditorCommand({ type: 'setFontSize', value: event.target.value })}
+        style={{ ...selectStyle, width: 62 }}
+        title="字号"
       >
-        <option value="2">小五</option>
-        <option value="3">小四</option>
-        <option value="4">四号</option>
-        <option value="5">三号</option>
+        {sizeOptions.map(option => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
       </select>
 
       <Divider />
-      <ToolButton icon={<Bold size={14} />} label="加粗" onClick={() => runCommand('bold')} />
-      <ToolButton icon={<Italic size={14} />} label="斜体" onClick={() => runCommand('italic')} />
-      <ToolButton icon={<Underline size={14} />} label="下划线" onClick={() => runCommand('underline')} />
+      <ToolButton icon={<Bold size={14} />} label="加粗" onClick={() => dispatchEditorCommand({ type: 'toggleBold' })} />
+      <ToolButton icon={<Italic size={14} />} label="斜体" onClick={() => dispatchEditorCommand({ type: 'toggleItalic' })} />
+      <ToolButton icon={<Underline size={14} />} label="下划线" onClick={() => dispatchEditorCommand({ type: 'toggleUnderline' })} />
       <Divider />
-      <ToolButton icon={<AlignLeft size={14} />} label="左对齐" onClick={() => runCommand('justifyLeft')} />
-      <ToolButton icon={<AlignCenter size={14} />} label="居中" onClick={() => runCommand('justifyCenter')} />
-      <ToolButton icon={<AlignRight size={14} />} label="右对齐" onClick={() => runCommand('justifyRight')} />
+      <ToolButton icon={<AlignLeft size={14} />} label="左对齐" onClick={() => dispatchEditorCommand({ type: 'setTextAlign', value: 'left' })} />
+      <ToolButton icon={<AlignCenter size={14} />} label="居中" onClick={() => dispatchEditorCommand({ type: 'setTextAlign', value: 'center' })} />
+      <ToolButton icon={<AlignRight size={14} />} label="右对齐" onClick={() => dispatchEditorCommand({ type: 'setTextAlign', value: 'right' })} />
 
       <div style={{ flex: 1 }} />
       <button
+        type="button"
         onClick={onCopy}
         disabled={disabled}
         style={primaryButtonStyle(disabled)}
@@ -66,6 +95,7 @@ export default function DocumentToolbar({ onCopy, onExportWord, disabled }: Docu
         复制全文
       </button>
       <button
+        type="button"
         onClick={onExportWord}
         disabled={disabled}
         style={primaryButtonStyle(disabled)}
@@ -84,7 +114,9 @@ function Divider() {
 function ToolButton({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
   return (
     <button
+      type="button"
       title={label}
+      onMouseDown={event => event.preventDefault()}
       onClick={onClick}
       style={{
         width: 28,

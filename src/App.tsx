@@ -1,14 +1,19 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { auth } from './lib/auth'
 import Library from './pages/Library'
 import Login from './pages/Login'
+import DemoLogin from './pages/DemoLogin'
 import ProjectHome from './pages/ProjectHome'
 import Projects from './pages/Projects'
 import Stage1 from './pages/Stage1'
 import Stage2 from './pages/Stage2'
 import Stage3 from './pages/Stage3'
-import { projectStore } from './lib/storage'
+import StyleProfiles from './pages/StyleProfiles'
+import ResearchCenter from './pages/ResearchCenter'
+import { projectStore, syncRemoteData } from './lib/storage'
+
+const AUTH_EXPIRED_EVENT = 'paper-ai-auth-expired'
 
 function DefaultConversationRedirect() {
   const projectId = projectStore.getActiveId()
@@ -17,9 +22,89 @@ function DefaultConversationRedirect() {
 
 function AuthGuard({ children }: { children: ReactNode }) {
   const location = useLocation()
-  if (auth.isAuthRequired() && !auth.isLoggedIn() && location.pathname !== '/login') {
-    return <Navigate to="/login" replace />
+  if (auth.isAuthRequired() && !auth.isLoggedIn() && location.pathname !== '/login' && location.pathname !== '/demo') {
+    const redirect = `${location.pathname}${location.search}${location.hash}`
+    return <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />
   }
+  return <>{children}</>
+}
+
+function RemoteDataGate({ children }: { children: ReactNode }) {
+  const location = useLocation()
+  const isAuthEntryRoute = location.pathname === '/login' || location.pathname === '/demo'
+  const [ready, setReady] = useState(!auth.isLoggedIn())
+  const [error, setError] = useState('')
+  const [redirectToLogin, setRedirectToLogin] = useState(false)
+  const syncedRef = useRef(false)
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      if (auth.isAuthRequired() && !isAuthEntryRoute) {
+        setRedirectToLogin(true)
+      }
+    }
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired)
+  }, [isAuthEntryRoute])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!auth.isLoggedIn() || isAuthEntryRoute || syncedRef.current) {
+      setReady(true)
+      return
+    }
+
+    setReady(false)
+    setError('')
+    setRedirectToLogin(false)
+    const routeProjectId = location.pathname.match(/^\/projects\/([^/]+)/)?.[1]
+    const activeProjectId = projectStore.getActiveId()
+    const projectIds = Array.from(new Set([routeProjectId, activeProjectId].filter((id): id is string => Boolean(id))))
+    Promise.race([
+      syncRemoteData({ projectIds }),
+      new Promise<void>((resolve) => {
+        window.setTimeout(() => resolve(), 5000)
+      }),
+    ])
+      .catch(err => {
+        console.warn('[App] Supabase 同步失败，继续使用本地缓存', err)
+        if (!cancelled) setError('云端同步失败，已切换为本地缓存模式。')
+      })
+      .finally(() => {
+        if (!cancelled) {
+          if (auth.isAuthRequired() && !auth.isLoggedIn() && !isAuthEntryRoute) {
+            setRedirectToLogin(true)
+          }
+          syncedRef.current = true
+          setReady(true)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isAuthEntryRoute, location.pathname])
+
+  if (redirectToLogin) {
+    const redirect = `${location.pathname}${location.search}${location.hash}`
+    return <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />
+  }
+
+  if (!ready) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--color-bg)', color: 'var(--color-ink-3)', fontSize: 13, textAlign: 'center', lineHeight: 1.8 }}>
+        <div>
+          <div>正在同步云端数据…</div>
+          <div style={{ fontSize: 11 }}>如果网络较慢，系统会自动切换到本地缓存。</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    console.warn(error)
+  }
+
   return <>{children}</>
 }
 
@@ -27,19 +112,25 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthGuard>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={<DefaultConversationRedirect />} />
-          <Route path="/library" element={<Library />} />
-          <Route path="/projects" element={<Projects />} />
-          <Route path="/projects/:projectId" element={<ProjectHome />} />
-          <Route path="/projects/:projectId/stage1" element={<Stage1 />} />
-          <Route path="/projects/:projectId/stage2" element={<Stage2 />} />
-          <Route path="/projects/:projectId/stage3" element={<Stage3 />} />
-          <Route path="/stage1" element={<Stage1 />} />
-          <Route path="/stage2" element={<Stage2 />} />
-          <Route path="/stage3" element={<Stage3 />} />
-        </Routes>
+        <RemoteDataGate>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/demo" element={<DemoLogin />} />
+            <Route path="/" element={<DefaultConversationRedirect />} />
+            <Route path="/library" element={<Library />} />
+            <Route path="/style-profiles" element={<StyleProfiles />} />
+            <Route path="/projects" element={<Projects />} />
+            <Route path="/projects/:projectId" element={<ProjectHome />} />
+            <Route path="/projects/:projectId/stage1" element={<Stage1 />} />
+            <Route path="/projects/:projectId/stage2" element={<Stage2 />} />
+            <Route path="/projects/:projectId/research/assets" element={<ResearchCenter />} />
+            <Route path="/projects/:projectId/research" element={<ResearchCenter />} />
+            <Route path="/projects/:projectId/stage3" element={<Stage3 />} />
+            <Route path="/stage1" element={<Stage1 />} />
+            <Route path="/stage2" element={<Stage2 />} />
+            <Route path="/stage3" element={<Stage3 />} />
+          </Routes>
+        </RemoteDataGate>
       </AuthGuard>
     </BrowserRouter>
   )

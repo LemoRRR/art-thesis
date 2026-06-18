@@ -1,10 +1,10 @@
 import { Router } from 'express'
-import { supabase } from '../lib/supabase'
+import { supabase } from '../lib/supabase.js'
 
 const router = Router()
 
 router.post('/register', async (req, res) => {
-  const { email, password, displayName } = req.body
+  const { email, password, displayName } = req.body ?? {}
   if (!email || !password) {
     res.status(400).json({ error: '邮箱和密码必填' })
     return
@@ -27,12 +27,30 @@ router.post('/register', async (req, res) => {
 })
 
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body
+  const { email, password } = req.body ?? {}
+  if (!email || !password) {
+    res.status(400).json({ error: '邮箱和密码必填' })
+    return
+  }
+
   const { data, error } = await supabase.auth.signInWithPassword({ email, password })
   if (error) {
     res.status(401).json({ error: '邮箱或密码错误' })
     return
   }
+  res.json({ user: data.user, session: data.session })
+})
+
+router.post('/demo-login', async (_req, res) => {
+  const email = process.env.DEMO_EMAIL || 'admin@qq.com'
+  const password = process.env.DEMO_PASSWORD || '123456789'
+
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  if (error) {
+    res.status(401).json({ error: 'Demo 账号登录失败，请确认演示账号已创建。' })
+    return
+  }
+
   res.json({ user: data.user, session: data.session })
 })
 

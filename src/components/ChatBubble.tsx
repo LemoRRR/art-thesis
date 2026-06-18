@@ -1,10 +1,12 @@
+import { memo } from 'react'
+
 interface ChatBubbleProps {
   role: 'ai' | 'user'
   content: string
   isStreaming?: boolean   // AI 正在输出时显示光标动画
 }
 
-export default function ChatBubble({ role, content, isStreaming }: ChatBubbleProps) {
+function ChatBubble({ role, content, isStreaming }: ChatBubbleProps) {
   const isAI = role === 'ai'
 
   return (
@@ -14,6 +16,9 @@ export default function ChatBubble({ role, content, isStreaming }: ChatBubblePro
         flexDirection: isAI ? 'row' : 'row-reverse',
         alignItems: 'flex-start',
         gap: 8,
+        minWidth: 0,
+        maxWidth: '100%',
+        overflow: 'visible',
       }}
     >
       {/* 头像 */}
@@ -42,8 +47,9 @@ export default function ChatBubble({ role, content, isStreaming }: ChatBubblePro
       {/* 气泡 */}
       <div
         style={{
-          maxWidth: '82%',
-          padding: '9px 13px',
+          maxWidth: isAI ? 'calc(100% - 40px)' : '92%',
+          minWidth: 0,
+          padding: '10px 13px',
           borderRadius: isAI ? '2px 10px 10px 10px' : '10px 2px 10px 10px',
           background: isAI ? 'var(--color-surface)' : 'var(--color-accent)',
           color: isAI ? 'var(--color-ink)' : '#fff',
@@ -54,6 +60,8 @@ export default function ChatBubble({ role, content, isStreaming }: ChatBubblePro
           fontFamily: 'var(--font-sans)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
+          overflowWrap: 'break-word',
+          overflow: 'visible',
         }}
       >
         {content}
@@ -74,3 +82,5 @@ export default function ChatBubble({ role, content, isStreaming }: ChatBubblePro
     </div>
   )
 }
+
+export default memo(ChatBubble)

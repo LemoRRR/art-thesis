@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowRight, BookOpen, CheckCircle2, Link2, Pencil, Sparkles } from 'lucide-react'
+import { ArrowRight, AtSign, BookOpen, CheckCircle2, FlaskConical, Pencil, Sparkles } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import {
   libraryStore,
@@ -12,8 +12,8 @@ import {
 
 const STAGES: Array<{ id: WorkflowStage; label: string; desc: string; route: string }> = [
   { id: 'stage1', label: '1 材料理解', desc: '确认研究对象、写作边界、学段与资料范围', route: 'stage1' },
-  { id: 'stage2', label: '2 框架生成', desc: '生成章节、按意见修改、管理版本历史', route: 'stage2' },
-  { id: 'stage3', label: '3 文稿撰写', desc: '全文润色、结构检查、导出前检查', route: 'stage3' },
+  { id: 'stage2', label: '2 大纲撰写', desc: '生成论文大纲、按意见调整章节结构', route: 'stage2' },
+  { id: 'stage3', label: '3 文章生成', desc: '按确认大纲生成全文、修改正文并导出', route: 'stage3' },
 ]
 
 export default function ProjectHome() {
@@ -23,23 +23,10 @@ export default function ProjectHome() {
   const [project, setProject] = useState<Project>(initialProject)
   const [editing, setEditing] = useState(false)
   const libraryItems = libraryStore.getAll()
-  const boundItems = useMemo(
-    () => libraryItems.filter(item => project.libraryItemIds.includes(item.id)),
-    [libraryItems, project.libraryItemIds]
-  )
   const sections = sectionStore.getByProject(project.id)
 
   const updateProject = (patch: Partial<Project>) => {
     projectStore.update(project.id, patch)
-    setProject(projectStore.ensure(project.id))
-  }
-
-  const toggleLibraryItem = (itemId: string) => {
-    if (project.libraryItemIds.includes(itemId)) {
-      projectStore.unbindLibraryItem(project.id, itemId)
-    } else {
-      projectStore.bindLibraryItem(project.id, itemId)
-    }
     setProject(projectStore.ensure(project.id))
   }
 
@@ -65,7 +52,7 @@ export default function ProjectHome() {
         >
           <div>
             <div style={{ fontSize: 15, fontWeight: 650, color: 'var(--color-ink)' }}>{project.title}</div>
-            <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>Project 工作区 · 可随时引用库资料和项目内容</div>
+            <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>Project 工作区 · 可随时引用资料库和项目内容</div>
           </div>
           <button
             onClick={() => setEditing(v => !v)}
@@ -121,7 +108,7 @@ export default function ProjectHome() {
               )}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
               {STAGES.map(stage => (
                 <button
                   key={stage.id}
@@ -153,6 +140,36 @@ export default function ProjectHome() {
                   </span>
                 </button>
               ))}
+              <button
+                onClick={() => navigate(`/projects/${project.id}/research`)}
+                style={{
+                  border: '1.5px solid var(--color-border)',
+                  borderRadius: 'var(--radius-lg)',
+                  background: 'var(--color-surface)',
+                  padding: 16,
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  fontFamily: 'var(--font-sans)',
+                  minHeight: 140,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 14, fontWeight: 650, color: 'var(--color-ink)', marginBottom: 8 }}>
+                    <FlaskConical size={15} color="var(--color-accent)" />
+                    F4 研究计算
+                  </span>
+                  <span style={{ display: 'block', fontSize: 12, lineHeight: 1.65, color: 'var(--color-ink-3)' }}>
+                    管理研究路线、量表、问卷模板、数据分析和结果插入
+                  </span>
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--color-accent)' }}>
+                  进入模块
+                  <ArrowRight size={12} />
+                </span>
+              </button>
             </div>
 
             <div
@@ -189,10 +206,10 @@ export default function ProjectHome() {
           >
             <h2 style={{ margin: '0 0 12px', fontSize: 15, color: 'var(--color-ink)', display: 'flex', alignItems: 'center', gap: 7 }}>
               <BookOpen size={15} />
-              绑定资料
+              资料库调用
             </h2>
             <p style={{ margin: '0 0 14px', fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.7 }}>
-              被绑定的库资料会作为项目默认上下文，也可在每次 AI 调用前手动勾选。
+              资料库是全局数据库，不会默认进入本项目。需要时在阶段输入框输入 @，搜索并选择资料维度后，AI 才会读取对应内容。
             </p>
 
             {libraryItems.length === 0 ? (
@@ -213,39 +230,32 @@ export default function ProjectHome() {
               </button>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {libraryItems.map(item => {
-                  const bound = project.libraryItemIds.includes(item.id)
-
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => toggleLibraryItem(item.id)}
-                      style={{
-                        border: `1px solid ${bound ? 'var(--color-accent)' : 'var(--color-border)'}`,
-                        borderRadius: 'var(--radius-md)',
-                        background: bound ? 'var(--color-accent-light)' : 'transparent',
-                        padding: 10,
-                        textAlign: 'left',
-                        cursor: 'pointer',
-                        fontFamily: 'var(--font-sans)',
-                      }}
-                    >
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 500, color: bound ? 'var(--color-accent)' : 'var(--color-ink)' }}>
-                        <Link2 size={12} />
-                        {item.title}
-                      </span>
-                      <span style={{ display: 'block', marginTop: 4, fontSize: 10, color: 'var(--color-ink-3)' }}>
-                        {bound ? '已绑定' : '点击绑定'} · {item.type.toUpperCase()}
-                      </span>
-                    </button>
-                  )
-                })}
+                {libraryItems.slice(0, 5).map(item => (
+                  <div
+                    key={item.id}
+                    style={{
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 'var(--radius-md)',
+                      background: 'transparent',
+                      padding: 10,
+                      fontFamily: 'var(--font-sans)',
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 500, color: 'var(--color-ink)' }}>
+                      <AtSign size={12} />
+                      @{item.title}
+                    </span>
+                    <span style={{ display: 'block', marginTop: 4, fontSize: 10, color: 'var(--color-ink-3)' }}>
+                      在阶段输入框中调用 · {item.type.toUpperCase()}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
 
-            {boundItems.length > 0 && (
+            {libraryItems.length > 5 && (
               <div style={{ marginTop: 14, fontSize: 11, color: 'var(--color-ink-3)' }}>
-                当前已绑定 {boundItems.length} 条资料。
+                还有 {libraryItems.length - 5} 条资料，可在输入框通过 @ 搜索调用。
               </div>
             )}
           </aside>

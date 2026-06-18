@@ -1,12 +1,13 @@
 import { Router } from 'express'
-import { supabase } from '../lib/supabase'
-import { requireAuth } from '../middleware/auth'
+import { createUserClient } from '../lib/supabase.js'
+import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
 router.use(requireAuth)
 
-router.get('/project/:projectId', async (req, res) => {
-  const { data, error } = await supabase
+router.get('/project/:projectId', async (req: AuthRequest, res) => {
+  const db = createUserClient(req.accessToken!)
+  const { data, error } = await db
     .from('versions')
     .select('*')
     .eq('project_id', req.params.projectId)
@@ -20,9 +21,10 @@ router.get('/project/:projectId', async (req, res) => {
   res.json(data)
 })
 
-router.post('/project/:projectId', async (req, res) => {
+router.post('/project/:projectId', async (req: AuthRequest, res) => {
+  const db = createUserClient(req.accessToken!)
   const { description, sections_snapshot } = req.body
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('versions')
     .insert({
       project_id: req.params.projectId,

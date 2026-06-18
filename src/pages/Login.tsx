@@ -1,25 +1,44 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { authAPI } from '../lib/api'
 import { auth } from '../lib/auth'
+import { createNewConversationProject } from '../lib/conversation'
 
 export default function Login() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [tab, setTab] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const goToNewConversation = () => {
+    const redirect = searchParams.get('redirect')
+    if (redirect?.startsWith('/')) {
+      navigate(redirect, { replace: true })
+      return
+    }
+    const project = createNewConversationProject()
+    navigate(`/projects/${project.id}/stage1`, { replace: true })
+  }
 
   const handleLogin = async () => {
-    if (!email || !password || loading) return
+    if (loading) return
+    if (!email || !password) {
+      setError('请填写邮箱和密码')
+      return
+    }
+    if (!isValidEmail(email)) {
+      setError('请输入有效邮箱，不能只填用户名')
+      return
+    }
     setLoading(true)
     setError('')
     try {
       await auth.login(email, password)
-      navigate('/')
+      goToNewConversation()
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败')
     } finally {
@@ -28,7 +47,19 @@ export default function Login() {
   }
 
   const handleRegister = async () => {
-    if (!email || !password || loading) return
+    if (loading) return
+    if (!email || !password) {
+      setError('请填写邮箱和密码')
+      return
+    }
+    if (!isValidEmail(email)) {
+      setError('请输入有效邮箱，不能只填用户名')
+      return
+    }
+    if (password.length < 6) {
+      setError('密码至少需要 6 位')
+      return
+    }
     setLoading(true)
     setError('')
     try {
@@ -39,8 +70,10 @@ export default function Login() {
       if (data.session?.access_token) {
         localStorage.setItem('access_token', data.session.access_token)
         localStorage.setItem('auth_user', JSON.stringify(data.user))
+        goToNewConversation()
+      } else {
+        navigate('/login', { replace: true })
       }
-      navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : '注册失败')
     } finally {
@@ -55,7 +88,7 @@ export default function Login() {
       <div style={{ width: 380, background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', padding: 32, boxShadow: 'var(--shadow-lg)' }}>
         <div style={{ marginBottom: 24, textAlign: 'center' }}>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-ink)' }}>论文助手</div>
-          <div style={{ fontSize: 12, color: 'var(--color-ink-3)', marginTop: 4 }}>AI 学术写作工作台</div>
+          <div style={{ fontSize: 12, color: 'var(--color-ink-3)', marginTop: 4 }}>艺术科研管理系统</div>
         </div>
 
         <div style={{ display: 'flex', marginBottom: 20, borderBottom: '1px solid var(--color-border)' }}>
@@ -82,7 +115,7 @@ export default function Login() {
           <input
             value={email}
             onChange={event => setEmail(event.target.value)}
-            placeholder="邮箱"
+            placeholder="邮箱（用于登录）"
             type="email"
             style={inputStyle}
           />
@@ -95,6 +128,11 @@ export default function Login() {
             style={inputStyle}
           />
           {error && <div style={{ fontSize: 12, color: '#C0392B' }}>{error}</div>}
+          {!error && (
+            <div style={{ fontSize: 12, color: 'var(--color-ink-3)' }}>
+              注册请使用邮箱，密码至少 6 位。
+            </div>
+          )}
           <button
             onClick={submit}
             disabled={loading}
@@ -106,6 +144,10 @@ export default function Login() {
       </div>
     </div>
   )
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 }
 
 const inputStyle: CSSProperties = {

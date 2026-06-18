@@ -4,8 +4,10 @@ import {
   projectStore,
   referenceStore,
   sectionStore,
+  styleProfileStore,
   type WorkflowStage,
 } from './storage'
+import type { MentionRef } from '../components/MentionInput'
 
 interface BuildAIContextOptions {
   projectId: string
@@ -45,6 +47,53 @@ const clip = (text: string, max = 1200) => {
   return `${clean.slice(0, boundary).trim()}\n……（已按上下文长度截断）`
 }
 
+function getMentionContent(itemId: string) {
+  const item = libraryStore.get(itemId)
+  if (!item) return ''
+  const parts = [
+    item.type === 'background' ? '资料定位：背景语境资料，用于建立研究对象、时代背景和概念关系；除非另有正式出处，不应直接作为论文脚注引用。' : '',
+    item.structureExtract ? `写法范式：\n${item.structureExtract}` : '',
+    item.styleExtract ? `风格识别：\n${item.styleExtract}` : '',
+    item.viewpointsExtract ? `调用方式：\n${item.viewpointsExtract}` : '',
+    item.casesExtract ? `材料与引用：\n${item.casesExtract}` : '',
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join('\n\n') : item.summary || item.text
+}
+
+function getStyleProfileMentionContent(profileId: string) {
+  const profile = styleProfileStore.get(profileId)
+  if (!profile) return ''
+  return [
+    `学生：${profile.studentName || profile.profileName}`,
+    profile.writingLevel ? `语言水平：${profile.writingLevel}` : '',
+    profile.sentenceStyle ? `句式特征：${profile.sentenceStyle}` : '',
+    profile.paragraphLogic ? `段落逻辑：${profile.paragraphLogic}` : '',
+    profile.argumentStyle ? `论证方式：${profile.argumentStyle}` : '',
+    profile.transitionStyle ? `衔接方式：${profile.transitionStyle}` : '',
+    profile.vocabularyStyle ? `词汇偏好：${profile.vocabularyStyle}` : '',
+    profile.editableSummary ? `可复制写法范式：\n${profile.editableSummary}` : '',
+    profile.avoidContentReuseNotice ? `限制：${profile.avoidContentReuseNotice}` : '只模仿语言水平和表达方式，不提取或复用具体内容。',
+  ].filter(Boolean).join('\n')
+}
+
+export function buildMentionContext(mentions: MentionRef[]): string {
+  if (mentions.length === 0) return ''
+  const parts = mentions
+    .map((mention, index) => {
+      const isStyleProfile = mention.kind === 'styleProfile' || Boolean(mention.styleProfileId)
+      const content = isStyleProfile && mention.styleProfileId
+        ? getStyleProfileMentionContent(mention.styleProfileId)
+        : mention.itemId
+          ? getMentionContent(mention.itemId)
+          : ''
+      if (!content.trim()) return ''
+      return `${index + 1}. ${isStyleProfile ? '/' : '@'}${mention.title}\n${clip(content, 1400)}`
+    })
+    .filter(Boolean)
+
+  return parts.length > 0 ? `【用户 @ 调用的资料写法范式】\n${parts.join('\n\n')}` : ''
+}
+
 export function buildAIContext({
   projectId,
   stage,
@@ -54,16 +103,15 @@ export function buildAIContext({
   const project = projectStore.ensure(projectId)
   const selection = referenceStore.get(projectId, stage)
   const sections = sectionStore.getByProject(projectId)
-  const libraryIds = Array.from(new Set([
-    ...project.libraryItemIds,
-    ...selection.libraryItemIds,
-  ]))
+  // Library 是全局资料库，默认不自动进入项目上下文；只有用户在引用面板或 @ 输入中显式调用时才进入 prompt。
+  const libraryIds = Array.from(new Set(selection.libraryItemIds))
   const libraryItems = libraryIds
     .map(id => libraryStore.get(id))
     .filter(item => item !== null)
   const styleItems = libraryItems.filter(item => item.type === 'style')
   const caseItems = libraryItems.filter(item => item.type === 'case')
-  const refItems = libraryItems.filter(item => item.type !== 'style' && item.type !== 'case')
+  const backgroundItems = libraryItems.filter(item => item.type === 'background')
+  const refItems = libraryItems.filter(item => item.type !== 'style' && item.type !== 'case' && item.type !== 'background')
   const selectedSections = sections.filter(section =>
     selection.sectionIds.includes(section.id) || section.id === currentSectionId
   )
@@ -87,8 +135,14 @@ export function buildAIContext({
   }
 
   if (refItems.length > 0) {
-    parts.push(`【引用的库资料】\n${refItems.map((item, index) =>
+    parts.push(`【引用的资料库资料】\n${refItems.map((item, index) =>
       `${index + 1}. ${item.title}\n类型：${item.type}\n摘要：${item.summary || '无'}\n内容摘录：${clip(item.text)}`
+    ).join('\n\n')}`)
+  }
+
+  if (backgroundItems.length > 0) {
+    parts.push(`【背景语境资料】\n这些资料用于帮助理解历史背景、人物关系、概念脉络和可写论点；除非资料中已给出可核验出处，不要把它们直接作为论文脚注或正式参考文献。\n\n${backgroundItems.map((item, index) =>
+      `${index + 1}. ${item.title}\n摘要：${item.summary || '无'}\n整理内容：${clip(getMentionContent(item.id), 1800)}`
     ).join('\n\n')}`)
   }
 

@@ -1,22 +1,30 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { CSSProperties, KeyboardEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, DragEvent, KeyboardEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowRight, BookOpen, ChevronDown, ChevronRight, Edit2, Plus, RefreshCw, Send, Trash2 } from 'lucide-react'
+import { ArrowRight, BookOpen, ChevronDown, ChevronRight, Edit2, GripVertical, History, Plus, RefreshCw, Send, Trash2 } from 'lucide-react'
 import ChatBubble from '../components/ChatBubble'
+import MentionInput, { type MentionRef } from '../components/MentionInput'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
+import VersionPanel from '../components/VersionPanel'
 import { callGPT } from '../lib/ai'
+import { formatAcademicOutlineMarker, formatAcademicOutlineText, isFrontMatterTitle } from '../lib/academicFormat'
+import { auth } from '../lib/auth'
+import { buildMentionContext } from '../lib/context'
 import { promptGenerateOutline, promptReviseOutline, type AcademicLevel } from '../lib/prompts'
 import {
   chatStore,
   outlineStore,
   projectStore,
+  versionStore,
   type ChatMessage,
   type Outline,
   type OutlineSection,
+  type Project,
 } from '../lib/storage'
 
 const uid = () => Math.random().toString(36).slice(2, 9)
+type DropPosition = 'before' | 'after' | 'inside'
 
 const normalizeAcademicLevel = (level: string): AcademicLevel => {
   return level === '硕士' || level === '期刊' ? level : '本科'
@@ -29,11 +37,7 @@ const cleanJSON = (content: string) => {
 }
 
 function outlineToText(sections: OutlineSection[], depth = 0): string {
-  return sections.map(section => {
-    const indent = '  '.repeat(depth)
-    const children = section.children ? outlineToText(section.children, depth + 1) : ''
-    return `${indent}${section.order} ${section.title}${children ? `\n${children}` : ''}`
-  }).join('\n')
+  return formatAcademicOutlineText(sections, depth)
 }
 
 function addIds(sections: OutlineSection[]): OutlineSection[] {
@@ -45,24 +49,369 @@ function addIds(sections: OutlineSection[]): OutlineSection[] {
   }))
 }
 
+function normalizeTitleKey(title: string): string {
+  return title.replace(/\s+/g, '').toLowerCase()
+}
+
+function mergeOutlineIds(nextSections: OutlineSection[], previousSections: OutlineSection[]): OutlineSection[] {
+  return nextSections.map(section => {
+    const match = section.id
+      ? findNodeInfo(previousSections, section.id)?.node
+      : previousSections.find(item =>
+        item.order === section.order ||
+        normalizeTitleKey(item.title) === normalizeTitleKey(section.title)
+      )
+
+    return {
+      ...section,
+      id: match?.id ?? section.id ?? uid(),
+      children: section.children?.length
+        ? mergeOutlineIds(section.children, match?.children ?? [])
+        : undefined,
+    }
+  })
+}
+
 function countSections(sections: OutlineSection[]): number {
   return sections.reduce((total, section) => total + 1 + (section.children ? countSections(section.children) : 0), 0)
 }
 
-function OutlineNode({
+function stripOutlineTitle(raw: string): string {
+  return raw
+    .replace(/^[\s:：、.．)）-]+/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function parseExistingOutlineFromText(text: string): OutlineSection[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+  const roots: OutlineSection[] = []
+  const stack: OutlineSection[] = []
+
+  const pushNode = (level: 1 | 2 | 3, title: string) => {
+    const cleanTitle = stripOutlineTitle(title)
+    if (!cleanTitle || /^(摘要|关键词|关键字|Abstract|Keywords?)[:：]?/i.test(cleanTitle)) return
+
+    const node: OutlineSection = {
+      id: uid(),
+      level,
+      order: '',
+      title: cleanTitle,
+      children: [],
+    }
+    stack[level - 1] = node
+    stack.length = level
+
+    if (level === 1) {
+      roots.push(node)
+      return
+    }
+
+    const parent = stack[level - 2]
+    if (!parent) {
+      roots.push({ ...node, level: 1 })
+      stack[0] = roots[roots.length - 1]
+      return
+    }
+    parent.children = [...(parent.children ?? []), node]
+  }
+
+  lines.forEach(line => {
+    const normalized = line.replace(/^\s*[-*•]\s*/, '')
+    const numericMatch = normalized.match(/^(\d+(?:\.\d+){0,2})[、.．\s]+(.+)$/)
+    if (numericMatch) {
+      const order = numericMatch[1]
+      const level = Math.min(order.split('.').length, 3) as 1 | 2 | 3
+      pushNode(level, numericMatch[2])
+      return
+    }
+
+    const chineseRoot = normalized.match(/^[一二三四五六七八九十]+[、.．]\s*(.+)$/)
+    if (chineseRoot) {
+      pushNode(1, chineseRoot[1])
+      return
+    }
+
+    const bracketSecond = normalized.match(/^[（(][一二三四五六七八九十]+[）)]\s*(.+)$/)
+    if (bracketSecond) {
+      pushNode(2, bracketSecond[1])
+    }
+  })
+
+  const prune = (sections: OutlineSection[]): OutlineSection[] => sections
+    .filter(section => section.title.trim())
+    .map(section => ({
+      ...section,
+      children: section.children?.length ? prune(section.children) : undefined,
+    }))
+
+  const parsed = prune(roots)
+  return countSections(parsed) >= 3 ? parsed : []
+}
+
+function getStage1OutlineText(projectId: string): string {
+  return chatStore
+    .getByProject(projectId, 'stage1')
+    .filter(message => message.role === 'user')
+    .map(message => message.content)
+    .join('\n\n')
+}
+
+function looksLikeReferenceOutlineRequest(text: string): boolean {
+  return /参考大纲|参考论文大纲|大纲参考|结构参考|迁移|模仿.*结构|学习.*结构|按照.*大纲|套用.*结构/.test(text)
+}
+
+function isAbstractOutlineSection(section: OutlineSection): boolean {
+  return section.order === '0' || isFrontMatterTitle(section.title)
+}
+
+function createAbstractOutlineSection(): OutlineSection {
+  return {
+    id: uid(),
+    order: '0',
+    level: 1,
+    title: '摘要',
+  }
+}
+
+function ensureAbstractOutlineSection(sections: OutlineSection[]): OutlineSection[] {
+  const abstractSection = sections.find(isAbstractOutlineSection)
+  const bodySections = sections.filter(section => !isAbstractOutlineSection(section))
+  return [
+    {
+      ...(abstractSection ?? createAbstractOutlineSection()),
+      order: '0',
+      level: 1,
+      title: '摘要',
+      children: undefined,
+    },
+    ...renumberOutline(bodySections),
+  ]
+}
+
+function renumberOutline(sections: OutlineSection[], parentOrder = ''): OutlineSection[] {
+  if (!parentOrder && sections.some(isAbstractOutlineSection)) {
+    return ensureAbstractOutlineSection(sections)
+  }
+
+  return sections.map((section, index) => {
+    const order = parentOrder ? `${parentOrder}.${index + 1}` : `${index + 1}`
+    const level = Math.min(order.split('.').length, 3) as 1 | 2 | 3
+    return {
+      ...section,
+      order,
+      level,
+      children: section.children?.length ? renumberOutline(section.children, order) : undefined,
+    }
+  })
+}
+
+function getTreeDepth(section: OutlineSection): number {
+  if (!section.children?.length) return 1
+  return 1 + Math.max(...section.children.map(getTreeDepth))
+}
+
+function containsNode(section: OutlineSection, id: string): boolean {
+  if (section.id === id) return true
+  return section.children?.some(child => containsNode(child, id)) ?? false
+}
+
+function findNodeInfo(
+  sections: OutlineSection[],
+  id: string,
+  path: number[] = []
+): { node: OutlineSection; path: number[] } | null {
+  for (let index = 0; index < sections.length; index += 1) {
+    const section = sections[index]
+    const nextPath = [...path, index]
+    if (section.id === id) return { node: section, path: nextPath }
+    const childResult = section.children ? findNodeInfo(section.children, id, nextPath) : null
+    if (childResult) return childResult
+  }
+  return null
+}
+
+function removeNodeById(
+  sections: OutlineSection[],
+  id: string
+): { sections: OutlineSection[]; node: OutlineSection | null } {
+  let removed: OutlineSection | null = null
+
+  const nextSections = sections
+    .filter(section => {
+      if (section.id !== id) return true
+      removed = section
+      return false
+    })
+    .map(section => {
+      if (removed || !section.children?.length) return section
+      const childResult = removeNodeById(section.children, id)
+      removed = childResult.node
+      return { ...section, children: childResult.sections }
+    })
+
+  return { sections: nextSections, node: removed }
+}
+
+function insertNodeAtTarget(
+  sections: OutlineSection[],
+  targetId: string,
+  node: OutlineSection,
+  position: DropPosition
+): { sections: OutlineSection[]; inserted: boolean } {
+  const nextSections: OutlineSection[] = []
+  let inserted = false
+
+  sections.forEach(section => {
+    if (section.id === targetId) {
+      if (position === 'before') {
+        nextSections.push(node, section)
+      } else if (position === 'after') {
+        nextSections.push(section, node)
+      } else {
+        nextSections.push({
+          ...section,
+          children: [...(section.children ?? []), node],
+        })
+      }
+      inserted = true
+      return
+    }
+
+    if (section.children?.length) {
+      const childResult = insertNodeAtTarget(section.children, targetId, node, position)
+      if (childResult.inserted) {
+        nextSections.push({ ...section, children: childResult.sections })
+        inserted = true
+        return
+      }
+    }
+
+    nextSections.push(section)
+  })
+
+  return { sections: nextSections, inserted }
+}
+
+function moveOutlineNode(
+  sections: OutlineSection[],
+  dragId: string,
+  targetId: string,
+  position: DropPosition
+): { sections: OutlineSection[]; error?: string } {
+  if (dragId === targetId) return { sections }
+
+  const dragInfo = findNodeInfo(sections, dragId)
+  const targetInfo = findNodeInfo(sections, targetId)
+  if (!dragInfo || !targetInfo) return { sections, error: '没有找到要移动的大纲标题。' }
+  if (containsNode(dragInfo.node, targetId)) {
+    return { sections, error: '不能把标题拖进自己的子标题里。' }
+  }
+
+  const targetDepth = targetInfo.path.length
+  const nextRootDepth = position === 'inside' ? targetDepth + 1 : targetDepth
+  if (nextRootDepth + getTreeDepth(dragInfo.node) - 1 > 3) {
+    return { sections, error: '当前大纲最多支持三级标题，移动后会超过三级。' }
+  }
+
+  const removed = removeNodeById(sections, dragId)
+  if (!removed.node) return { sections, error: '移动失败，请重试。' }
+
+  const inserted = insertNodeAtTarget(removed.sections, targetId, removed.node, position)
+  if (!inserted.inserted) return { sections, error: '没有找到目标位置。' }
+  return { sections: inserted.sections }
+}
+
+function hasOutlineContent(outline: Outline | null): outline is Outline {
+  return Boolean(outline?.sections?.length)
+}
+
+function compactStage2Messages(messages: ChatMessage[]): ChatMessage[] {
+  let hasNetworkOutlineError = false
+
+  return messages.filter(message => {
+    const isStaleThinking = message.role === 'ai' && message.content.includes('正在根据你的论文背景生成大纲')
+    if (isStaleThinking) return false
+
+    const isNetworkOutlineError = message.role === 'ai' &&
+      (message.content.includes('大纲生成出错') || message.content.includes('Failed to fetch'))
+    if (!isNetworkOutlineError) return true
+    if (hasNetworkOutlineError) return false
+    hasNetworkOutlineError = true
+    return true
+  })
+}
+
+function extractLineValue(content: string, label: string): string {
+  const match = content.match(new RegExp(`${label}[:：]\\s*([^\\n]+)`))
+  return match?.[1]?.trim() ?? ''
+}
+
+function getOutlineSource(project: Project): {
+  summary: string
+  academicLevel: AcademicLevel
+  title?: string
+  researchObject?: string
+  writingBoundary?: string
+  rawAcademicLevel?: string
+} {
+  if (project.context.rawSummary) {
+    return {
+      summary: project.context.rawSummary,
+      academicLevel: normalizeAcademicLevel(project.context.academicLevel),
+    }
+  }
+
+  const completedMessage = [...chatStore.getByProject(project.id, 'stage1')]
+    .reverse()
+    .find(message => message.role === 'ai' && message.content.includes('【理解完成'))
+
+  if (!completedMessage) {
+    return { summary: '', academicLevel: normalizeAcademicLevel(project.context.academicLevel) }
+  }
+
+  const researchObject = extractLineValue(completedMessage.content, '研究对象')
+  const writingBoundary = extractLineValue(completedMessage.content, '写作边界')
+  const academicLevel = extractLineValue(completedMessage.content, '学段判断') || extractLineValue(completedMessage.content, '学段')
+  const coreClaims = extractLineValue(completedMessage.content, '核心论点')
+  const title = extractLineValue(completedMessage.content, '论文标题')
+  const summary = [
+    researchObject ? `研究对象：${researchObject}` : '',
+    writingBoundary ? `写作边界：${writingBoundary}` : '',
+    academicLevel ? `学段：${academicLevel}` : '',
+    coreClaims ? `核心论点：${coreClaims}` : '',
+  ].filter(Boolean).join('\n')
+
+  return {
+    summary,
+    academicLevel: normalizeAcademicLevel(academicLevel || project.context.academicLevel),
+    title,
+    researchObject,
+    writingBoundary,
+    rawAcademicLevel: academicLevel,
+  }
+}
+
+const OutlineNode = memo(function OutlineNode({
   section,
   onEdit,
   onDelete,
   onAddChild,
+  onMove,
 }: {
   section: OutlineSection
   onEdit: (id: string, newTitle: string) => void
   onDelete: (id: string) => void
   onAddChild: (parentId: string) => void
+  onMove: (dragId: string, targetId: string, position: DropPosition) => void
 }) {
   const [expanded, setExpanded] = useState(true)
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(section.title)
+  const [dropPosition, setDropPosition] = useState<DropPosition | null>(null)
   const hasChildren = Boolean(section.children?.length)
   const levelStyle: Record<number, CSSProperties> = {
     1: { fontSize: 15, fontWeight: 650, color: 'var(--color-ink)', paddingLeft: 0 },
@@ -80,19 +429,59 @@ function OutlineNode({
     setEditing(false)
   }
 
+  const getDropPosition = (event: DragEvent<HTMLDivElement>): DropPosition => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const offsetY = event.clientY - rect.top
+    if (offsetY < rect.height * 0.28) return 'before'
+    if (offsetY > rect.height * 0.72) return 'after'
+    return section.level < 3 ? 'inside' : 'after'
+  }
+
   return (
     <div style={{ marginBottom: section.level === 1 ? 12 : 4 }}>
       <div
         className="outline-row"
+        onDragOver={event => {
+          event.preventDefault()
+          event.dataTransfer.dropEffect = 'move'
+          setDropPosition(getDropPosition(event))
+        }}
+        onDragLeave={() => setDropPosition(null)}
+        onDrop={event => {
+          event.preventDefault()
+          const dragId = event.dataTransfer.getData('text/plain')
+          if (dragId) onMove(dragId, section.id, dropPosition ?? getDropPosition(event))
+          setDropPosition(null)
+        }}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 6,
           padding: '4px 8px',
           borderRadius: 'var(--radius-sm)',
+          boxShadow: dropPosition === 'before'
+            ? 'inset 0 2px 0 var(--color-accent)'
+            : dropPosition === 'after'
+              ? 'inset 0 -2px 0 var(--color-accent)'
+              : dropPosition === 'inside'
+                ? 'inset 0 0 0 1px var(--color-accent)'
+                : 'none',
+          background: dropPosition === 'inside' ? 'var(--color-accent-light)' : undefined,
           ...(levelStyle[section.level] ?? levelStyle[3]),
         }}
       >
+        <span
+          draggable={!editing}
+          onDragStart={event => {
+            event.dataTransfer.effectAllowed = 'move'
+            event.dataTransfer.setData('text/plain', section.id)
+          }}
+          title="拖拽移动整段大纲"
+          style={{ display: 'flex', color: 'var(--color-ink-3)', cursor: editing ? 'default' : 'grab' }}
+        >
+          <GripVertical size={13} />
+        </span>
+
         {hasChildren ? (
           <button
             onClick={() => setExpanded(value => !value)}
@@ -105,7 +494,7 @@ function OutlineNode({
         )}
 
         <span style={{ color: 'var(--color-ink-3)', fontSize: 11, flexShrink: 0, minWidth: 36 }}>
-          {section.order}
+          {formatAcademicOutlineMarker(section.order) || '摘要'}
         </span>
 
         {editing ? (
@@ -133,10 +522,16 @@ function OutlineNode({
             }}
           />
         ) : (
-          <span style={{ flex: 1 }}>{section.title}</span>
+          <span
+            onClick={() => setEditing(true)}
+            title="点击编辑标题"
+            style={{ flex: 1, cursor: 'text', minHeight: 22, display: 'inline-flex', alignItems: 'center' }}
+          >
+            {section.title}
+          </span>
         )}
 
-        <div className="outline-actions" style={{ display: 'flex', gap: 3, opacity: 0, transition: 'opacity 0.1s' }}>
+        <div className="outline-actions" style={{ display: 'flex', gap: 3, opacity: 0.35, transition: 'opacity 0.1s' }}>
           <button
             onClick={() => setEditing(true)}
             style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-ink-3)', padding: 2, display: 'flex' }}
@@ -169,13 +564,14 @@ function OutlineNode({
               onEdit={onEdit}
               onDelete={onDelete}
               onAddChild={onAddChild}
+              onMove={onMove}
             />
           ))}
         </div>
       )}
     </div>
   )
-}
+})
 
 export default function Stage2() {
   const navigate = useNavigate()
@@ -183,6 +579,7 @@ export default function Stage2() {
   const project = projectStore.ensure(params.projectId)
   const bottomRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const autoGenerateAttemptedRef = useRef(false)
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [outline, setOutline] = useState<Outline | null>(null)
@@ -191,8 +588,22 @@ export default function Stage2() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [initialLoadDone, setInitialLoadDone] = useState(false)
   const [projectTitle, setProjectTitle] = useState(project.title)
+  const [mentions, setMentions] = useState<MentionRef[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+  const loggedIn = auth.isLoggedIn()
+  const loginRedirect = `/login?redirect=${encodeURIComponent(`/projects/${project.id}/stage2`)}`
 
-  const academicLevel = normalizeAcademicLevel(project.context.academicLevel)
+  const outlineSource = useMemo(() => getOutlineSource(project), [project])
+  const canGenerateOutline = Boolean(outlineSource.summary)
+  const outlineNodeCount = useMemo(
+    () => hasOutlineContent(outline) ? countSections(outline.sections) : 0,
+    [outline]
+  )
+  const outlinePreview = useMemo(() => {
+    if (!hasOutlineContent(outline)) return ''
+    const text = outlineToText(outline.sections)
+    return `${text.slice(0, 90)}${text.length > 90 ? '…' : ''}`
+  }, [outline])
 
   const saveStageMessages = useCallback((nextMessages: ChatMessage[]) => {
     chatStore.saveForProject(project.id, 'stage2', nextMessages.map(message => ({
@@ -201,15 +612,108 @@ export default function Stage2() {
     })))
   }, [project.id])
 
-  const autoGenerateOutline = useCallback(() => {
+  useEffect(() => {
+    if (!project.context.rawSummary && outlineSource.summary) {
+      projectStore.update(project.id, {
+        title: outlineSource.title || project.title,
+        context: {
+          ...project.context,
+          researchObject: outlineSource.researchObject || project.context.researchObject,
+          writingBoundary: outlineSource.writingBoundary || project.context.writingBoundary,
+          academicLevel: outlineSource.rawAcademicLevel || project.context.academicLevel,
+          rawSummary: outlineSource.summary,
+        },
+      })
+      if (outlineSource.title) queueMicrotask(() => setProjectTitle(outlineSource.title!))
+    }
+  }, [outlineSource, project.context, project.id, project.title])
+
+  const autoGenerateOutline = useCallback((force = false) => {
     const existingOutline = outlineStore.get(project.id)
-    if (existingOutline) {
-      setOutline(existingOutline)
+    if (!force && hasOutlineContent(existingOutline)) {
+      const normalizedOutline = {
+        ...existingOutline,
+        sections: ensureAbstractOutlineSection(existingOutline.sections),
+      }
+      setOutline(normalizedOutline)
+      if (normalizedOutline.sections !== existingOutline.sections) {
+        outlineStore.save(normalizedOutline)
+      }
       return
     }
 
-    const comprehensionSummary = project.context.rawSummary
-    if (!comprehensionSummary || isGenerating) return
+    const source = getOutlineSource(projectStore.ensure(project.id))
+    const comprehensionSummary = source.summary
+    const stage1OutlineText = getStage1OutlineText(project.id)
+    const shouldMigrateReferenceOutline = looksLikeReferenceOutlineRequest(stage1OutlineText)
+    const detectedOutlineSections = parseExistingOutlineFromText(stage1OutlineText)
+    if (detectedOutlineSections.length > 0 && !shouldMigrateReferenceOutline) {
+      const newOutline: Outline = {
+        projectId: project.id,
+        sections: ensureAbstractOutlineSection(detectedOutlineSections),
+        updatedAt: Date.now(),
+      }
+      setOutline(newOutline)
+      outlineStore.save(newOutline)
+      versionStore.snapshotOutline('套用用户提供的大纲', newOutline)
+      const doneMsg: ChatMessage = {
+        id: `s2_${uid()}`,
+        role: 'ai',
+        content: `我识别到你已经提供了完整大纲，已直接套用到右侧结构中，共 ${countSections(newOutline.sections)} 个标题节点。\n\n你可以继续手动编辑标题，或点击「进入全文生成」。`,
+        timestamp: Date.now(),
+        projectId: project.id,
+        stage: 'stage2',
+        flow: 'outline',
+      }
+      setMessages(prev => {
+        const next = [...prev, doneMsg]
+        saveStageMessages(next)
+        return next
+      })
+      return
+    }
+
+    if (!comprehensionSummary || isGenerating) {
+      if (!comprehensionSummary) {
+        const errMsg: ChatMessage = {
+          id: `s2_${uid()}`,
+          role: 'ai',
+          content: '还没有足够的材料理解信息。请先回到阶段一完成研究对象、写作边界和学段确认。',
+          timestamp: Date.now(),
+          projectId: project.id,
+          stage: 'stage2',
+          flow: 'outline',
+        }
+        setMessages(prev => {
+          const next = [...prev, errMsg]
+          saveStageMessages(next)
+          return next
+        })
+      }
+      return
+    }
+
+    if (!auth.isLoggedIn()) {
+      const loginMsg: ChatMessage = {
+        id: `s2_${uid()}`,
+        role: 'ai',
+        content: '生成大纲需要先登录。请先点击左下角登录，或打开 Demo 登录入口后再回到这里生成大纲。',
+        timestamp: Date.now(),
+        projectId: project.id,
+        stage: 'stage2',
+        flow: 'outline',
+      }
+      setMessages(prev => {
+        const next = [...prev.filter(message =>
+          !message.content.includes('Failed to fetch') &&
+          !message.content.includes('登录已过期') &&
+          !message.content.includes('生成大纲需要先登录')
+        ), loginMsg]
+        saveStageMessages(next)
+        return next
+      })
+      return
+    }
 
     setIsGenerating(true)
 
@@ -230,7 +734,12 @@ export default function Stage2() {
     abortRef.current = abort
 
     callGPT(
-      promptGenerateOutline(comprehensionSummary, academicLevel),
+      promptGenerateOutline(
+        comprehensionSummary,
+        source.academicLevel,
+        shouldMigrateReferenceOutline ? '优先采用用户提供的参考大纲进行结构迁移。' : undefined,
+        shouldMigrateReferenceOutline ? stage1OutlineText : undefined
+      ),
       {
         onChunk: (chunk) => {
           jsonContent += chunk
@@ -241,11 +750,12 @@ export default function Stage2() {
             const parsed = JSON.parse(cleanJSON(jsonContent))
             const newOutline: Outline = {
               projectId: project.id,
-              sections: addIds(parsed.sections ?? []),
+              sections: ensureAbstractOutlineSection(addIds(parsed.sections ?? [])),
               updatedAt: Date.now(),
             }
             setOutline(newOutline)
             outlineStore.save(newOutline)
+            versionStore.snapshotOutline('AI 生成大纲', newOutline)
 
             const doneMsg: ChatMessage = {
               id: `s2_${uid()}`,
@@ -298,41 +808,70 @@ export default function Stage2() {
       },
       abort.signal
     )
-  }, [academicLevel, isGenerating, project.context.rawSummary, project.id, saveStageMessages])
+  }, [isGenerating, project.id, saveStageMessages])
 
   useEffect(() => {
-    const savedMsgs = chatStore.getByProject(project.id, 'stage2').filter(message => message.flow === 'outline')
-    const savedOutline = outlineStore.get(project.id)
+    let cancelled = false
 
-    if (savedMsgs.length > 0) {
-      setMessages(savedMsgs)
-    } else {
-      const welcome: ChatMessage = {
-        id: 's2_welcome',
-        role: 'ai',
-        content: '已完成材料理解。我将根据你的论文背景生成完整大纲，你可以在右侧直接编辑标题，也可以在这里告诉我需要调整的地方。',
-        timestamp: Date.now(),
-        projectId: project.id,
-        stage: 'stage2',
-        flow: 'outline',
+    queueMicrotask(() => {
+      if (cancelled) return
+
+      const rawSavedMsgs = chatStore.getByProject(project.id, 'stage2').filter(message => message.flow === 'outline')
+      const savedMsgs = compactStage2Messages(rawSavedMsgs)
+      if (savedMsgs.length !== rawSavedMsgs.length) {
+        saveStageMessages(savedMsgs)
       }
-      setMessages([welcome])
-      saveStageMessages([welcome])
-    }
+      const savedOutline = outlineStore.get(project.id)
 
-    if (savedOutline) {
-      setOutline(savedOutline)
-    }
+      if (savedMsgs.length > 0) {
+        setMessages(savedMsgs)
+      } else {
+        const welcome: ChatMessage = {
+          id: 's2_welcome',
+          role: 'ai',
+          content: '已完成材料理解。我将根据你的论文背景生成完整大纲，你可以在右侧直接编辑标题，也可以在这里告诉我需要调整的地方。',
+          timestamp: Date.now(),
+          projectId: project.id,
+          stage: 'stage2',
+          flow: 'outline',
+        }
+        setMessages([welcome])
+        saveStageMessages([welcome])
+      }
 
-    setInitialLoadDone(true)
-    projectStore.update(project.id, { currentStage: 'stage2' })
+      if (hasOutlineContent(savedOutline)) {
+        const normalizedOutline = {
+          ...savedOutline,
+          sections: ensureAbstractOutlineSection(savedOutline.sections),
+        }
+        setOutline(normalizedOutline)
+        if (normalizedOutline.sections !== savedOutline.sections) {
+          outlineStore.save(normalizedOutline)
+        }
+      }
+
+      autoGenerateAttemptedRef.current = false
+      setInitialLoadDone(true)
+      projectStore.update(project.id, { currentStage: 'stage2' })
+    })
+
+    return () => {
+      cancelled = true
+    }
   }, [project.id, saveStageMessages])
 
   useEffect(() => {
-    if (initialLoadDone && !outline && !isGenerating && project.context.rawSummary) {
-      autoGenerateOutline()
+    if (
+      initialLoadDone &&
+      !autoGenerateAttemptedRef.current &&
+      !hasOutlineContent(outline) &&
+      !isGenerating &&
+      canGenerateOutline
+    ) {
+      autoGenerateAttemptedRef.current = true
+      queueMicrotask(() => autoGenerateOutline(true))
     }
-  }, [autoGenerateOutline, initialLoadDone, isGenerating, outline, project.context.rawSummary])
+  }, [autoGenerateOutline, canGenerateOutline, initialLoadDone, isGenerating, outline])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -342,6 +881,8 @@ export default function Stage2() {
     const text = inputText.trim()
     if (!text || isLoading || !outline) return
     setInputText('')
+    const mentionContext = buildMentionContext(mentions)
+    setMentions([])
 
     const userMsg: ChatMessage = {
       id: `s2_${uid()}`,
@@ -373,9 +914,10 @@ export default function Stage2() {
     const abort = new AbortController()
     abortRef.current = abort
     const currentOutlineJSON = JSON.stringify({ sections: outline.sections }, null, 2)
+    const revisionContext = [project.context.rawSummary, mentionContext].filter(Boolean).join('\n\n---\n\n')
 
     callGPT(
-      promptReviseOutline(currentOutlineJSON, text, project.context.rawSummary),
+      promptReviseOutline(currentOutlineJSON, text, revisionContext),
       {
         onChunk: (chunk) => {
           jsonContent += chunk
@@ -389,11 +931,12 @@ export default function Stage2() {
             const parsed = JSON.parse(cleanJSON(jsonContent))
             const updatedOutline: Outline = {
               ...outline,
-              sections: addIds(parsed.sections ?? []),
+              sections: ensureAbstractOutlineSection(mergeOutlineIds(addIds(parsed.sections ?? []), outline.sections)),
               updatedAt: Date.now(),
             }
             setOutline(updatedOutline)
             outlineStore.save(updatedOutline)
+            versionStore.snapshotOutline('AI 调整大纲', updatedOutline)
 
             const finalMessages = [...newMessages, { ...aiMsg, content: '大纲已更新，请在右侧查看。还有需要调整的地方吗？' }]
             setMessages(finalMessages)
@@ -413,16 +956,21 @@ export default function Stage2() {
       },
       abort.signal
     )
-  }, [inputText, isLoading, messages, outline, project.context.rawSummary, project.id, saveStageMessages])
+  }, [inputText, isLoading, mentions, messages, outline, project.context.rawSummary, project.id, saveStageMessages])
 
-  const saveOutline = (nextSections: OutlineSection[]) => {
+  const saveOutline = useCallback((nextSections: OutlineSection[], description = '手动编辑大纲') => {
     if (!outline) return
-    const updated = { ...outline, sections: nextSections, updatedAt: Date.now() }
+    const updated = {
+      ...outline,
+      sections: ensureAbstractOutlineSection(renumberOutline(nextSections)),
+      updatedAt: Date.now(),
+    }
     setOutline(updated)
     outlineStore.save(updated)
-  }
+    versionStore.snapshotOutline(description, updated)
+  }, [outline])
 
-  const handleEditTitle = (id: string, newTitle: string) => {
+  const handleEditTitle = useCallback((id: string, newTitle: string) => {
     if (!outline) return
     const editNode = (sections: OutlineSection[]): OutlineSection[] => {
       return sections.map(section => {
@@ -431,20 +979,21 @@ export default function Stage2() {
         return section
       })
     }
-    saveOutline(editNode(outline.sections))
-  }
+    saveOutline(editNode(outline.sections), '修改大纲标题')
+  }, [outline, saveOutline])
 
-  const handleDeleteNode = (id: string) => {
+  const handleDeleteNode = useCallback((id: string) => {
     if (!outline) return
+    if (!confirm('确认删除这个大纲标题及其子标题？')) return
     const deleteNode = (sections: OutlineSection[]): OutlineSection[] => {
       return sections
         .filter(section => section.id !== id)
         .map(section => section.children ? { ...section, children: deleteNode(section.children) } : section)
     }
-    saveOutline(deleteNode(outline.sections))
-  }
+    saveOutline(deleteNode(outline.sections), '删除大纲标题')
+  }, [outline, saveOutline])
 
-  const handleAddChild = (parentId: string) => {
+  const handleAddChild = useCallback((parentId: string) => {
     if (!outline) return
     const addChild = (sections: OutlineSection[]): OutlineSection[] => {
       return sections.map(section => {
@@ -462,20 +1011,47 @@ export default function Stage2() {
         return section
       })
     }
-    saveOutline(addChild(outline.sections))
+    saveOutline(addChild(outline.sections), '新增子标题')
+  }, [outline, saveOutline])
+
+  const handleMoveNode = useCallback((dragId: string, targetId: string, position: DropPosition) => {
+    if (!outline) return
+    const result = moveOutlineNode(outline.sections, dragId, targetId, position)
+    if (result.error) {
+      alert(result.error)
+      return
+    }
+    saveOutline(result.sections, '拖拽调整大纲结构')
+  }, [outline, saveOutline])
+
+  const handleAddRootSection = () => {
+    if (!outline) return
+    const section: OutlineSection = {
+      id: uid(),
+      level: 1,
+      title: '新章节',
+      order: `${outline.sections.filter(section => !isAbstractOutlineSection(section)).length + 1}`,
+      children: [],
+    }
+    saveOutline([...outline.sections, section], '新增一级标题')
   }
 
   const confirmOutline = () => {
-    if (!outline) return
+    if (!hasOutlineContent(outline)) return
     outlineStore.confirm(project.id)
-    navigate(`/projects/${project.id}/stage3`)
+    navigate(`/projects/${project.id}/research`)
   }
 
   const handleRegenerate = () => {
-    if (!confirm('确认重新生成大纲？当前大纲会被清空。')) return
+    if (!loggedIn) {
+      navigate(loginRedirect)
+      return
+    }
+    if (hasOutlineContent(outline) && !confirm('确认重新生成大纲？当前大纲会被清空。')) return
     outlineStore.clear(project.id)
     setOutline(null)
-    autoGenerateOutline()
+    autoGenerateAttemptedRef.current = true
+    autoGenerateOutline(true)
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -490,14 +1066,33 @@ export default function Stage2() {
     projectStore.update(project.id, { title: title.trim() || '未命名论文' })
   }
 
+  const handleGenerateOutlineClick = () => {
+    if (!loggedIn) {
+      navigate(loginRedirect)
+      return
+    }
+    autoGenerateOutline(true)
+  }
+
   return (
     <div style={{ height: '100vh', display: 'flex', background: 'var(--color-bg)', overflow: 'hidden' }}>
       <Sidebar />
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <TopBar currentStep={1} />
+        <TopBar
+          currentStep={1}
+          right={
+            <button
+              onClick={() => setShowHistory(value => !value)}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: `1px solid ${showHistory ? 'var(--color-accent)' : 'var(--color-border)'}`, background: showHistory ? 'var(--color-accent-light)' : 'transparent', color: showHistory ? 'var(--color-accent)' : 'var(--color-ink-3)', fontSize: 12, cursor: 'pointer' }}
+            >
+              <History size={13} />
+              版本历史
+            </button>
+          }
+        />
 
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-          <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
+          <div style={{ width: 300, minWidth: 0, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--color-border)', background: 'var(--color-surface)', overflow: 'hidden' }}>
             <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-ink)', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <BookOpen size={14} />
@@ -506,7 +1101,7 @@ export default function Stage2() {
               <div style={{ fontSize: 11, color: 'var(--color-ink-3)', marginTop: 2 }}>告诉我需要修改哪里，或直接在右侧编辑标题</div>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', overflowX: 'hidden', padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
               {messages.map(message => (
                 <ChatBubble key={message.id} role={message.role} content={message.content} isStreaming={false} />
               ))}
@@ -514,16 +1109,15 @@ export default function Stage2() {
             </div>
 
             <div style={{ borderTop: '1px solid var(--color-border)', padding: 10, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <textarea
+              <MentionInput
                 value={inputText}
-                onChange={event => setInputText(event.target.value)}
+                onChange={setInputText}
+                mentions={mentions}
+                onMentionsChange={setMentions}
                 onKeyDown={handleKeyDown}
-                placeholder="如：第二章加一节关于 TAM 模型、把第三章拆成两章…"
+                placeholder="如：第二章加一节关于 TAM 模型；@ 调用资料库，/ 调用风格档案…"
                 rows={3}
                 disabled={isLoading || isGenerating || !outline}
-                style={{ width: '100%', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '8px 10px', fontSize: 12, resize: 'none', fontFamily: 'var(--font-sans)', outline: 'none', boxSizing: 'border-box' }}
-                onFocus={event => (event.currentTarget.style.borderColor = 'var(--color-accent)')}
-                onBlur={event => (event.currentTarget.style.borderColor = 'var(--color-border)')}
               />
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
@@ -568,7 +1162,7 @@ export default function Stage2() {
                 }}
               />
               <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>
-                {outline ? `共 ${outline.sections.length} 章 · ${countSections(outline.sections)} 个标题节点` : '生成中…'}
+                {hasOutlineContent(outline) ? `共 ${outline.sections.filter(section => !isAbstractOutlineSection(section)).length} 章 · ${outlineNodeCount} 个标题节点` : isGenerating ? '生成中…' : '尚未生成大纲'}
               </div>
             </div>
 
@@ -577,12 +1171,22 @@ export default function Stage2() {
                 <div style={{ color: 'var(--color-ink-3)', fontSize: 13, lineHeight: 2 }}>
                   正在生成大纲，请稍候…
                 </div>
-              ) : outline ? (
+              ) : hasOutlineContent(outline) ? (
                 <>
                   <style>{`
                     .outline-row:hover { background: var(--color-bg); }
-                    .outline-row:hover .outline-actions { opacity: 1 !important; }
+                    .outline-row:hover .outline-actions,
+                    .outline-row:focus-within .outline-actions { opacity: 1 !important; }
                   `}</style>
+                  <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={handleAddRootSection}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 10px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-surface)', color: 'var(--color-ink-2)', fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-sans)' }}
+                    >
+                      <Plus size={12} />
+                      新增一级标题
+                    </button>
+                  </div>
                   {outline.sections.map(section => (
                     <OutlineNode
                       key={section.id}
@@ -590,30 +1194,59 @@ export default function Stage2() {
                       onEdit={handleEditTitle}
                       onDelete={handleDeleteNode}
                       onAddChild={handleAddChild}
+                      onMove={handleMoveNode}
                     />
                   ))}
                 </>
               ) : (
-                <div style={{ color: 'var(--color-ink-3)', fontSize: 13, lineHeight: 1.8 }}>
-                  还没有大纲内容。请确认阶段一已完成材料理解，或点击左侧重新生成。
+                <div style={{ color: 'var(--color-ink-3)', fontSize: 13, lineHeight: 1.8, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+                  <span>还没有大纲内容。请确认阶段一已完成材料理解，然后点击下方按钮生成。</span>
+                  <button
+                  onClick={handleGenerateOutlineClick}
+                  disabled={isGenerating || !canGenerateOutline}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', border: 'none', borderRadius: 'var(--radius-sm)', background: !isGenerating && canGenerateOutline ? 'var(--color-accent)' : 'var(--color-border)', color: '#fff', fontSize: 12, cursor: !isGenerating && canGenerateOutline ? 'pointer' : 'not-allowed', fontFamily: 'var(--font-sans)' }}
+                >
+                  <RefreshCw size={13} />
+                  {loggedIn ? '生成大纲' : '登录后生成大纲'}
+                </button>
                 </div>
               )}
             </div>
 
             <div style={{ padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <span style={{ fontSize: 12, color: 'var(--color-ink-3)', whiteSpace: 'pre-wrap' }}>
-                {outline ? `确认大纲后，AI 将按大纲逐章生成正文。\n${outlineToText(outline.sections).slice(0, 90)}${outlineToText(outline.sections).length > 90 ? '…' : ''}` : '等待大纲生成'}
+                {hasOutlineContent(outline) ? `确认大纲后，先进入研究计算中心；如不需要量表或数据分析，可直接继续到文章生成。\n${outlinePreview}` : '等待大纲生成'}
               </span>
               <button
                 onClick={confirmOutline}
-                disabled={!outline || isGenerating}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', border: 'none', borderRadius: 'var(--radius-md)', background: !outline || isGenerating ? 'var(--color-border)' : 'var(--color-accent)', color: '#fff', fontSize: 13, fontWeight: 500, cursor: !outline || isGenerating ? 'not-allowed' : 'pointer', fontFamily: 'var(--font-sans)' }}
+                disabled={!hasOutlineContent(outline) || isGenerating}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', border: 'none', borderRadius: 'var(--radius-md)', background: !hasOutlineContent(outline) || isGenerating ? 'var(--color-border)' : 'var(--color-accent)', color: '#fff', fontSize: 13, fontWeight: 500, cursor: !hasOutlineContent(outline) || isGenerating ? 'not-allowed' : 'pointer', fontFamily: 'var(--font-sans)' }}
               >
-                进入全文生成
+                进入研究计算
                 <ArrowRight size={14} />
               </button>
             </div>
           </div>
+
+          {showHistory && (
+            <VersionPanel
+              projectId={project.id}
+              onClose={() => setShowHistory(false)}
+              onRestore={(snapshot) => {
+                if (snapshot.outline) {
+                  const restoredOutline = {
+                    ...snapshot.outline,
+                    projectId: project.id,
+                    updatedAt: Date.now(),
+                  }
+                  setOutline(restoredOutline)
+                  outlineStore.save(restoredOutline)
+                  return
+                }
+                versionStore.restore(snapshot, project.id)
+              }}
+            />
+          )}
         </div>
       </div>
     </div>
