@@ -184,6 +184,31 @@ export interface ScholarPaper {
   url?: string
   citedByCount?: number
   abstract?: string
+  relevanceReason?: string
+}
+
+export interface CitationEvidencePoint {
+  claim: string
+  sourceIds: string[]
+  writingUse: string
+}
+
+export interface CitationChapterEvidence {
+  chapterTitle: string
+  sourceIds: string[]
+  writingPlan: string
+  keyPoints: CitationEvidencePoint[]
+}
+
+export interface CitationEvidencePack {
+  theoryConcepts: CitationEvidencePoint[]
+  literatureReview: CitationEvidencePoint[]
+  methodSupport: CitationEvidencePoint[]
+  caseEvidence: CitationEvidencePoint[]
+  chapterEvidence: CitationChapterEvidence[]
+  rejectedSourceIds: string[]
+  cautions: string[]
+  summary: string
 }
 
 export const scholarAPI = {
@@ -193,6 +218,24 @@ export const scholarAPI = {
       {},
       30_000
     ),
+  prepare: (data: {
+    title: string
+    outline: string
+    researchObject?: string
+    academicLevel?: string
+    limit?: number
+  }) =>
+    request<{
+      provider: string
+      queries: string[]
+      candidates: ScholarPaper[]
+      autoSources: ScholarPaper[]
+      evidencePack?: CitationEvidencePack
+      auditNote?: string
+    }>('/api/scholar/prepare', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }, 90_000),
 }
 
 type SignedUploadResponse = {

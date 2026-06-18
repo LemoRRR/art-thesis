@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { authAPI } from '../lib/api'
 import { auth } from '../lib/auth'
 import { createNewConversationProject } from '../lib/conversation'
 
 export default function DemoLogin() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -18,6 +19,11 @@ export default function DemoLogin() {
         if (!data.session?.access_token) throw new Error('Demo 登录没有返回有效会话')
         localStorage.setItem('access_token', data.session.access_token)
         localStorage.setItem('auth_user', JSON.stringify(data.user))
+        const redirect = searchParams.get('redirect')
+        if (!cancelled && redirect?.startsWith('/')) {
+          navigate(redirect, { replace: true })
+          return
+        }
         const project = createNewConversationProject()
         if (!cancelled) navigate(`/projects/${project.id}/stage1`, { replace: true })
       } catch (err) {
@@ -29,7 +35,7 @@ export default function DemoLogin() {
     return () => {
       cancelled = true
     }
-  }, [navigate])
+  }, [navigate, searchParams])
 
   return (
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--color-bg)', color: 'var(--color-ink-2)', textAlign: 'center', padding: 24 }}>

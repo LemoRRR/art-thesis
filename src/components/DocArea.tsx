@@ -23,6 +23,8 @@ interface DocAreaProps {
   onGenerateSection: (title: string) => void
   onUpdateFootnote?: (footnoteId: string, noteText: string) => void
   onDeleteFootnote?: (footnoteId: string) => void
+  emptyTitle?: string
+  emptyText?: string
 }
 
 const A4_WIDTH = 794
@@ -42,6 +44,8 @@ export default function DocArea({
   onGenerateSection,
   onUpdateFootnote,
   onDeleteFootnote,
+  emptyTitle: customEmptyTitle,
+  emptyText: customEmptyText,
 }: DocAreaProps) {
   const [editingFootnote, setEditingFootnote] = useState<SectionFootnote | null>(null)
   const [footnoteDraft, setFootnoteDraft] = useState('')
@@ -80,10 +84,10 @@ export default function DocArea({
   }, [paperTitle, sections])
 
   if (sections.length === 0) {
-    const emptyTitle = isPreparing ? '正在准备正文' : '文档还是空的'
-    const emptyText = isPreparing
+    const emptyTitle = customEmptyTitle ?? (isPreparing ? '正在准备正文' : '文档还是空的')
+    const emptyText = customEmptyText ?? (isPreparing
       ? '已读取确认大纲，正在整理全文计划并准备逐章生成正文。'
-      : '先在阶段二确认大纲，或在左侧对话框说明章节标题，AI 会生成正文出现在这里。'
+      : '先在阶段二确认大纲，或在左侧对话框说明章节标题，AI 会生成正文出现在这里。')
 
     return (
       <div

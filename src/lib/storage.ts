@@ -359,7 +359,49 @@ export interface ReferenceSelection {
   sectionIds: string[]
   includeProjectContext: boolean
   includeConversationSummary: boolean
+  autoCitationEnabled?: boolean
+  autoSources?: CitationEvidenceSource[]
+  evidencePack?: CitationEvidencePack
+  lastAutoRunAt?: number
   updatedAt: number
+}
+
+export interface CitationEvidencePoint {
+  claim: string
+  sourceIds: string[]
+  writingUse: string
+}
+
+export interface CitationChapterEvidence {
+  chapterTitle: string
+  sourceIds: string[]
+  writingPlan: string
+  keyPoints: CitationEvidencePoint[]
+}
+
+export interface CitationEvidencePack {
+  theoryConcepts: CitationEvidencePoint[]
+  literatureReview: CitationEvidencePoint[]
+  methodSupport: CitationEvidencePoint[]
+  caseEvidence: CitationEvidencePoint[]
+  chapterEvidence: CitationChapterEvidence[]
+  rejectedSourceIds: string[]
+  cautions: string[]
+  summary: string
+}
+
+export interface CitationEvidenceSource {
+  id: string
+  title: string
+  authors: string[]
+  year?: number
+  source?: string
+  doi?: string
+  url?: string
+  abstract?: string
+  provider?: string
+  citedByCount?: number
+  relevanceReason?: string
 }
 
 interface DraftSnapshots {
@@ -545,6 +587,10 @@ function toApiReference(selection: ReferenceSelection) {
     section_ids: selection.sectionIds,
     include_project_context: selection.includeProjectContext,
     include_conversation_summary: selection.includeConversationSummary,
+    auto_citation_enabled: selection.autoCitationEnabled ?? true,
+    auto_sources: selection.autoSources ?? [],
+    evidence_pack: selection.evidencePack ?? null,
+    last_auto_run_at: selection.lastAutoRunAt ? new Date(selection.lastAutoRunAt).toISOString() : null,
   }
 }
 
@@ -558,6 +604,10 @@ function fromApiReference(row: any): ReferenceSelection | null {
     sectionIds: row.section_ids ?? [],
     includeProjectContext: row.include_project_context ?? true,
     includeConversationSummary: row.include_conversation_summary ?? false,
+    autoCitationEnabled: row.auto_citation_enabled ?? true,
+    autoSources: row.auto_sources ?? [],
+    evidencePack: row.evidence_pack ?? undefined,
+    lastAutoRunAt: row.last_auto_run_at ? toTime(row.last_auto_run_at) : undefined,
     updatedAt: toTime(row.updated_at),
   }
 }
@@ -683,7 +733,7 @@ async function pushLocalDataToRemote() {
   }
 }
 
-export async function syncRemoteData(): Promise<void> {
+export async function syncRemoteData(options: { projectIds?: string[] } = {}): Promise<void> {
   if (!canUseRemote()) return
 
   const localProjectsBeforeSync = read<Project[]>(KEYS.PROJECTS) ?? []
@@ -699,10 +749,16 @@ export async function syncRemoteData(): Promise<void> {
     return
   }
 
+  const requestedProjectIds = new Set((options.projectIds ?? []).filter(Boolean))
+  const activeId = read<string>(KEYS.ACTIVE_PROJECT)
+  if (activeId) requestedProjectIds.add(activeId)
+  if (requestedProjectIds.size === 0 && remoteProjects[0]) requestedProjectIds.add(remoteProjects[0].id)
+  const projectsToHydrate = remoteProjects.filter(project => requestedProjectIds.has(project.id))
+
   const [remoteLibrary, remoteStyleProfiles, projectPayloads] = await Promise.all([
     libraryAPI.list().then(rows => (rows as any[]).map(fromApiLibraryItem)),
     styleProfilesAPI.list().then(rows => (rows as any[]).map(fromApiStyleProfile)),
-    Promise.all(remoteProjects.map(async project => {
+    Promise.all(projectsToHydrate.map(async project => {
       const [sections, outline, versions, chatGroups, refs] = await Promise.all([
         sectionsAPI.listByProject(project.id).then(rows => (rows as any[]).map(fromApiSection)),
         outlinesAPI.getByProject(project.id).then(fromApiOutline),
@@ -716,6 +772,7 @@ export async function syncRemoteData(): Promise<void> {
       ])
 
       return {
+        projectId: project.id,
         remoteSectionCount: sections.length,
         sections: sections.length > 0
           ? sections
@@ -761,16 +818,14 @@ export async function syncRemoteData(): Promise<void> {
   write(KEYS.CHAT, mergeById(localChatsBeforeSync, projectPayloads.flatMap(item => item.chats)))
   write(KEYS.REFERENCES, mergeById(localRefsBeforeSync, projectPayloads.flatMap(item => item.refs)))
 
-  const activeId = read<string>(KEYS.ACTIVE_PROJECT)
   if (!activeId || !mergedProjects.some(project => project.id === activeId)) {
     write(KEYS.ACTIVE_PROJECT, mergedProjects[0].id)
   }
 
-  for (const project of remoteProjects) {
-    const localFallbackSections = localSectionsBeforeSync.filter(section => section.projectId === project.id)
-    const payload = projectPayloads.find(item => item.sections.some(section => section.projectId === project.id))
+  for (const payload of projectPayloads) {
+    const localFallbackSections = localSectionsBeforeSync.filter(section => section.projectId === payload.projectId)
     if (payload?.remoteSectionCount === 0 && localFallbackSections.length > 0) {
-      sectionStore.saveForProject(project.id, localFallbackSections)
+      sectionStore.saveForProject(payload.projectId, localFallbackSections)
     }
   }
 }
@@ -1380,6 +1435,9 @@ export const referenceStore = {
       sectionIds: [],
       includeProjectContext: true,
       includeConversationSummary: stage === 'stage2',
+      autoCitationEnabled: true,
+      autoSources: [],
+      evidencePack: undefined,
       updatedAt: Date.now(),
     }
   },

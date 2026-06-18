@@ -7,13 +7,16 @@ import {
   Paragraph,
   TextRun,
 } from 'docx'
+import { isFrontMatterTitle, stripAcademicTitlePrefix } from './academicFormat'
 import { cleanTitle, isDuplicateSectionTitle, parsePaperBlocks } from './documentFormat'
 import type { PaperEditorMark, PaperEditorNode } from './editorDocument'
-import { isPaperEditorDoc, walkEditorText } from './editorDocument'
+import { editorDocWithFootnoteMarks, isPaperEditorDoc, walkEditorText } from './editorDocument'
 import { getFootnotesForBlock, splitTextWithFootnotes } from './footnotes'
 import type { DocSection } from './storage'
 
 const FONT = '宋体'
+const HEADING_FONT = '黑体'
+const EN_FONT = 'Times New Roman'
 const TEXT_COLOR = '000000'
 const FILE_SAFE_PATTERN = /[\\/:*?"<>|]/g
 
@@ -62,15 +65,17 @@ function createTitleParagraph(title: string) {
 }
 
 function createSectionHeading(title: string) {
+  const clean = stripAcademicTitlePrefix(cleanTitle(title))
   return new Paragraph({
     heading: HeadingLevel.HEADING_1,
-    spacing: { before: 360, after: 240 },
+    alignment: AlignmentType.CENTER,
+    spacing: { before: 240, after: 240, line: 480 },
     children: [
       new TextRun({
-        text: cleanTitle(title),
+        text: clean,
         bold: true,
-        font: FONT,
-        size: 28,
+        font: HEADING_FONT,
+        size: 36,
         color: TEXT_COLOR,
       }),
     ],
@@ -80,13 +85,13 @@ function createSectionHeading(title: string) {
 function createSubHeading(text: string, level: 2 | 3) {
   return new Paragraph({
     heading: level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3,
-    spacing: { before: 240, after: 160 },
+    spacing: { before: 240, after: 120, line: 240 },
     children: [
       new TextRun({
         text,
         bold: true,
-        font: FONT,
-        size: level === 2 ? 26 : 24,
+        font: HEADING_FONT,
+        size: level === 2 ? 30 : 28,
         color: TEXT_COLOR,
       }),
     ],
@@ -154,6 +159,80 @@ function createBodyParagraphFromEditorNode(node: PaperEditorNode) {
   })
 }
 
+function createFrontMatterHeading(text: string) {
+  return new Paragraph({
+    heading: HeadingLevel.HEADING_1,
+    alignment: AlignmentType.CENTER,
+    spacing: { before: 240, after: 240, line: 480 },
+    children: [
+      new TextRun({
+        text,
+        bold: true,
+        font: text === 'Abstract' ? EN_FONT : HEADING_FONT,
+        size: 32,
+        color: TEXT_COLOR,
+      }),
+    ],
+  })
+}
+
+function createKeywordParagraph(label: string, text: string, english = false) {
+  return new Paragraph({
+    alignment: AlignmentType.JUSTIFIED,
+    spacing: { line: 312, before: 120, after: 160 },
+    children: [
+      new TextRun({ text: label, bold: true, font: english ? EN_FONT : HEADING_FONT, size: 24 }),
+      new TextRun({ text, font: english ? EN_FONT : FONT, size: 24 }),
+    ],
+  })
+}
+
+function createFrontMatterBodyParagraph(text: string, english = false) {
+  return new Paragraph({
+    alignment: AlignmentType.JUSTIFIED,
+    indent: { firstLine: 480 },
+    spacing: { line: 360, after: 160 },
+    children: [new TextRun({ text, font: english ? EN_FONT : FONT, size: 24 })],
+  })
+}
+
+function extractFrontMatterBlocks(content: string) {
+  const get = (label: string) => {
+    const match = content.match(new RegExp(`【${label}】([\\s\\S]*?)(?=\\n?【|$)`, 'i'))
+    return match?.[1]?.trim() ?? ''
+  }
+  return {
+    abstractZh: get('摘要'),
+    keywordsZh: get('关键词').replace(/^关键词[:：]\s*/, '').trim(),
+    abstractEn: get('Abstract'),
+    keywordsEn: get('Keywords').replace(/^Keywords[:：]\s*/i, '').trim(),
+  }
+}
+
+function createFrontMatterParagraphs(section: DocSection) {
+  const blocks = extractFrontMatterBlocks(section.content)
+  const children: Paragraph[] = []
+  if (blocks.abstractZh) {
+    children.push(createFrontMatterHeading('摘要'))
+    blocks.abstractZh.split(/\n+/).filter(Boolean).forEach(line => {
+      children.push(createFrontMatterBodyParagraph(line))
+    })
+  }
+  if (blocks.keywordsZh) {
+    children.push(createKeywordParagraph('关键词：', blocks.keywordsZh))
+  }
+  if (blocks.abstractEn) {
+    children.push(createFrontMatterHeading('Abstract'))
+    blocks.abstractEn.split(/\n+/).filter(Boolean).forEach(line => {
+      children.push(createFrontMatterBodyParagraph(line, true))
+    })
+  }
+  if (blocks.keywordsEn) {
+    children.push(createKeywordParagraph('Keywords: ', blocks.keywordsEn, true))
+  }
+  return children.length > 0 ? children : [createFrontMatterHeading('摘要')]
+}
+
 function buildFootnotesMap(sections: DocSection[]) {
   const footnotes: Record<string, { children: Paragraph[] }> = {}
 
@@ -194,10 +273,15 @@ function buildDocChildren(title: string, sections: DocSection[]) {
   const children: Paragraph[] = [createTitleParagraph(title)]
 
   sections.forEach(section => {
+    if (isFrontMatterTitle(section.title)) {
+      children.push(...createFrontMatterParagraphs(section))
+      return
+    }
+
     children.push(createSectionHeading(section.title))
 
     if (isPaperEditorDoc(section.editorDoc)) {
-      section.editorDoc.content
+      editorDocWithFootnoteMarks(section).content
         .filter((node, index) => index > 0 || !isDuplicateSectionTitle(plainTextFromEditorNode(node), section.title))
         .filter((node, index, list) => {
           if (node.type !== 'heading') return true
@@ -258,8 +342,8 @@ export async function exportSectionsToDocx(title: string, sections: DocSection[]
           quickFormat: true,
           run: {
             bold: true,
-            font: FONT,
-            size: 28,
+            font: HEADING_FONT,
+            size: 36,
             color: TEXT_COLOR,
           },
         },
@@ -271,8 +355,8 @@ export async function exportSectionsToDocx(title: string, sections: DocSection[]
           quickFormat: true,
           run: {
             bold: true,
-            font: FONT,
-            size: 26,
+            font: HEADING_FONT,
+            size: 30,
             color: TEXT_COLOR,
           },
         },
@@ -284,8 +368,8 @@ export async function exportSectionsToDocx(title: string, sections: DocSection[]
           quickFormat: true,
           run: {
             bold: true,
-            font: FONT,
-            size: 24,
+            font: HEADING_FONT,
+            size: 28,
             color: TEXT_COLOR,
           },
         },
@@ -297,9 +381,9 @@ export async function exportSectionsToDocx(title: string, sections: DocSection[]
           page: {
             margin: {
               top: 1440,
-              right: 1440,
+              right: 1800,
               bottom: 1440,
-              left: 1440,
+              left: 1800,
             },
           },
         },

@@ -1,4 +1,6 @@
 import { Router } from 'express'
+import { callAIOnce, type Message } from '../lib/ai.js'
+import { requireAuth } from '../middleware/auth.js'
 
 const router = Router()
 
@@ -92,6 +94,340 @@ function normalizeCrossrefWork(work: CrossrefWork) {
   }
 }
 
+type ScholarPaper = ReturnType<typeof normalizeOpenAlexWork>
+
+interface CitationEvidencePoint {
+  claim: string
+  sourceIds: string[]
+  writingUse: string
+}
+
+interface CitationChapterEvidence {
+  chapterTitle: string
+  sourceIds: string[]
+  writingPlan: string
+  keyPoints: CitationEvidencePoint[]
+}
+
+interface CitationEvidencePack {
+  theoryConcepts: CitationEvidencePoint[]
+  literatureReview: CitationEvidencePoint[]
+  methodSupport: CitationEvidencePoint[]
+  caseEvidence: CitationEvidencePoint[]
+  chapterEvidence: CitationChapterEvidence[]
+  rejectedSourceIds: string[]
+  cautions: string[]
+  summary: string
+}
+
+function stableSourceId(source: ScholarPaper) {
+  return source.doi || source.id || source.url || source.title
+}
+
+function dedupePapers(papers: ScholarPaper[]) {
+  const seen = new Set<string>()
+  return papers.filter(paper => {
+    const key = stableSourceId(paper).toLowerCase().trim()
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function interleavePaperBatches(batches: ScholarPaper[][]) {
+  const results: ScholarPaper[] = []
+  const maxLength = Math.max(0, ...batches.map(batch => batch.length))
+  for (let index = 0; index < maxLength; index += 1) {
+    batches.forEach(batch => {
+      if (batch[index]) results.push(batch[index])
+    })
+  }
+  return results
+}
+
+function scoreCandidateForFallback(paper: ScholarPaper, queryText: string) {
+  const haystack = `${paper.title} ${paper.source ?? ''} ${paper.abstract ?? ''}`.toLowerCase()
+  const tokens = queryText
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}\u4e00-\u9fff]+/u)
+    .filter(token => token.length >= 2)
+    .slice(0, 60)
+  const relevance = tokens.reduce((sum, token) => sum + (haystack.includes(token) ? 1 : 0), 0)
+  const citationWeight = Math.log10((paper.citedByCount ?? 0) + 1)
+  const abstractWeight = paper.abstract?.trim() ? 2 : 0
+  return relevance * 4 + citationWeight + abstractWeight
+}
+
+function extractJsonObject(text: string) {
+  const cleaned = text.replace(/```json|```/g, '').trim()
+  const start = cleaned.indexOf('{')
+  const end = cleaned.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) return null
+  try {
+    return JSON.parse(cleaned.slice(start, end + 1)) as any
+  } catch {
+    return null
+  }
+}
+
+function fallbackQueries(title: string, outline: string, researchObject = '') {
+  const outlineHeadings = outline
+    .split('\n')
+    .map(line => line.replace(/^[\s\d.、（()一二三四五六七八九十章节]+/, '').trim())
+    .filter(Boolean)
+    .slice(0, 8)
+  const seed = [title, researchObject, outlineHeadings.slice(0, 3).join(' ')].filter(Boolean).join(' ')
+  const objectOrTitle = researchObject || title
+  return Array.from(new Set([
+    seed,
+    objectOrTitle,
+    `${objectOrTitle} 美学 艺术 研究`,
+    `${objectOrTitle} 中国 西方 绘画 美学`,
+    `${title} literature review`,
+    `${objectOrTitle} art aesthetics painting research`,
+    ...outlineHeadings.slice(0, 4).map(heading => `${objectOrTitle} ${heading}`),
+  ].map(item => item.trim()).filter(Boolean))).slice(0, 8)
+}
+
+async function generateSearchQueries(title: string, outline: string, researchObject: string, academicLevel: string) {
+  const messages: Message[] = [
+    {
+      role: 'system',
+      content: `你是学术论文检索策略助手。请根据论文题目、大纲和研究对象生成 6 个适合 OpenAlex/Crossref 的检索式。
+要求：
+- 优先使用核心概念、研究对象、学科关键词；
+- 覆盖不同角度：理论概念、研究对象、章节主题、方法/案例、中文关键词、英文关键词；
+- 不要 6 条都只改同义词，避免检索结果集中在同几篇文献；
+- 可以中英混合，但每条不要太长；
+- 只输出 JSON：{"queries":["...","...","...","...","...","..."]}`,
+    },
+    {
+      role: 'user',
+      content: `题目：${title}\n学段：${academicLevel || '未指定'}\n研究对象：${researchObject || '未指定'}\n大纲：\n${outline.slice(0, 3000)}`,
+    },
+  ]
+
+  try {
+    const response = await callAIOnce(messages, 'gpt')
+    const parsed = extractJsonObject(response)
+    const queries = Array.isArray(parsed?.queries) ? parsed.queries.map(String).filter(Boolean) : []
+    return queries.length > 0 ? Array.from(new Set([...queries, ...fallbackQueries(title, outline, researchObject)])).slice(0, 8) : fallbackQueries(title, outline, researchObject)
+  } catch {
+    return fallbackQueries(title, outline, researchObject)
+  }
+}
+
+async function selectSourcesWithAI(params: {
+  title: string
+  outline: string
+  researchObject: string
+  academicLevel: string
+  candidates: ScholarPaper[]
+  limit: number
+}) {
+  const candidateText = params.candidates.map((paper, index) => [
+    `C${index + 1}. ${paper.title}`,
+    paper.authors.length ? `作者：${paper.authors.join('、')}` : '',
+    paper.year ? `年份：${paper.year}` : '',
+    paper.source ? `来源：${paper.source}` : '',
+    paper.citedByCount ? `引用数：${paper.citedByCount}` : '',
+    paper.abstract ? `摘要：${paper.abstract.slice(0, 600)}` : '',
+  ].filter(Boolean).join('\n')).join('\n\n')
+
+  const messages: Message[] = [
+    {
+      role: 'system',
+      content: `你是论文文献筛选助手。请从候选文献中选出最适合支撑论文正文的文献。
+筛选规则：
+- 只允许选择候选编号，不要编造新文献；
+- 优先选择与题目/研究对象/章节逻辑直接相关的文献；
+- 兼顾理论背景、研究现状、案例/对象分析、方法支持；
+- 输出 JSON：{"selected":[{"candidateId":"C1","relevanceReason":"一句话说明可用于哪里"}],"auditNote":"整体引用策略一句话"}`,
+    },
+    {
+      role: 'user',
+      content: `题目：${params.title}\n学段：${params.academicLevel || '未指定'}\n研究对象：${params.researchObject || '未指定'}\n大纲：\n${params.outline.slice(0, 3000)}\n\n候选文献：\n${candidateText}`,
+    },
+  ]
+
+  try {
+    const response = await callAIOnce(messages, 'gpt')
+    const parsed = extractJsonObject(response)
+    const selected = Array.isArray(parsed?.selected) ? parsed.selected : []
+    const sourceByCandidateId = new Map(params.candidates.map((paper, index) => [`C${index + 1}`, paper]))
+    const autoSources = selected
+      .map((item: any) => {
+        const source = sourceByCandidateId.get(String(item.candidateId))
+        if (!source) return null
+        return {
+          ...source,
+          relevanceReason: String(item.relevanceReason ?? '').slice(0, 180),
+        }
+      })
+      .filter((item: ScholarPaper | null): item is ScholarPaper => Boolean(item))
+      .slice(0, params.limit)
+    if (autoSources.length > 0) {
+      return { autoSources, auditNote: String(parsed?.auditNote ?? '') }
+    }
+  } catch {
+    // Fall through to deterministic ranking.
+  }
+
+  return {
+    autoSources: params.candidates
+      .slice()
+      .sort((a, b) =>
+        scoreCandidateForFallback(b, `${params.title} ${params.researchObject} ${params.outline}`)
+        - scoreCandidateForFallback(a, `${params.title} ${params.researchObject} ${params.outline}`)
+      )
+      .slice(0, params.limit)
+      .map(source => ({ ...source, relevanceReason: '系统根据检索相关性和引用信息自动选入。' })),
+    auditNote: 'AI筛选不可用，已使用检索相关性与引用量排序作为降级策略。',
+  }
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(item => String(item).trim()).filter(Boolean) : []
+}
+
+function normalizeEvidencePoints(value: unknown, allowedIds: Set<string>): CitationEvidencePoint[] {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, 12).map(item => {
+    const raw = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+    const sourceIds = normalizeStringArray(raw.sourceIds).filter(id => allowedIds.has(id)).slice(0, 4)
+    return {
+      claim: String(raw.claim ?? '').trim().slice(0, 220),
+      sourceIds,
+      writingUse: String(raw.writingUse ?? '').trim().slice(0, 220),
+    }
+  }).filter(point => point.claim)
+}
+
+function normalizeEvidencePack(value: unknown, allowedIds: Set<string>): CitationEvidencePack | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  const chapterEvidence = Array.isArray(raw.chapterEvidence)
+    ? raw.chapterEvidence.slice(0, 16).map(item => {
+        const chapter = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+        return {
+          chapterTitle: String(chapter.chapterTitle ?? '').trim().slice(0, 120),
+          sourceIds: normalizeStringArray(chapter.sourceIds).filter(id => allowedIds.has(id)).slice(0, 6),
+          writingPlan: String(chapter.writingPlan ?? '').trim().slice(0, 260),
+          keyPoints: normalizeEvidencePoints(chapter.keyPoints, allowedIds).slice(0, 6),
+        }
+      }).filter(item => item.chapterTitle || item.keyPoints.length)
+    : []
+
+  return {
+    theoryConcepts: normalizeEvidencePoints(raw.theoryConcepts, allowedIds),
+    literatureReview: normalizeEvidencePoints(raw.literatureReview, allowedIds),
+    methodSupport: normalizeEvidencePoints(raw.methodSupport, allowedIds),
+    caseEvidence: normalizeEvidencePoints(raw.caseEvidence, allowedIds),
+    chapterEvidence,
+    rejectedSourceIds: normalizeStringArray(raw.rejectedSourceIds).filter(id => allowedIds.has(id)).slice(0, 20),
+    cautions: normalizeStringArray(raw.cautions).slice(0, 8),
+    summary: String(raw.summary ?? '').trim().slice(0, 420),
+  }
+}
+
+function fallbackEvidencePack(autoSources: ScholarPaper[], outline: string): CitationEvidencePack {
+  const sourceIds = autoSources.map(stableSourceId).filter(Boolean)
+  const chapterTitles = outline
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .slice(0, 8)
+
+  return {
+    theoryConcepts: autoSources.slice(0, 3).map(source => ({
+      claim: source.abstract ? source.abstract.slice(0, 160) : `${source.title} 可作为概念、理论或研究背景参考。`,
+      sourceIds: [stableSourceId(source)],
+      writingUse: '用于概念界定、理论背景或研究现状铺垫。',
+    })),
+    literatureReview: autoSources.slice(0, 5).map(source => ({
+      claim: `${source.title} 可用于说明相关研究基础与已有讨论。`,
+      sourceIds: [stableSourceId(source)],
+      writingUse: '用于引言、文献综述或章节开头的研究现状说明。',
+    })),
+    methodSupport: [],
+    caseEvidence: [],
+    chapterEvidence: chapterTitles.map(title => ({
+      chapterTitle: title,
+      sourceIds: sourceIds.slice(0, 5),
+      writingPlan: '结合本章标题选择相关文献，先交代已有研究，再落到论文对象分析。',
+      keyPoints: [],
+    })),
+    rejectedSourceIds: [],
+    cautions: ['部分开放文献只有题录或摘要信息，正式提交前建议人工核对原文、页码与参考文献格式。'],
+    summary: autoSources.length
+      ? `系统已整理 ${autoSources.length} 条候选来源，可作为全文初稿的理论、现状和分析依据。`
+      : '未形成可靠证据包。',
+  }
+}
+
+async function buildEvidencePackWithAI(params: {
+  title: string
+  outline: string
+  researchObject: string
+  academicLevel: string
+  autoSources: ScholarPaper[]
+}): Promise<CitationEvidencePack> {
+  if (params.autoSources.length === 0) return fallbackEvidencePack([], params.outline)
+  const allowedIds = new Set(params.autoSources.map(stableSourceId).filter(Boolean))
+  const sourceText = params.autoSources.map((source, index) => [
+    `S${index + 1}`,
+    `sourceId: ${stableSourceId(source)}`,
+    `题名: ${source.title}`,
+    source.authors.length ? `作者: ${source.authors.join('、')}` : '',
+    source.year ? `年份: ${source.year}` : '',
+    source.source ? `来源: ${source.source}` : '',
+    source.relevanceReason ? `筛选理由: ${source.relevanceReason}` : '',
+    source.abstract ? `摘要: ${source.abstract.slice(0, 900)}` : '',
+  ].filter(Boolean).join('\n')).join('\n\n')
+
+  const messages: Message[] = [
+    {
+      role: 'system',
+      content: `你是论文文献预研助手。请把已筛选文献整理成“论文证据包”，用于先读文献再生成正文。
+要求：
+- 只能使用用户给出的 sourceId，不要编造新文献；
+- 不要写正文，只提炼可服务写作的证据、观点、章节用途；
+- 如果来源只适合背景理解或相关性较弱，放入 cautions 或 rejectedSourceIds；
+- 输出严格 JSON，不要代码块。
+JSON 格式：
+{
+  "theoryConcepts":[{"claim":"可用于概念/理论界定的证据点","sourceIds":["sourceId"],"writingUse":"适合放在哪类段落"}],
+  "literatureReview":[{"claim":"可用于研究现状的证据点","sourceIds":["sourceId"],"writingUse":"适合放在哪类段落"}],
+  "methodSupport":[{"claim":"可用于方法依据的证据点","sourceIds":["sourceId"],"writingUse":"适合放在哪类段落"}],
+  "caseEvidence":[{"claim":"可用于案例/对象分析的证据点","sourceIds":["sourceId"],"writingUse":"适合放在哪类段落"}],
+  "chapterEvidence":[{"chapterTitle":"大纲章节名","sourceIds":["sourceId"],"writingPlan":"本章如何用证据组织论证","keyPoints":[{"claim":"本章可写证据点","sourceIds":["sourceId"],"writingUse":"写作位置"}]}],
+  "rejectedSourceIds":["sourceId"],
+  "cautions":["引用风险或核对提醒"],
+  "summary":"整体证据包摘要"
+}`,
+    },
+    {
+      role: 'user',
+      content: `题目：${params.title}
+学段：${params.academicLevel || '未指定'}
+研究对象：${params.researchObject || '未指定'}
+大纲：
+${params.outline.slice(0, 4000)}
+
+已筛选文献：
+${sourceText}`,
+    },
+  ]
+
+  try {
+    const response = await callAIOnce(messages, 'gpt')
+    const parsed = extractJsonObject(response)
+    return normalizeEvidencePack(parsed, allowedIds) ?? fallbackEvidencePack(params.autoSources, params.outline)
+  } catch {
+    return fallbackEvidencePack(params.autoSources, params.outline)
+  }
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -169,6 +505,72 @@ router.get('/search', async (req, res) => {
       })
     }
   }
+})
+
+router.post('/prepare', requireAuth, async (req, res) => {
+  const title = typeof req.body.title === 'string' ? req.body.title.trim() : ''
+  const outline = typeof req.body.outline === 'string' ? req.body.outline.trim() : ''
+  const researchObject = typeof req.body.researchObject === 'string' ? req.body.researchObject.trim() : ''
+  const academicLevel = typeof req.body.academicLevel === 'string' ? req.body.academicLevel.trim() : ''
+  const limit = Math.min(Math.max(Number(req.body.limit ?? 12), 3), 15)
+
+  if (!title && !outline) {
+    res.status(400).json({ error: 'Missing title or outline' })
+    return
+  }
+
+  const queries = await generateSearchQueries(title, outline, researchObject, academicLevel)
+  const batches = await Promise.all(queries.map(async query => {
+    try {
+      const openAlex = await searchOpenAlex(query, 10)
+      if (openAlex.length > 0) return openAlex
+      return searchCrossref(query, 10)
+    } catch {
+      try {
+        return await searchCrossref(query, 10)
+      } catch {
+        return []
+      }
+    }
+  }))
+
+  const candidates = dedupePapers(interleavePaperBatches(batches)).slice(0, 50)
+  if (candidates.length === 0) {
+    res.json({
+      provider: 'OpenAlex/Crossref',
+      queries,
+      candidates: [],
+      autoSources: [],
+      evidencePack: fallbackEvidencePack([], outline),
+      auditNote: '未检索到可靠候选文献，本次生成不会自动插入引用。',
+    })
+    return
+  }
+
+  const { autoSources, auditNote } = await selectSourcesWithAI({
+    title,
+    outline,
+    researchObject,
+    academicLevel,
+    candidates,
+    limit,
+  })
+  const evidencePack = await buildEvidencePackWithAI({
+    title,
+    outline,
+    researchObject,
+    academicLevel,
+    autoSources,
+  })
+
+  res.json({
+    provider: 'OpenAlex/Crossref',
+    queries,
+    candidates,
+    autoSources,
+    evidencePack,
+    auditNote,
+  })
 })
 
 export default router

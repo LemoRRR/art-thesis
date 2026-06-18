@@ -2012,7 +2012,15 @@ export default function ResearchCenter() {
               <section style={stepPanelStyle}>
                 <StepTitle number="4" icon={<CheckCircle2 size={15} />} title="选择结果功能" />
                 {!activeAsset ? (
-                  <div style={emptyStyle}>需要先生成或选择一个结果，才能导出、上传数据、分析或插入 Stage3。</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, border: '1px dashed var(--color-border)', borderRadius: 8, padding: 12, background: 'var(--color-bg)' }}>
+                    <div style={{ fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.7 }}>
+                      研究计算是可选步骤。如果暂时不需要量表、问卷、KANO、AHP 或编码结果，可以直接进入文章生成。
+                    </div>
+                    <button onClick={() => navigate(`/projects/${project.id}/stage3`)} style={{ ...primaryButtonStyle, flexShrink: 0 }}>
+                      直接进入文章生成
+                      <ArrowRight size={13} />
+                    </button>
+                  </div>
                 ) : (
                   <>
                     <div style={actionGroupGridStyle}>

@@ -57,8 +57,11 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
     setReady(false)
     setError('')
     setRedirectToLogin(false)
+    const routeProjectId = location.pathname.match(/^\/projects\/([^/]+)/)?.[1]
+    const activeProjectId = projectStore.getActiveId()
+    const projectIds = Array.from(new Set([routeProjectId, activeProjectId].filter((id): id is string => Boolean(id))))
     Promise.race([
-      syncRemoteData(),
+      syncRemoteData({ projectIds }),
       new Promise<void>((resolve) => {
         window.setTimeout(() => resolve(), 5000)
       }),

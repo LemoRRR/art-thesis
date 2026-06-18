@@ -16,7 +16,7 @@ const MARKDOWN_RULES: Array<[RegExp, string]> = [
   [/_([^_]+)_/g, '$1'],
   [/`([^`]+)`/g, '$1'],
   [/^\s*[-*+]\s+/gm, ''],
-  [/^\s*\d+\.\s+/gm, ''],
+  [/^\s*\d+\)\s+/gm, ''],
   [/\[(.*?)\]\((.*?)\)/g, '$1'],
 ]
 
@@ -58,7 +58,8 @@ function inferBlockType(line: string): PaperBlockType {
   if (/^\d+\.\d+\.\d+\s+/.test(line)) return 'heading3'
   if (/^\d+\.\d+\s+/.test(line)) return 'heading2'
   if (/^第[一二三四五六七八九十]+节/.test(line)) return 'heading2'
-  if (/^（[一二三四五六七八九十]+）/.test(line)) return 'heading3'
+  if (/^（[一二三四五六七八九十]+）/.test(line)) return 'heading2'
+  if (/^\d+[.、]\s*/.test(line)) return 'heading3'
   return 'paragraph'
 }
 

@@ -8,6 +8,8 @@ import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import VersionPanel from '../components/VersionPanel'
 import { callGPT } from '../lib/ai'
+import { formatAcademicOutlineMarker, formatAcademicOutlineText, isFrontMatterTitle } from '../lib/academicFormat'
+import { auth } from '../lib/auth'
 import { buildMentionContext } from '../lib/context'
 import { promptGenerateOutline, promptReviseOutline, type AcademicLevel } from '../lib/prompts'
 import {
@@ -35,11 +37,7 @@ const cleanJSON = (content: string) => {
 }
 
 function outlineToText(sections: OutlineSection[], depth = 0): string {
-  return sections.map(section => {
-    const indent = '  '.repeat(depth)
-    const children = section.children ? outlineToText(section.children, depth + 1) : ''
-    return `${indent}${section.order} ${section.title}${children ? `\n${children}` : ''}`
-  }).join('\n')
+  return formatAcademicOutlineText(sections, depth)
 }
 
 function addIds(sections: OutlineSection[]): OutlineSection[] {
@@ -167,7 +165,7 @@ function looksLikeReferenceOutlineRequest(text: string): boolean {
 }
 
 function isAbstractOutlineSection(section: OutlineSection): boolean {
-  return section.order === '0' || /^(摘要|abstract|中英文摘要)/i.test(section.title.trim())
+  return section.order === '0' || isFrontMatterTitle(section.title)
 }
 
 function createAbstractOutlineSection(): OutlineSection {
@@ -331,6 +329,22 @@ function hasOutlineContent(outline: Outline | null): outline is Outline {
   return Boolean(outline?.sections?.length)
 }
 
+function compactStage2Messages(messages: ChatMessage[]): ChatMessage[] {
+  let hasNetworkOutlineError = false
+
+  return messages.filter(message => {
+    const isStaleThinking = message.role === 'ai' && message.content.includes('正在根据你的论文背景生成大纲')
+    if (isStaleThinking) return false
+
+    const isNetworkOutlineError = message.role === 'ai' &&
+      (message.content.includes('大纲生成出错') || message.content.includes('Failed to fetch'))
+    if (!isNetworkOutlineError) return true
+    if (hasNetworkOutlineError) return false
+    hasNetworkOutlineError = true
+    return true
+  })
+}
+
 function extractLineValue(content: string, label: string): string {
   const match = content.match(new RegExp(`${label}[:：]\\s*([^\\n]+)`))
   return match?.[1]?.trim() ?? ''
@@ -480,7 +494,7 @@ const OutlineNode = memo(function OutlineNode({
         )}
 
         <span style={{ color: 'var(--color-ink-3)', fontSize: 11, flexShrink: 0, minWidth: 36 }}>
-          {section.order}
+          {formatAcademicOutlineMarker(section.order) || '摘要'}
         </span>
 
         {editing ? (
@@ -565,6 +579,7 @@ export default function Stage2() {
   const project = projectStore.ensure(params.projectId)
   const bottomRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const autoGenerateAttemptedRef = useRef(false)
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [outline, setOutline] = useState<Outline | null>(null)
@@ -575,6 +590,8 @@ export default function Stage2() {
   const [projectTitle, setProjectTitle] = useState(project.title)
   const [mentions, setMentions] = useState<MentionRef[]>([])
   const [showHistory, setShowHistory] = useState(false)
+  const loggedIn = auth.isLoggedIn()
+  const loginRedirect = `/login?redirect=${encodeURIComponent(`/projects/${project.id}/stage2`)}`
 
   const outlineSource = useMemo(() => getOutlineSource(project), [project])
   const canGenerateOutline = Boolean(outlineSource.summary)
@@ -673,6 +690,28 @@ export default function Stage2() {
           return next
         })
       }
+      return
+    }
+
+    if (!auth.isLoggedIn()) {
+      const loginMsg: ChatMessage = {
+        id: `s2_${uid()}`,
+        role: 'ai',
+        content: '生成大纲需要先登录。请先点击左下角登录，或打开 Demo 登录入口后再回到这里生成大纲。',
+        timestamp: Date.now(),
+        projectId: project.id,
+        stage: 'stage2',
+        flow: 'outline',
+      }
+      setMessages(prev => {
+        const next = [...prev.filter(message =>
+          !message.content.includes('Failed to fetch') &&
+          !message.content.includes('登录已过期') &&
+          !message.content.includes('生成大纲需要先登录')
+        ), loginMsg]
+        saveStageMessages(next)
+        return next
+      })
       return
     }
 
@@ -777,7 +816,11 @@ export default function Stage2() {
     queueMicrotask(() => {
       if (cancelled) return
 
-      const savedMsgs = chatStore.getByProject(project.id, 'stage2').filter(message => message.flow === 'outline')
+      const rawSavedMsgs = chatStore.getByProject(project.id, 'stage2').filter(message => message.flow === 'outline')
+      const savedMsgs = compactStage2Messages(rawSavedMsgs)
+      if (savedMsgs.length !== rawSavedMsgs.length) {
+        saveStageMessages(savedMsgs)
+      }
       const savedOutline = outlineStore.get(project.id)
 
       if (savedMsgs.length > 0) {
@@ -807,6 +850,7 @@ export default function Stage2() {
         }
       }
 
+      autoGenerateAttemptedRef.current = false
       setInitialLoadDone(true)
       projectStore.update(project.id, { currentStage: 'stage2' })
     })
@@ -817,7 +861,14 @@ export default function Stage2() {
   }, [project.id, saveStageMessages])
 
   useEffect(() => {
-    if (initialLoadDone && !hasOutlineContent(outline) && !isGenerating && canGenerateOutline) {
+    if (
+      initialLoadDone &&
+      !autoGenerateAttemptedRef.current &&
+      !hasOutlineContent(outline) &&
+      !isGenerating &&
+      canGenerateOutline
+    ) {
+      autoGenerateAttemptedRef.current = true
       queueMicrotask(() => autoGenerateOutline(true))
     }
   }, [autoGenerateOutline, canGenerateOutline, initialLoadDone, isGenerating, outline])
@@ -992,9 +1043,14 @@ export default function Stage2() {
   }
 
   const handleRegenerate = () => {
+    if (!loggedIn) {
+      navigate(loginRedirect)
+      return
+    }
     if (hasOutlineContent(outline) && !confirm('确认重新生成大纲？当前大纲会被清空。')) return
     outlineStore.clear(project.id)
     setOutline(null)
+    autoGenerateAttemptedRef.current = true
     autoGenerateOutline(true)
   }
 
@@ -1008,6 +1064,14 @@ export default function Stage2() {
   const updateProjectTitle = (title: string) => {
     setProjectTitle(title)
     projectStore.update(project.id, { title: title.trim() || '未命名论文' })
+  }
+
+  const handleGenerateOutlineClick = () => {
+    if (!loggedIn) {
+      navigate(loginRedirect)
+      return
+    }
+    autoGenerateOutline(true)
   }
 
   return (
@@ -1028,7 +1092,7 @@ export default function Stage2() {
         />
 
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-          <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
+          <div style={{ width: 300, minWidth: 0, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--color-border)', background: 'var(--color-surface)', overflow: 'hidden' }}>
             <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-ink)', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <BookOpen size={14} />
@@ -1037,7 +1101,7 @@ export default function Stage2() {
               <div style={{ fontSize: 11, color: 'var(--color-ink-3)', marginTop: 2 }}>告诉我需要修改哪里，或直接在右侧编辑标题</div>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', overflowX: 'hidden', padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
               {messages.map(message => (
                 <ChatBubble key={message.id} role={message.role} content={message.content} isStreaming={false} />
               ))}
@@ -1138,13 +1202,13 @@ export default function Stage2() {
                 <div style={{ color: 'var(--color-ink-3)', fontSize: 13, lineHeight: 1.8, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
                   <span>还没有大纲内容。请确认阶段一已完成材料理解，然后点击下方按钮生成。</span>
                   <button
-                    onClick={() => autoGenerateOutline(true)}
-                    disabled={isGenerating || !canGenerateOutline}
-                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', border: 'none', borderRadius: 'var(--radius-sm)', background: !isGenerating && canGenerateOutline ? 'var(--color-accent)' : 'var(--color-border)', color: '#fff', fontSize: 12, cursor: !isGenerating && canGenerateOutline ? 'pointer' : 'not-allowed', fontFamily: 'var(--font-sans)' }}
-                  >
-                    <RefreshCw size={13} />
-                    生成大纲
-                  </button>
+                  onClick={handleGenerateOutlineClick}
+                  disabled={isGenerating || !canGenerateOutline}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', border: 'none', borderRadius: 'var(--radius-sm)', background: !isGenerating && canGenerateOutline ? 'var(--color-accent)' : 'var(--color-border)', color: '#fff', fontSize: 12, cursor: !isGenerating && canGenerateOutline ? 'pointer' : 'not-allowed', fontFamily: 'var(--font-sans)' }}
+                >
+                  <RefreshCw size={13} />
+                  {loggedIn ? '生成大纲' : '登录后生成大纲'}
+                </button>
                 </div>
               )}
             </div>

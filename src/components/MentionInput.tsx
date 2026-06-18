@@ -26,6 +26,11 @@ interface MentionInputProps {
   onStyleProfileSelect?: (profileId: string) => void
 }
 
+function shortMentionTitle(title: string) {
+  const trimmed = title.trim()
+  return trimmed.length > 5 ? `${trimmed.slice(0, 5)}...` : trimmed
+}
+
 export default function MentionInput({
   value,
   onChange,
@@ -214,7 +219,7 @@ export default function MentionInput({
                   cursor: 'pointer',
                 }}
               >
-                {isStyleProfile ? '/' : '@'}{item.title} x
+                {isStyleProfile ? '/' : '@'}{shortMentionTitle(item.title)} x
               </button>
             )
           })}
@@ -236,7 +241,7 @@ export default function MentionInput({
               cursor: 'pointer',
             }}
           >
-            /{selectedStyleProfile.studentName || selectedStyleProfile.profileName} x
+            /{shortMentionTitle(selectedStyleProfile.studentName || selectedStyleProfile.profileName)} x
           </button>
         </div>
       )}

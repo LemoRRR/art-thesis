@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { authAPI } from '../lib/api'
 import { auth } from '../lib/auth'
 import { createNewConversationProject } from '../lib/conversation'
 
 export default function Login() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [tab, setTab] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -14,6 +15,11 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const goToNewConversation = () => {
+    const redirect = searchParams.get('redirect')
+    if (redirect?.startsWith('/')) {
+      navigate(redirect, { replace: true })
+      return
+    }
     const project = createNewConversationProject()
     navigate(`/projects/${project.id}/stage1`, { replace: true })
   }

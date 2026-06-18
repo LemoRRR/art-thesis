@@ -9,7 +9,7 @@ interface StepBarProps {
 const STEPS = [
   { label: '材料理解', route: 'stage1' },
   { label: '大纲撰写', route: 'stage2' },
-  { label: 'F4 研究计算', route: 'research' },
+  { label: '研究计算', route: 'research' },
   { label: '文章生成', route: 'stage3' },
 ]
 

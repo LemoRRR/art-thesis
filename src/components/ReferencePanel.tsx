@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { BookMarked, BookOpen, Check, FileText, Layers, Search, Tag, X } from 'lucide-react'
 import {
@@ -6,6 +6,7 @@ import {
   projectStore,
   referenceStore,
   sectionStore,
+  type CitationEvidenceSource,
   type ReferenceSelection,
   type WorkflowStage,
 } from '../lib/storage'
@@ -17,6 +18,7 @@ interface ReferencePanelProps {
   open: boolean
   onClose: () => void
   onChange?: (selection: ReferenceSelection) => void
+  onApplyToActiveSection?: () => void
 }
 
 interface ScholarCandidate extends ScholarPaper {
@@ -57,7 +59,7 @@ function scholarPaperToLibraryText(paper: ScholarPaper): string {
   ].filter(Boolean).join('\n')
 }
 
-export default function ReferencePanel({ projectId, stage, open, onClose, onChange }: ReferencePanelProps) {
+export default function ReferencePanel({ projectId, stage, open, onClose, onChange, onApplyToActiveSection }: ReferencePanelProps) {
   const project = projectStore.ensure(projectId)
   const [selection, setSelection] = useState<ReferenceSelection>(() => referenceStore.get(projectId, stage))
   const [query, setQuery] = useState('')
@@ -92,6 +94,19 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
     const item = libraryStore.get(id)
     return item?.type === 'case'
   }).length
+  const autoSources = selection.autoSources ?? []
+  const evidencePack = selection.evidencePack
+  const evidencePointCount = evidencePack
+    ? evidencePack.theoryConcepts.length
+      + evidencePack.literatureReview.length
+      + evidencePack.methodSupport.length
+      + evidencePack.caseEvidence.length
+      + evidencePack.chapterEvidence.reduce((total, chapter) => total + chapter.keyPoints.length, 0)
+    : 0
+
+  useEffect(() => {
+    if (open) setSelection(referenceStore.get(projectId, stage))
+  }, [open, projectId, stage])
 
   const saveSelection = (next: ReferenceSelection) => {
     setSelection(next)
@@ -123,6 +138,49 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
     saveSelection({ ...selection, [key]: !selection[key] })
   }
 
+  const toggleAutoCitation = () => {
+    saveSelection({ ...selection, autoCitationEnabled: selection.autoCitationEnabled === false })
+  }
+
+  const saveAutoSourceToLibrary = (source: CitationEvidenceSource) => {
+    const existing = libraryStore.getAll().find(item =>
+      item.fileUrl === source.url ||
+      (source.doi && item.summary.includes(source.doi)) ||
+      item.title.trim() === source.title.trim()
+    )
+    const item = existing ?? libraryStore.add({
+      title: source.title,
+      type: 'other',
+      fileName: source.doi || source.id,
+      fileUrl: source.url,
+      text: scholarPaperToLibraryText({
+        id: source.id,
+        title: source.title,
+        authors: source.authors,
+        year: source.year,
+        source: source.source,
+        doi: source.doi,
+        url: source.url,
+        citedByCount: source.citedByCount,
+        abstract: source.abstract,
+      }),
+      summary: [
+        source.authors.length ? source.authors.join('、') : '作者未详',
+        source.year ? `${source.year}` : '',
+        source.source || '',
+        source.doi ? `DOI：${source.doi}` : '',
+      ].filter(Boolean).join('；'),
+      tags: ['自动文献增强', source.provider || '外部检索', ...(source.year ? [String(source.year)] : [])],
+      extractStatus: 'done',
+      structureExtract: 'Stage3 自动文献增强检索结果。',
+      viewpointsExtract: source.relevanceReason || (source.abstract ? `摘要要点：${source.abstract.slice(0, 800)}` : ''),
+    })
+    projectStore.bindLibraryItem(projectId, item.id)
+    if (!selection.libraryItemIds.includes(item.id)) {
+      saveSelection({ ...selection, libraryItemIds: [item.id, ...selection.libraryItemIds] })
+    }
+  }
+
   const handleScholarSearch = async () => {
     const searchText = scholarQuery.trim() || buildScholarQuery(project.title, project.context)
     if (!searchText || isSearchingScholar) return
@@ -135,7 +193,7 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
       const response = await scholarAPI.search(searchText, 8)
       setScholarResults(response.results.map(paper => ({ ...paper, provider: response.provider })))
       setScholarNotice(response.results.length
-        ? `已从 ${response.provider} 搜到 ${response.results.length} 条候选文献。加入后会自动进入本章引用池。`
+        ? `已找到 ${response.results.length} 条候选文献。加入手动来源后，AI 生成正文时会自动吸收并生成 [1][2]。`
         : '暂未搜到合适文献，可以换成英文关键词或更具体的研究对象。'
       )
     } catch (error) {
@@ -177,7 +235,7 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
     setScholarResults(results => results.map(result =>
       result.id === paper.id ? { ...result, savedItemId: item.id } : result
     ))
-    setScholarNotice(`已加入资料库，并绑定为当前正文可引用文献：${paper.title}`)
+    setScholarNotice(`已加入手动来源：${paper.title}。重新生成全文或当前小节时，AI 会自动把它写入正文引用。`)
   }
 
   if (!open) return null
@@ -185,7 +243,7 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
   return (
     <aside
       style={{
-        width: 300,
+        width: 380,
         flexShrink: 0,
         borderLeft: '1px solid var(--color-border)',
         background: 'var(--color-surface)',
@@ -206,7 +264,7 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
         }}
       >
         <div>
-          <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--color-ink)' }}>引用上下文</div>
+          <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--color-ink)' }}>来源设置</div>
           <div style={{ fontSize: 10, color: 'var(--color-ink-3)' }}>{project.title}</div>
         </div>
         <button
@@ -255,8 +313,90 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--color-ink)' }}>论文搜索</div>
-              <span style={{ fontSize: 10, color: 'var(--color-ink-3)' }}>外部检索</span>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--color-ink)' }}>自动文献增强</div>
+                <div style={{ marginTop: 3, fontSize: 10, color: 'var(--color-ink-3)' }}>
+                  生成全文时自动检索学术来源并写入引用。
+                </div>
+              </div>
+              <button
+                onClick={toggleAutoCitation}
+                style={{
+                  border: `1px solid ${selection.autoCitationEnabled === false ? 'var(--color-border)' : 'var(--color-accent)'}`,
+                  borderRadius: 'var(--radius-sm)',
+                  background: selection.autoCitationEnabled === false ? 'transparent' : 'var(--color-accent-light)',
+                  color: selection.autoCitationEnabled === false ? 'var(--color-ink-3)' : 'var(--color-accent)',
+                  padding: '4px 8px',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                  fontFamily: 'var(--font-sans)',
+                }}
+              >
+                {selection.autoCitationEnabled === false ? '已关闭' : '已开启'}
+              </button>
+            </div>
+            {autoSources.length > 0 ? (
+              <div style={{ marginTop: 8, display: 'grid', gap: 7 }}>
+                {evidencePack && (
+                  <div style={{ border: '1px solid rgba(45, 90, 61, 0.18)', borderRadius: 'var(--radius-sm)', background: '#F8FBF8', padding: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 650, color: 'var(--color-accent)', lineHeight: 1.45 }}>
+                      论文证据包已生成
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 10, color: 'var(--color-ink-2)', lineHeight: 1.55 }}>
+                      {evidencePack.summary || '系统已把自动来源整理为理论概念、研究现状、方法依据、案例依据和章节写作卡。'}
+                    </div>
+                    <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 10, color: 'var(--color-ink-3)' }}>
+                      <span>{evidencePointCount} 个证据点</span>
+                      <span>{evidencePack.chapterEvidence.length} 个章节写作卡</span>
+                      {evidencePack.cautions.length > 0 && <span>{evidencePack.cautions.length} 条核对提醒</span>}
+                    </div>
+                  </div>
+                )}
+                {autoSources.slice(0, 6).map((source, index) => (
+                  <div key={source.id || index} style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-surface)', padding: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 650, color: 'var(--color-ink)', lineHeight: 1.45 }}>
+                      [{index + 1}] {source.title}
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 10, color: 'var(--color-ink-3)', lineHeight: 1.45 }}>
+                      {[source.authors?.slice(0, 2).join('、'), source.year, source.source, source.provider].filter(Boolean).join(' · ')}
+                    </div>
+                    {source.relevanceReason && (
+                      <div style={{ marginTop: 5, fontSize: 10, color: 'var(--color-ink-2)', lineHeight: 1.5 }}>
+                        {source.relevanceReason}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => saveAutoSourceToLibrary(source)}
+                      style={{ marginTop: 6, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'transparent', color: 'var(--color-accent)', padding: '4px 7px', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-sans)' }}
+                    >
+                      保存到资料库
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ marginTop: 8, fontSize: 10, color: 'var(--color-ink-3)', lineHeight: 1.5 }}>
+                当前还没有自动来源。点击“生成全文”后会在后台自动检索。
+              </div>
+            )}
+          </div>
+        )}
+        {showScholarSearch && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: 10,
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--color-bg)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--color-ink)' }}>手动补充来源</div>
+              <span style={{ fontSize: 10, color: 'var(--color-ink-3)' }}>高级选项</span>
+            </div>
+            <div style={{ marginTop: 5, fontSize: 10, lineHeight: 1.5, color: 'var(--color-ink-3)' }}>
+              默认会自动检索；这里用于手动补充指定文献。加入后重新生成全文或当前小节，系统会在正文中插入 [1][2] 并生成参考文献。
             </div>
             <div style={{ marginTop: 7, display: 'flex', gap: 6 }}>
               <input
@@ -306,7 +446,7 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
               </div>
             )}
             {scholarResults.length > 0 && (
-              <div style={{ marginTop: 8, display: 'grid', gap: 7, maxHeight: 260, overflowY: 'auto' }}>
+              <div style={{ marginTop: 8, display: 'grid', gap: 7, maxHeight: 300, overflowY: 'auto' }}>
                 {scholarResults.map(paper => (
                   <div
                     key={paper.id}
@@ -344,11 +484,30 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
                         fontFamily: 'var(--font-sans)',
                       }}
                     >
-                      {paper.savedItemId ? '已加入本阶段引用' : '加入资料库并引用'}
+                      {paper.savedItemId ? '已在手动来源' : '加入手动来源'}
                     </button>
                   </div>
                 ))}
               </div>
+            )}
+            {onApplyToActiveSection && selectedReferenceCount > 0 && (
+              <button
+                onClick={onApplyToActiveSection}
+                style={{
+                  width: '100%',
+                  marginTop: 8,
+                  border: '1px solid var(--color-accent)',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--color-surface)',
+                  color: 'var(--color-accent)',
+                  padding: '7px 8px',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  fontFamily: 'var(--font-sans)',
+                }}
+              >
+                用这些来源重写当前小节
+              </button>
             )}
           </div>
         )}
