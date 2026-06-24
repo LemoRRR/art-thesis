@@ -1523,7 +1523,10 @@ export default function ResearchCenter() {
   }
 
   const runAnalysis = () => {
-    if (!latestDataset) return
+    if (!latestDataset) {
+      setNotice('请先上传 CSV/TXT 数据文件，系统识别到最新数据后才能生成分析结果。研究计算是可选步骤，也可以直接进入文章生成。')
+      return
+    }
     const task = latestDataset.taskId ? researchTaskStore.get(latestDataset.taskId) : tasks[0]
     const analysisText = analyzeDataset(latestDataset.title, latestDataset.plainText)
     const asset = researchAssetStore.add({
@@ -1949,8 +1952,12 @@ export default function ResearchCenter() {
                       </label>
                       <button
                         onClick={runAnalysis}
-                        disabled={!latestDataset}
-                        style={secondaryButtonStyle}
+                        title={latestDataset ? '基于最新上传数据生成分析结果' : '请先上传 CSV/TXT 数据文件'}
+                        style={{
+                          ...secondaryButtonStyle,
+                          opacity: latestDataset ? 1 : 0.62,
+                          cursor: latestDataset ? 'pointer' : 'not-allowed',
+                        }}
                       >
                         <BarChart3 size={13} />
                         基于最新数据生成分析结果
@@ -2052,7 +2059,15 @@ export default function ResearchCenter() {
                           上传回收数据
                           <input type="file" accept=".csv,.txt" onChange={uploadData} style={{ display: 'none' }} />
                         </label>
-                        <button onClick={runAnalysis} disabled={!latestDataset} style={secondaryButtonStyle}>
+                        <button
+                          onClick={runAnalysis}
+                          title={latestDataset ? '基于最新上传数据生成分析结果' : '请先上传 CSV/TXT 数据文件'}
+                          style={{
+                            ...secondaryButtonStyle,
+                            opacity: latestDataset ? 1 : 0.62,
+                            cursor: latestDataset ? 'pointer' : 'not-allowed',
+                          }}
+                        >
                           <BarChart3 size={13} />
                           生成分析结果
                         </button>
