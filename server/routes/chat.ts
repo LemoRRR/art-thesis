@@ -1,12 +1,13 @@
 import { Router } from 'express'
-import { supabase } from '../lib/supabase.js'
-import { requireAuth } from '../middleware/auth.js'
+import { createUserClient } from '../lib/supabase.js'
+import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
 router.use(requireAuth)
 
-router.get('/project/:projectId/:stage', async (req, res) => {
-  const { data, error } = await supabase
+router.get('/project/:projectId/:stage', async (req: AuthRequest, res) => {
+  const db = createUserClient(req.accessToken!)
+  const { data, error } = await db
     .from('chat_messages')
     .select('*')
     .eq('project_id', req.params.projectId)
@@ -20,16 +21,21 @@ router.get('/project/:projectId/:stage', async (req, res) => {
   res.json(data)
 })
 
-router.put('/project/:projectId/:stage', async (req, res) => {
+router.put('/project/:projectId/:stage', async (req: AuthRequest, res) => {
+  const db = createUserClient(req.accessToken!)
   const { messages = [] } = req.body
-  await supabase
+  const deleted = await db
     .from('chat_messages')
     .delete()
     .eq('project_id', req.params.projectId)
     .eq('stage', req.params.stage)
+  if (deleted.error) {
+    res.status(500).json({ error: deleted.error.message })
+    return
+  }
 
   if (messages.length > 0) {
-    const { error } = await supabase.from('chat_messages').insert(
+    const { error } = await db.from('chat_messages').insert(
       messages.map((message: Record<string, unknown>) => ({
         project_id: req.params.projectId,
         stage: req.params.stage,

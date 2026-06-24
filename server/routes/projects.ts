@@ -64,13 +64,32 @@ router.patch('/:id', async (req: AuthRequest, res) => {
   const db = createUserClient(req.accessToken!)
   const { title, description, current_stage, context, library_item_ids } = req.body
   const patch = removeUndefined({ title, description, current_stage, context, library_item_ids })
-  const { data, error } = await db
+  let { data, error } = await db
     .from('projects')
     .update(patch)
     .eq('id', req.params.id)
     .eq('user_id', req.userId)
     .select()
     .single()
+
+  if (error && /Cannot coerce|JSON object|0 rows|PGRST116/i.test(error.message)) {
+    const fallback = removeUndefined({
+      id: req.params.id,
+      user_id: req.userId,
+      title: title || '未命名论文',
+      description: description || '',
+      current_stage: current_stage || 'stage1',
+      context: context || {},
+      library_item_ids: library_item_ids || [],
+    })
+    const created = await db
+      .from('projects')
+      .upsert(fallback, { onConflict: 'id' })
+      .select()
+      .single()
+    data = created.data
+    error = created.error
+  }
 
   if (error) {
     res.status(500).json({ error: error.message })

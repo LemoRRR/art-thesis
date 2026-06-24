@@ -55,11 +55,13 @@ import {
   type ChatMessage,
   type DocSection,
   type OutlineSection,
+  type ProjectContext,
   type ResearchAsset,
   type StyleProfile,
 } from '../lib/storage'
 
 type Mode = 'revise' | 'finish'
+type GenerationStepStatus = 'active' | 'done' | 'error'
 
 const OUTLINE_TRANSITION_MS = 2200
 
@@ -122,6 +124,19 @@ function buildCitationAuditNote(sections: DocSection[], sourceCount: number): st
   const footnoteCount = getAllFootnotes(sections).length
   if (footnoteCount === 0) return '已检索到文献，但正文未稳定生成引用标记；建议稍后点击“生成当前小节”或手动查看来源后重试。'
   return `已自动检索并选用 ${sourceCount} 条学术来源，正文中生成 ${footnoteCount} 处引用。`
+}
+
+function generationProgressPercent(current: number, total: number): number {
+  if (!total) return 8
+  return Math.max(8, Math.min(100, Math.round((current / total) * 100)))
+}
+
+function shouldPreserveExistingDraft(projectContext: ProjectContext): boolean {
+  return Boolean(
+    projectContext.hasDetectedDraft ||
+    projectContext.pathType === 'existing_paper_revision' ||
+    projectContext.nextStepRecommendation === 'revise_existing_draft'
+  )
 }
 
 function outlineToText(sections: OutlineSection[], depth = 0): string {
@@ -639,14 +654,16 @@ export default function Stage3() {
   const [isGeneratingFull, setIsGeneratingFull] = useState(false)
   const [isPreparingDraft, setIsPreparingDraft] = useState(() => {
     const outline = outlineStore.get(project.id)
-    return sectionStore.getByProject(project.id).length === 0 && Boolean(outline?.confirmedAt && outline.sections.length > 0)
+    return sectionStore.getByProject(project.id).length === 0 && Boolean(outline?.sections?.length && !shouldPreserveExistingDraft(project.context))
   })
   const [awaitingDraftStart, setAwaitingDraftStart] = useState(() => {
     const outline = outlineStore.get(project.id)
-    return sectionStore.getByProject(project.id).length === 0 && Boolean(outline?.confirmedAt && outline.sections.length > 0)
+    return sectionStore.getByProject(project.id).length === 0 && Boolean(outline?.sections?.length && !shouldPreserveExistingDraft(project.context))
   })
   const [generatingProgress, setGeneratingProgress] = useState({ current: 0, total: 0 })
   const [generationStatusLabel, setGenerationStatusLabel] = useState('')
+  const [generationSteps, setGenerationSteps] = useState<Array<{ id: string; label: string; status: GenerationStepStatus; timestamp: number }>>([])
+  const [generationErrorMessage, setGenerationErrorMessage] = useState('')
   const [citationAuditNote, setCitationAuditNote] = useState('')
   const [allGenerated, setAllGenerated] = useState(false)
   const [finishResult, setFinishResult] = useState('')
@@ -676,6 +693,21 @@ export default function Stage3() {
   }, [project.context.stylePreference, selectedStyleProfile])
   const footnoteCount = useMemo(() => getAllFootnotes(sections).length, [sections])
   const bibliographyContent = useMemo(() => buildBibliographyContent(sections), [sections])
+  const incompleteSectionCount = useMemo(
+    () => sections.filter(section => section.status !== 'done').length,
+    [sections]
+  )
+  const showGenerationRecovery = !isGeneratingFull && sections.length > 0 && (!allGenerated || incompleteSectionCount > 0)
+  const generationPercent = generationProgressPercent(generatingProgress.current, generatingProgress.total)
+
+  const pushGenerationStep = useCallback((label: string, status: GenerationStepStatus = 'active') => {
+    setGenerationSteps(prev => {
+      const closedPrev = prev.map((step, index) =>
+        index === prev.length - 1 && step.status === 'active' ? { ...step, status: 'done' as const } : step
+      )
+      return [...closedPrev, { id: uid(), label, status, timestamp: Date.now() }].slice(-8)
+    })
+  }, [])
 
   useEffect(() => {
     if (!showOutlineTransition) return
@@ -868,18 +900,34 @@ export default function Stage3() {
     setIsPreparingDraft(true)
     setIsGeneratingFull(true)
     setAllGenerated(false)
+    setGenerationErrorMessage('')
+    setGenerationSteps([])
     setGeneratingProgress({ current: 0, total: outlineSections.length })
     setGenerationStatusLabel('正在分析大纲并准备文献检索…')
+    pushGenerationStep('分析大纲结构、研究对象和写作边界')
 
     const currentProject = projectStore.ensure(project.id)
     const fullOutlineSummary = outlineToText(outlineSections)
     const baseGenerationContext = buildAIContext({ projectId: project.id, stage: 'stage3' })
-    const { citationContext, citableSources, evidencePack } = await prepareAutoCitationContext(
-      outlineSections,
-      baseGenerationContext,
-      [],
-      { force: true }
-    )
+    let citationContext = baseGenerationContext
+    let citableSources: ReturnType<typeof getStageCitableSources> = []
+    let evidencePack: CitationEvidencePack | undefined
+    try {
+      pushGenerationStep('联网检索学术来源并筛选证据包')
+      const preparedCitationContext = await prepareAutoCitationContext(
+        outlineSections,
+        baseGenerationContext,
+        [],
+        { force: true }
+      )
+      citationContext = preparedCitationContext.citationContext
+      citableSources = preparedCitationContext.citableSources
+      evidencePack = preparedCitationContext.evidencePack
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '文献准备失败'
+      pushGenerationStep(`文献准备失败，已转为普通正文生成：${message}`, 'error')
+      setCitationAuditNote(`文献准备失败，已转为普通正文生成：${message}`)
+    }
     const comprehensionSummary = currentProject.context.rawSummary ?? ''
     const bannedPhrases = currentProject.context.bannedPhrases ?? []
     const styleGuide = activeStyleGuide
@@ -902,6 +950,7 @@ export default function Stage3() {
     })
 
     try {
+      pushGenerationStep('生成全文写作计划和引用策略')
       setGenerationStatusLabel('正在生成全文写作计划与引用策略…')
       paperPlan = await streamGPTText(
         promptGeneratePaperPlan(
@@ -922,6 +971,7 @@ export default function Stage3() {
       const chapterOutline = chapterChildrenToText(chapter)
       setGeneratingProgress({ current: index + 1, total: outlineSections.length })
       setGenerationStatusLabel(`正在生成第 ${index + 1} / ${outlineSections.length} 章，并按检索来源插入引用…`)
+      pushGenerationStep(`生成第 ${index + 1} / ${outlineSections.length} 章：${chapterTitle}`)
 
       const section: DocSection = {
         id: uid(),
@@ -1021,7 +1071,9 @@ export default function Stage3() {
         sectionStore.saveForProject(project.id, generatedSections, { syncRemote: false })
         versionStore.snapshot(`AI 生成：${chapter.title}`, project.id)
       } catch (error) {
-        generationErrors.push(`${outlineSectionTitle(chapter)}：${error instanceof Error ? error.message : '生成失败'}`)
+        const errorMessage = `${outlineSectionTitle(chapter)}：${error instanceof Error ? error.message : '生成失败'}`
+        generationErrors.push(errorMessage)
+        pushGenerationStep(errorMessage, 'error')
         const failedSection = { ...section, status: 'pending' as const, lastModified: Date.now() }
         generatedSections[index] = failedSection
         setSections(prev => prev.map(item => item.id === section.id ? failedSection : item))
@@ -1041,7 +1093,13 @@ export default function Stage3() {
     setGenerationStatusLabel('')
 
     if (generationErrors.length > 0) {
+      const message = `生成全文未完成：${generationErrors.slice(0, 5).join('；')}`
+      setGenerationErrorMessage(message)
+      pushGenerationStep('生成未完成，可点击重新生成全文恢复', 'error')
       alert(`生成全文未完成：\n${generationErrors.slice(0, 5).join('\n')}`)
+    } else {
+      setGenerationErrorMessage('')
+      pushGenerationStep('全文生成完成，已保存为可编辑正文', 'done')
     }
 
     const doneMsg: ChatMessage = {
@@ -1056,7 +1114,7 @@ export default function Stage3() {
       const next = [...prev, doneMsg]
       return saveStageMessages(next)
     })
-  }, [academicLevel, activeStyleGuide, buildChapterCitationContext, prepareAutoCitationContext, project.id, saveStageMessages])
+  }, [academicLevel, activeStyleGuide, buildChapterCitationContext, prepareAutoCitationContext, project.id, pushGenerationStep, saveStageMessages])
 
   const generateAdditionalSections = useCallback(async (
     newOutlineSections: OutlineSection[],
@@ -1226,6 +1284,7 @@ export default function Stage3() {
     const outline = outlineStore.get(project.id)
     const routeState = location.state as { insertedSectionId?: string } | null
     const preferredActiveSectionId = routeState?.insertedSectionId
+    const preserveExistingDraft = shouldPreserveExistingDraft(project.context)
 
     if (savedMessages.length > 0) queueMicrotask(() => setMessages(savedMessages))
 
@@ -1316,11 +1375,11 @@ export default function Stage3() {
         })
       }
       hasStartedGenerationRef.current = true
-    } else if (outline?.confirmedAt) {
+    } else if (outline?.sections?.length && !preserveExistingDraft && !hasStartedGenerationRef.current) {
       const readyMsg: ChatMessage = {
         id: 's3_ready_to_generate',
         role: 'ai',
-        content: '大纲已确认。点击“生成全文”后，系统会自动检索学术文献、筛选来源，并把引用写入第一版正文。',
+        content: '已读取到大纲，系统将自动检索学术文献、筛选来源，并生成第一版正文。',
         timestamp: Date.now(),
         projectId: project.id,
         stage: 'stage3',
@@ -1331,6 +1390,25 @@ export default function Stage3() {
         setMessages([readyMsg])
       })
       saveStageMessages([readyMsg])
+      hasStartedGenerationRef.current = true
+      queueMicrotask(() => {
+        void startFullGeneration(ensureFrontMatterOutlineSection(outline.sections))
+      })
+    } else if (outline?.sections?.length) {
+      const waitMsg: ChatMessage = {
+        id: 's3_wait_outline',
+        role: 'ai',
+        content: '已读取到大纲和已有正文线索。为避免覆盖原文，系统不会自动生成全文；你可以在右侧继续修改，或回到阶段二调整大纲。',
+        timestamp: Date.now(),
+        projectId: project.id,
+        stage: 'stage3',
+      }
+      queueMicrotask(() => {
+        setIsPreparingDraft(false)
+        setAwaitingDraftStart(false)
+        setMessages([waitMsg])
+      })
+      saveStageMessages([waitMsg])
     } else {
       const waitMsg: ChatMessage = {
         id: 's3_wait_outline',
@@ -1348,7 +1426,7 @@ export default function Stage3() {
     }
 
     projectStore.update(project.id, { currentStage: 'stage3' })
-  }, [generateAdditionalSections, location.state, project.id, reconcileSectionsWithOutline, saveStageMessages, startFullGeneration])
+  }, [generateAdditionalSections, location.state, project.context, project.id, reconcileSectionsWithOutline, saveStageMessages, startFullGeneration])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -1554,7 +1632,10 @@ export default function Stage3() {
       return
     }
     const exportSections = buildCompleteSections()
-    if (exportSections.length === 0) return
+    if (exportSections.length === 0) {
+      alert('当前还没有可导出的正文。请先生成全文，或在正文编辑区写入内容后再导出。')
+      return
+    }
     try {
       await exportSectionsToDocx(projectTitle, exportSections)
     } catch (error) {
@@ -1583,8 +1664,12 @@ export default function Stage3() {
 
   const regenerateFullText = () => {
     const outline = outlineStore.get(project.id)
-    if (!outline?.confirmedAt) {
-      alert('请先在阶段二确认大纲，再重新生成全文。')
+    if (!outline?.sections?.length) {
+      alert('请先在阶段二生成大纲，再生成全文。')
+      return
+    }
+    if (sections.length === 0 && shouldPreserveExistingDraft(project.context)) {
+      alert('系统识别为已有论文修改模式，为避免覆盖上传原文，不会自动生成全文。你可以先在阶段二调整大纲，或在正文中手动选择需要改写的段落。')
       return
     }
     if (isGeneratingFull) return
@@ -1596,6 +1681,8 @@ export default function Stage3() {
     setSections([])
     setActiveSectionId(null)
     setAllGenerated(false)
+    setGenerationErrorMessage('')
+    setGenerationSteps([])
     setFinishResult('')
     setAdjustInput('')
     setIsLoading(false)
@@ -1969,7 +2056,10 @@ export default function Stage3() {
   }
 
   const totalChars = sections.reduce((total, section) => total + section.content.replace(/\s/g, '').length, 0)
-  const currentOutlineSections = outlineStore.get(project.id)?.sections
+  const currentOutline = outlineStore.get(project.id)
+  const currentOutlineSections = currentOutline?.sections
+  const hasCurrentOutline = Boolean(currentOutlineSections?.length)
+  const canAutoGenerateFromCurrentOutline = Boolean(currentOutlineSections?.length && !shouldPreserveExistingDraft(project.context))
   const autoCitationSourceCount = referenceStore.get(project.id, 'stage3').autoSources?.length ?? 0
 
   return (
@@ -2026,12 +2116,12 @@ export default function Stage3() {
                 复制全文
               </button>
               <button
-                onClick={regenerateFullText}
+                onClick={hasCurrentOutline ? regenerateFullText : () => navigate(`/projects/${project.id}/stage2`)}
                 disabled={isGeneratingFull}
                 style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'transparent', color: isGeneratingFull ? 'var(--color-ink-3)' : 'var(--color-ink-2)', fontSize: 12, cursor: isGeneratingFull ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
               >
                 <RefreshCw size={13} />
-                {sections.length === 0 ? '生成全文' : '重新生成全文'}
+                {hasCurrentOutline ? (sections.length === 0 ? '生成全文' : '重新生成全文') : '回到大纲'}
               </button>
               <button
                 onClick={() => void generateActiveSectionOnly()}
@@ -2068,21 +2158,61 @@ export default function Stage3() {
         )}
 
         {isGeneratingFull && (
-          <div style={{ position: 'absolute', top: 92, left: 0, right: 0, zIndex: 100, background: 'var(--color-accent-light)', borderBottom: '1px solid var(--color-border)', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Sparkles size={14} color="var(--color-accent)" />
-            <span style={{ fontSize: 12, color: 'var(--color-accent)' }}>
-              {generationStatusLabel || `正在生成第 ${generatingProgress.current} / ${generatingProgress.total} 章…`}
-            </span>
-            <div style={{ flex: 1, height: 4, background: 'var(--color-border)', borderRadius: 2, overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', top: 92, left: 12, right: 12, zIndex: 100, background: 'rgba(255,255,255,0.96)', border: '1px solid var(--color-border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', padding: '10px 12px', display: 'grid', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Sparkles size={15} color="var(--color-accent)" />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 12, color: 'var(--color-accent)', fontWeight: 800 }}>
+                  {generationStatusLabel || `正在生成第 ${generatingProgress.current} / ${generatingProgress.total} 章…`}
+                </div>
+                <div style={{ marginTop: 3, fontSize: 11, color: 'var(--color-ink-3)' }}>
+                  AI 会先检索和筛选来源，再逐章写入正文。页面可停留等待，已完成章节会自动保存。
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--color-ink-3)', fontWeight: 750 }}>
+                {generationPercent}%
+              </div>
+            </div>
+            <div style={{ height: 6, background: 'var(--color-border)', borderRadius: 999, overflow: 'hidden' }}>
               <div
                 style={{
                   height: '100%',
-                  background: 'var(--color-accent)',
-                  width: `${generatingProgress.total ? (generatingProgress.current / generatingProgress.total) * 100 : 0}%`,
-                  transition: 'width 0.3s',
+                  background: 'linear-gradient(90deg, var(--color-accent), #8DC5A1)',
+                  width: `${generationPercent}%`,
+                  transition: 'width 0.35s ease',
                 }}
               />
             </div>
+            {generationSteps.length > 0 && (
+              <div style={{ display: 'grid', gap: 4, maxHeight: 86, overflowY: 'auto', paddingRight: 4 }}>
+                {generationSteps.slice(-5).reverse().map(step => (
+                  <div key={step.id} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: step.status === 'error' ? '#A13B2D' : step.status === 'done' ? 'var(--color-ink-3)' : 'var(--color-ink-2)', lineHeight: 1.45 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: 999, background: step.status === 'error' ? '#D8614C' : step.status === 'done' ? 'var(--color-border-strong)' : 'var(--color-accent)', flexShrink: 0 }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{step.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {showGenerationRecovery && (
+          <div style={{ position: 'absolute', top: 92, left: 12, right: 12, zIndex: 90, background: '#FFF8EA', border: '1px solid #E8D5A8', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-ink)', fontWeight: 850 }}>
+                正文生成未完成
+              </div>
+              <div style={{ marginTop: 3, fontSize: 11, color: 'var(--color-ink-3)', lineHeight: 1.5 }}>
+                {generationErrorMessage || `检测到 ${incompleteSectionCount} 个章节尚未完成。可以保留当前内容继续编辑，也可以重新生成全文恢复。`}
+              </div>
+            </div>
+            <button
+              onClick={regenerateFullText}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, border: '1px solid var(--color-accent)', background: 'var(--color-accent)', color: '#fff', borderRadius: 6, padding: '7px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-sans)', flexShrink: 0 }}
+            >
+              <RefreshCw size={13} />
+              重新生成全文
+            </button>
           </div>
         )}
 
@@ -2262,8 +2392,8 @@ export default function Stage3() {
                 onGenerateSection={() => void generateActiveSectionOnly()}
                 onUpdateFootnote={handleUpdateFootnote}
                 onDeleteFootnote={handleDeleteFootnote}
-                emptyTitle={awaitingDraftStart ? '准备生成第一版正文' : undefined}
-                emptyText={awaitingDraftStart ? '点击“生成全文”后，AI 会先自动检索学术文献、筛选来源，再把引用写入正文。' : undefined}
+                emptyTitle={currentOutlineSections?.length && !canAutoGenerateFromCurrentOutline ? '已识别已有正文' : awaitingDraftStart ? '准备生成第一版正文' : undefined}
+                emptyText={currentOutlineSections?.length && !canAutoGenerateFromCurrentOutline ? '系统判断当前项目更适合修改已有论文，因此不会自动覆盖生成全文。可以从左侧提出修改意见，或点击“生成全文”后确认重建第一版正文。' : awaitingDraftStart ? 'AI 会自动检索学术文献、筛选来源，再把引用写入正文。' : undefined}
               />
 
               {showHistory && (
@@ -2281,7 +2411,7 @@ export default function Stage3() {
 
             <div style={{ padding: '5px 16px', borderTop: '1px solid var(--color-border)', background: 'var(--color-accent-light)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <span style={{ fontSize: 11, color: 'var(--color-accent)', display: 'flex', alignItems: 'center', gap: 5 }}>
-                {allGenerated ? <><CheckCircle2 size={11} /> 全文已生成，可继续修改</> : isGeneratingFull ? (generationStatusLabel || '正在生成全文…') : awaitingDraftStart ? '● 将自动检索文献并生成全文' : '● 等待确认大纲'}
+                {allGenerated ? <><CheckCircle2 size={11} /> 全文已生成，可继续修改</> : isGeneratingFull ? (generationStatusLabel || '正在生成全文…') : currentOutlineSections?.length && !canAutoGenerateFromCurrentOutline ? '● 已进入已有正文修改模式' : awaitingDraftStart ? '● 将自动检索文献并生成全文' : '● 等待大纲'}
               </span>
               <span style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>
                 {autoCitationSourceCount > 0 ? `${autoCitationSourceCount} 条来源 · ` : ''}{totalChars} 字

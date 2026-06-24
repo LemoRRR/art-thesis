@@ -95,6 +95,21 @@ function formatList(items?: string[]): string {
   return items?.map(item => item.trim()).filter(Boolean).join('；') ?? ''
 }
 
+function compactMaterialSummary(summary?: string): string {
+  if (!summary) return ''
+  const priorityLabels = ['材料主题', '材料理解', '核心论点', '研究方法', '数据收集', '建议下一步']
+  const parts = summary
+    .split(/\s+/)
+    .map(item => item.trim())
+    .filter(Boolean)
+  const picked = priorityLabels
+    .map(label => parts.find(part => part.startsWith(`${label}：`)))
+    .filter((item): item is string => Boolean(item))
+
+  const compact = (picked.length ? picked : parts.slice(0, 3)).join('；')
+  return compact.length > 120 ? `${compact.slice(0, 120)}…` : compact
+}
+
 const PATH_LABELS: Record<string, string> = {
   existing_paper_revision: '已有论文修改',
   from_scratch_generation: '从 0 生成',
@@ -373,6 +388,7 @@ export default function Stage1() {
   const [selectedLevel, setSelectedLevel] = useState<AcademicLevel | ''>(() =>
     getSelectedAcademicLevel(project.context.writingRequirements)
   )
+  const [showFullMaterialSummary, setShowFullMaterialSummary] = useState(false)
 
   // 初始化：从 localStorage 读取历史记录
   useEffect(() => {
@@ -776,7 +792,11 @@ export default function Stage1() {
                   { label: '数据收集', value: comprehension.researchPlan?.dataNeeds.join('；') },
                   { label: '后续任务', value: comprehension.researchPlan?.pendingResearchTasks.join('；') },
                   { label: '建议下一步', value: comprehension.nextStepRecommendation ? NEXT_STEP_LABELS[comprehension.nextStepRecommendation] : '' },
-                  { label: '材料建议', value: comprehension.rawSummary },
+                  {
+                    label: '材料建议',
+                    value: showFullMaterialSummary ? comprehension.rawSummary : compactMaterialSummary(comprehension.rawSummary),
+                    isExpandable: Boolean(comprehension.rawSummary && comprehension.rawSummary.length > 120),
+                  },
                   { label: '论文规格', value: selectedLevel || '待选择' },
                 ].filter(item => item.value).map(item => (
                   <div key={item.label} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
@@ -797,6 +817,24 @@ export default function Stage1() {
                     </span>
                     <span style={{ fontSize: 13, color: 'var(--color-ink-2)', lineHeight: 1.6 }}>
                       {item.value}
+                      {item.isExpandable && (
+                        <button
+                          type="button"
+                          onClick={() => setShowFullMaterialSummary(value => !value)}
+                          style={{
+                            marginLeft: 8,
+                            border: 'none',
+                            background: 'transparent',
+                            color: 'var(--color-accent)',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                            padding: 0,
+                            fontFamily: 'var(--font-sans)',
+                          }}
+                        >
+                          {showFullMaterialSummary ? '收起' : '展开'}
+                        </button>
+                      )}
                     </span>
                   </div>
                 ))}

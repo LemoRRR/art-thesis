@@ -1354,7 +1354,14 @@ export const projectStore = {
       project.id === id ? { ...project, ...patch, updatedAt: Date.now() } : project
     )
     write(KEYS.PROJECTS, nextProjects)
-    remoteTask(() => projectsAPI.update(id, toApiProjectPatch(patch)))
+    const nextProject = nextProjects.find(project => project.id === id)
+    remoteTask(async () => {
+      try {
+        await projectsAPI.update(id, toApiProjectPatch(patch))
+      } catch {
+        if (nextProject) await projectsAPI.create(toApiProject(nextProject))
+      }
+    })
   },
   remove: (id: string) => {
     const nextProjects = projectStore.getAll().filter(project => project.id !== id)

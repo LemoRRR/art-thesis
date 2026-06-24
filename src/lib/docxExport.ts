@@ -401,7 +401,7 @@ export async function exportSectionsToDocx(title: string, sections: DocSection[]
   link.rel = 'noopener'
   link.style.display = 'none'
   document.body.appendChild(link)
-  link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+  link.click()
   window.setTimeout(() => {
     URL.revokeObjectURL(url)
     link.remove()
