@@ -49,6 +49,7 @@ interface PaperDocumentEditorProps {
   onDeleteFootnote?: (footnoteId: string) => void
   emptyTitle?: string
   emptyText?: string
+  emptyAction?: ReactNode
 }
 
 interface PendingRevision {
@@ -117,6 +118,37 @@ const SectionHeadingAttributes = Extension.create({
             default: null,
             parseHTML: element => element.getAttribute('data-locked-level'),
             renderHTML: attrs => attrs.lockedLevel ? { 'data-locked-level': attrs.lockedLevel } : {},
+          },
+        },
+      },
+    ]
+  },
+})
+
+const ResearchBlockParagraphAttributes = Extension.create({
+  name: 'researchBlockParagraphAttributes',
+
+  addGlobalAttributes() {
+    return [
+      {
+        types: ['paragraph'],
+        attributes: {
+          researchBlock: {
+            default: false,
+            parseHTML: element => element.getAttribute('data-research-block') === 'true',
+            renderHTML: attrs => attrs.researchBlock ? { 'data-research-block': 'true' } : {},
+          },
+          researchPackageId: {
+            default: null,
+            parseHTML: element => element.getAttribute('data-research-package-id'),
+            renderHTML: attrs => attrs.researchPackageId ? { 'data-research-package-id': attrs.researchPackageId } : {},
+          },
+          researchComponentIds: {
+            default: null,
+            parseHTML: element => element.getAttribute('data-research-component-ids')?.split(',').filter(Boolean) ?? null,
+            renderHTML: attrs => Array.isArray(attrs.researchComponentIds) && attrs.researchComponentIds.length
+              ? { 'data-research-component-ids': attrs.researchComponentIds.join(',') }
+              : {},
           },
         },
       },
@@ -384,6 +416,7 @@ function InlineProseMirrorEditor({
         underline: false,
       }),
       SectionHeadingAttributes,
+      ResearchBlockParagraphAttributes,
       TextStyle,
       FontFamily.configure({ types: ['textStyle'] }),
       FontSize.configure({ types: ['textStyle'] }),
@@ -545,6 +578,7 @@ function renderPreviewBlock(
     'paper-preview-block',
     block.type === 'heading' ? 'paper-preview-heading' : 'paper-preview-paragraph',
     block.type === 'heading' && block.level === 2 ? 'paper-preview-heading-section' : '',
+    block.node?.attrs?.researchBlock ? 'paper-research-block' : '',
     block.continuation ? 'is-continuation' : '',
   ].filter(Boolean).join(' ')
 
@@ -592,6 +626,13 @@ function PaperDocumentStyles() {
         padding: 40px;
         text-align: center;
         background: linear-gradient(180deg, #FBFAF7 0%, #F4F0E8 100%);
+      }
+
+      .paper-document-empty-action {
+        margin-top: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
 
       .paper-document-spinner {
@@ -843,6 +884,32 @@ function PaperDocumentStyles() {
         text-align: justify;
         font-size: 14.5px;
         line-height: 2;
+      }
+
+      .paper-research-block,
+      .ProseMirror p[data-research-block="true"] {
+        border: 1px solid rgba(45, 90, 61, 0.22);
+        border-left: 3px solid var(--color-accent);
+        border-radius: 8px;
+        background: #F6FAF6;
+        padding: 10px 12px;
+        text-indent: 0;
+        white-space: pre-wrap;
+      }
+
+      .paper-research-block::before,
+      .ProseMirror p[data-research-block="true"]::before {
+        content: "研究支撑";
+        display: inline-flex;
+        margin-right: 8px;
+        padding: 1px 6px;
+        border-radius: 999px;
+        background: var(--color-accent-light);
+        color: var(--color-accent);
+        font-family: var(--font-sans);
+        font-size: 10px;
+        font-weight: 800;
+        vertical-align: 1px;
       }
 
       .paper-preview-paragraph.is-continuation {
@@ -1387,6 +1454,7 @@ export default function PaperDocumentEditor({
   onDeleteFootnote,
   emptyTitle,
   emptyText,
+  emptyAction,
 }: PaperDocumentEditorProps) {
   const [layoutDoc, setLayoutDoc] = useState<PaperEditorDoc>(() =>
     sectionsToPaperDoc(paperTitle, sections, outlineSections ? { sections: outlineSections } : null)
@@ -1433,6 +1501,7 @@ export default function PaperDocumentEditor({
         underline: false,
       }),
       SectionHeadingAttributes,
+      ResearchBlockParagraphAttributes,
       TextStyle,
       FontFamily.configure({ types: ['textStyle'] }),
       FontSize.configure({ types: ['textStyle'] }),
@@ -1905,6 +1974,7 @@ export default function PaperDocumentEditor({
         {isPreparing ? <div className="paper-document-spinner" aria-hidden="true" /> : <div style={{ fontSize: 32 }}>□</div>}
         <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--color-ink-2)' }}>{title}</div>
         <div style={{ fontSize: 13, lineHeight: 1.7 }}>{text}</div>
+        {emptyAction && <div className="paper-document-empty-action">{emptyAction}</div>}
         <PaperDocumentStyles />
       </div>
     )

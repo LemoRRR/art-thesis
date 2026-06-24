@@ -906,6 +906,7 @@ export default function Stage3() {
     setGenerationStatusLabel('正在分析大纲并准备文献检索…')
     pushGenerationStep('分析大纲结构、研究对象和写作边界')
 
+    try {
     const currentProject = projectStore.ensure(project.id)
     const fullOutlineSummary = outlineToText(outlineSections)
     const baseGenerationContext = buildAIContext({ projectId: project.id, stage: 'stage3' })
@@ -1114,6 +1115,27 @@ export default function Stage3() {
       const next = [...prev, doneMsg]
       return saveStageMessages(next)
     })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '生成流程异常中断'
+      setIsGeneratingFull(false)
+      setIsPreparingDraft(false)
+      setAwaitingDraftStart(false)
+      setGenerationStatusLabel('')
+      setGenerationErrorMessage(`生成全文中断：${message}`)
+      setAllGenerated(false)
+      pushGenerationStep(`生成全文中断：${message}`, 'error')
+      setMessages(prev => saveStageMessages([
+        ...prev,
+        {
+          id: `s3_generation_fatal_${uid()}`,
+          role: 'ai',
+          content: `生成全文中断：${message}\n\n可以点击正文中心或顶部的“重新生成全文”再次尝试。`,
+          timestamp: Date.now(),
+          projectId: project.id,
+          stage: 'stage3',
+        },
+      ]))
+    }
   }, [academicLevel, activeStyleGuide, buildChapterCitationContext, prepareAutoCitationContext, project.id, pushGenerationStep, saveStageMessages])
 
   const generateAdditionalSections = useCallback(async (
@@ -1379,7 +1401,7 @@ export default function Stage3() {
       const readyMsg: ChatMessage = {
         id: 's3_ready_to_generate',
         role: 'ai',
-        content: '已读取到大纲，系统将自动检索学术文献、筛选来源，并生成第一版正文。',
+        content: '已读取到大纲。点击正文中心的“生成全文”后，系统会自动检索学术文献、筛选来源，并生成第一版正文。',
         timestamp: Date.now(),
         projectId: project.id,
         stage: 'stage3',
@@ -1390,10 +1412,6 @@ export default function Stage3() {
         setMessages([readyMsg])
       })
       saveStageMessages([readyMsg])
-      hasStartedGenerationRef.current = true
-      queueMicrotask(() => {
-        void startFullGeneration(ensureFrontMatterOutlineSection(outline.sections))
-      })
     } else if (outline?.sections?.length) {
       const waitMsg: ChatMessage = {
         id: 's3_wait_outline',
@@ -1669,8 +1687,8 @@ export default function Stage3() {
       return
     }
     if (sections.length === 0 && shouldPreserveExistingDraft(project.context)) {
-      alert('系统识别为已有论文修改模式，为避免覆盖上传原文，不会自动生成全文。你可以先在阶段二调整大纲，或在正文中手动选择需要改写的段落。')
-      return
+      const confirmed = confirm('系统识别为已有论文修改模式。确认按当前大纲生成一版新正文吗？')
+      if (!confirmed) return
     }
     if (isGeneratingFull) return
     if (sections.length > 0 && !confirm('确认重新生成全文？当前正文会被清空并重新按大纲生成。')) return
@@ -1688,7 +1706,7 @@ export default function Stage3() {
     setIsLoading(false)
     setStreamingId(null)
     sectionStore.saveForProject(project.id, [])
-    startFullGeneration(ensureFrontMatterOutlineSection(outline.sections))
+    void startFullGeneration(ensureFrontMatterOutlineSection(outline.sections))
   }
 
   const generateActiveSectionOnly = async () => {
@@ -2060,6 +2078,7 @@ export default function Stage3() {
   const currentOutlineSections = currentOutline?.sections
   const hasCurrentOutline = Boolean(currentOutlineSections?.length)
   const canAutoGenerateFromCurrentOutline = Boolean(currentOutlineSections?.length && !shouldPreserveExistingDraft(project.context))
+  const showCenterGenerateButton = hasCurrentOutline && sections.length === 0 && !isGeneratingFull
   const autoCitationSourceCount = referenceStore.get(project.id, 'stage3').autoSources?.length ?? 0
 
   return (
@@ -2115,14 +2134,16 @@ export default function Stage3() {
                 <Copy size={13} />
                 复制全文
               </button>
-              <button
-                onClick={hasCurrentOutline ? regenerateFullText : () => navigate(`/projects/${project.id}/stage2`)}
-                disabled={isGeneratingFull}
-                style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'transparent', color: isGeneratingFull ? 'var(--color-ink-3)' : 'var(--color-ink-2)', fontSize: 12, cursor: isGeneratingFull ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
-              >
-                <RefreshCw size={13} />
-                {hasCurrentOutline ? (sections.length === 0 ? '生成全文' : '重新生成全文') : '回到大纲'}
-              </button>
+              {(!hasCurrentOutline || sections.length > 0) && (
+                <button
+                  onClick={hasCurrentOutline ? regenerateFullText : () => navigate(`/projects/${project.id}/stage2`)}
+                  disabled={isGeneratingFull}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'transparent', color: isGeneratingFull ? 'var(--color-ink-3)' : 'var(--color-ink-2)', fontSize: 12, cursor: isGeneratingFull ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                >
+                  <RefreshCw size={13} />
+                  {hasCurrentOutline ? '重新生成全文' : '回到大纲'}
+                </button>
+              )}
               <button
                 onClick={() => void generateActiveSectionOnly()}
                 disabled={isGeneratingFull || !activeSectionId}
@@ -2393,7 +2414,33 @@ export default function Stage3() {
                 onUpdateFootnote={handleUpdateFootnote}
                 onDeleteFootnote={handleDeleteFootnote}
                 emptyTitle={currentOutlineSections?.length && !canAutoGenerateFromCurrentOutline ? '已识别已有正文' : awaitingDraftStart ? '准备生成第一版正文' : undefined}
-                emptyText={currentOutlineSections?.length && !canAutoGenerateFromCurrentOutline ? '系统判断当前项目更适合修改已有论文，因此不会自动覆盖生成全文。可以从左侧提出修改意见，或点击“生成全文”后确认重建第一版正文。' : awaitingDraftStart ? 'AI 会自动检索学术文献、筛选来源，再把引用写入正文。' : undefined}
+                emptyText={currentOutlineSections?.length && !canAutoGenerateFromCurrentOutline ? '系统判断当前项目更适合修改已有论文，因此不会自动覆盖生成全文。可以从左侧提出修改意见，或点击下方按钮后确认重建第一版正文。' : awaitingDraftStart ? 'AI 会自动检索学术文献、筛选来源，再把引用写入正文。' : undefined}
+                emptyAction={showCenterGenerateButton ? (
+                  <button
+                    type="button"
+                    onClick={regenerateFullText}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8,
+                      minWidth: 148,
+                      padding: '10px 18px',
+                      border: 'none',
+                      borderRadius: 8,
+                      background: 'var(--color-accent)',
+                      color: '#fff',
+                      fontSize: 14,
+                      fontWeight: 850,
+                      cursor: 'pointer',
+                      boxShadow: '0 10px 24px rgba(45, 90, 61, 0.16)',
+                      fontFamily: 'var(--font-sans)',
+                    }}
+                  >
+                    <Sparkles size={16} />
+                    生成全文
+                  </button>
+                ) : undefined}
               />
 
               {showHistory && (
