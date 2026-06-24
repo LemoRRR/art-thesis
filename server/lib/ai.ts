@@ -43,7 +43,14 @@ function fallbackConfig(provider: 'gpt' | 'doubao') {
   throw new Error(`${provider} AI 环境变量未配置完整`)
 }
 
-async function requestChatCompletions(config: AIConfig, messages: Message[], stream: boolean, maxTokens: number, temperature: number) {
+async function requestChatCompletions(
+  config: AIConfig,
+  messages: Message[],
+  stream: boolean,
+  maxTokens: number,
+  temperature: number,
+  signal?: AbortSignal
+) {
   return fetch(`${config.baseURL}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -57,22 +64,24 @@ async function requestChatCompletions(config: AIConfig, messages: Message[], str
       max_tokens: maxTokens,
       temperature,
     }),
+    signal,
   })
 }
 
 export async function callAIStream(
   provider: 'gpt' | 'doubao',
-  messages: Message[]
+  messages: Message[],
+  signal?: AbortSignal
 ) {
   const resolved = fallbackConfig(provider)
-  const response = await requestChatCompletions(resolved.config, messages, true, 4000, 0.7)
+  const response = await requestChatCompletions(resolved.config, messages, true, 4000, 0.7, signal)
   if (response.ok || provider !== 'doubao' || resolved.provider === 'gpt') {
     return response
   }
 
   const gpt = getAIConfig('gpt')
   if (!isConfigReady(gpt)) return response
-  return requestChatCompletions(gpt, messages, true, 4000, 0.7)
+  return requestChatCompletions(gpt, messages, true, 4000, 0.7, signal)
 }
 
 export async function callAIOnce(
