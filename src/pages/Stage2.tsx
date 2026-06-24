@@ -413,6 +413,7 @@ const OutlineNode = memo(function OutlineNode({
   const [editValue, setEditValue] = useState(section.title)
   const [dropPosition, setDropPosition] = useState<DropPosition | null>(null)
   const hasChildren = Boolean(section.children?.length)
+  const outlineMarker = formatAcademicOutlineMarker(section.order)
   const levelStyle: Record<number, CSSProperties> = {
     1: { fontSize: 15, fontWeight: 650, color: 'var(--color-ink)', paddingLeft: 0 },
     2: { fontSize: 13, fontWeight: 500, color: 'var(--color-ink-2)', paddingLeft: 16 },
@@ -493,9 +494,11 @@ const OutlineNode = memo(function OutlineNode({
           <span style={{ width: 13 }} />
         )}
 
-        <span style={{ color: 'var(--color-ink-3)', fontSize: 11, flexShrink: 0, minWidth: 36 }}>
-          {formatAcademicOutlineMarker(section.order) || '摘要'}
-        </span>
+        {outlineMarker ? (
+          <span style={{ color: 'var(--color-ink-3)', fontSize: 11, flexShrink: 0, minWidth: 36 }}>
+            {outlineMarker}
+          </span>
+        ) : null}
 
         {editing ? (
           <input
