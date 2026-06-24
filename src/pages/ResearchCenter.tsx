@@ -17,6 +17,12 @@ import TopBar from '../components/TopBar'
 import { callGPT, type Message } from '../lib/ai'
 import { paperTextToEditorDoc } from '../lib/editorDocument'
 import {
+  buildResearchDesignBrief,
+  buildResearchToolPrompt,
+  buildResearchToolRepairPrompt,
+  validateResearchTool,
+} from '../lib/researchToolQuality'
+import {
   outlineStore,
   projectStore,
   researchAssetStore,
@@ -389,73 +395,6 @@ function streamResearchText(messages: Message[]): Promise<string> {
   })
 }
 
-function buildQuestionnairePrompt(
-  mode: ToolMode,
-  title: string,
-  source: SourceContext,
-  route: InferredRoute,
-  templateText: string,
-): Message[] {
-  const isKano = mode === 'kano'
-  const taskName = isKano ? 'KANO需求问卷' : '学术量化问卷/量表'
-  const methodRules = isKano
-    ? [
-      '必须采用KANO模型：每个具体设计触点或传播要素都要有正向题和反向题。',
-      '必须包含KANO五级选项：非常喜欢、理所当然、无所谓、勉强接受、非常不喜欢。',
-      '必须输出Kano分析框架、Kano判断矩阵、Better-Worse系数说明、数据编码表头建议。',
-      '不要只生成4组题；如果材料足够，建议6-10组KANO要素。',
-      'KANO题项必须是具体触点，不要把“传播意愿”“文化认同”这类结果变量直接写成KANO功能项。',
-    ]
-    : [
-      '必须采用论文量化研究常用问卷结构：筛选题、基本信息、变量量表题、注意力检测、开放题。',
-      '每个核心变量至少3个题项，题项要能支持信度、效度、相关、回归或中介分析。',
-      '必须写清楚变量定义、题项编号、李克特5分制说明、反向题和计分规则。',
-      '如果题目存在影响机制，要给出假设模型和可检验假设。',
-    ]
-
-  return [
-    {
-      role: 'system',
-      content: [
-        '你是艺术学、传播学、设计学论文研究方法专家，擅长为本科/硕士/期刊论文设计正式问卷。',
-        '你生成的是可供学生后续复制到问卷星、金数据或论文附录中的研究工具，不是随手练习题。',
-        '要求学术化、完整、可执行，但不要编造已经回收的数据或分析结论。',
-      ].join('\n'),
-    },
-    {
-      role: 'user',
-      content: [
-        `请根据以下论文信息生成一份正式的${taskName}。`,
-        '',
-        '【论文题目】',
-        title,
-        '',
-        '【研究路线】',
-        route.label,
-        route.reason,
-        '',
-        '【变量线索】',
-        `自变量/影响因素：${route.variables.independent.join('、') || '请从材料中提炼'}`,
-        `中介变量：${route.variables.mediator.join('、') || '如不适合可不设置'}`,
-        `因变量/结果变量：${route.variables.dependent.join('、') || '请从材料中提炼'}`,
-        '',
-        `【当前使用的论文上下文：${source.label}】`,
-        source.text.slice(0, 9000),
-        '',
-        '【必须遵守的生成规则】',
-        ...methodRules.map((rule, index) => `${index + 1}. ${rule}`),
-        `${methodRules.length + 1}. 问卷说明必须匹配论文题目，不得出现其他论文题目或旧案例。`,
-        `${methodRules.length + 2}. 题项要围绕题目中的研究对象、平台、用户群体和传播机制展开。`,
-        `${methodRules.length + 3}. 输出必须包含：问卷正文、变量/维度说明、数据编码与后续分析建议。`,
-        `${methodRules.length + 4}. 语言应符合中文学术论文研究方法写法，避免营销文案和口语化表达。`,
-        '',
-        '【可参考的标准结构，不要机械照抄，可按论文对象优化】',
-        templateText.slice(0, 9000),
-      ].join('\n'),
-    },
-  ]
-}
-
 function createVariable(name: string, role: ScaleVariable['role'], index: number): ScaleVariable {
   const prefix = role === 'independent' ? 'X' : role === 'dependent' ? 'Y' : role === 'mediator' ? 'M' : 'V'
   const stem = role === 'dependent' ? '我愿意' : '我认为'
@@ -636,7 +575,120 @@ function inferKanoFeatures(title: string, sourceText: string): KanoFeature[] {
     ]
   }
 
-  if (/非遗|短视频|传播|平台|青年/.test(text)) {
+  if (/国潮|插画/.test(text)) {
+    return [
+      {
+        dimension: '传统色彩',
+        name: '传统色彩与现代配色融合',
+        description: '关于国潮插画中色彩识别、色彩情绪和现代审美适配',
+        positive: '如果国潮插画能够将传统色彩与现代配色方式自然融合，您的感受是？',
+        negative: '如果国潮插画的色彩缺乏传统辨识度，也不符合现代审美，您的感受是？',
+        expectedType: 'O',
+        reason: '色彩是国潮插画最直接的视觉识别入口，通常会影响整体吸引力。',
+      },
+      {
+        dimension: '文化符号',
+        name: '传统文化符号的创新转译',
+        description: '关于纹样、器物、神话、民俗或地域文化符号的再设计',
+        positive: '如果国潮插画能以新颖方式转译传统文化符号，您的感受是？',
+        negative: '如果国潮插画几乎看不出传统文化符号或只是简单堆砌符号，您的感受是？',
+        expectedType: 'M',
+        reason: '文化符号是国潮插画区别于普通商业插画的基础条件。',
+      },
+      {
+        dimension: '造型语言',
+        name: '人物/动物/器物造型的国潮化表达',
+        description: '关于角色、器物和装饰形态的造型设计',
+        positive: '如果国潮插画中的人物、动物或器物造型具有鲜明国潮风格，您的感受是？',
+        negative: '如果国潮插画造型普通，缺少国潮风格特征，您的感受是？',
+        expectedType: 'O',
+        reason: '造型语言会影响受众对插画主题和风格的第一判断。',
+      },
+      {
+        dimension: '构图层次',
+        name: '画面构图与视觉层次',
+        description: '关于主体突出、留白、层次组织和视觉秩序',
+        positive: '如果国潮插画构图清晰、主体突出且层次丰富，您的感受是？',
+        negative: '如果国潮插画构图混乱、主体不清或层次单薄，您的感受是？',
+        expectedType: 'O',
+        reason: '构图决定信息阅读效率和视觉停留时间。',
+      },
+      {
+        dimension: '装饰细节',
+        name: '纹样与细节丰富度',
+        description: '关于装饰纹样、线条细节和局部工艺感',
+        positive: '如果国潮插画在纹样、线条和局部细节上较为精致，您的感受是？',
+        negative: '如果国潮插画细节粗糙、装饰单薄，您的感受是？',
+        expectedType: 'A',
+        reason: '细节通常不是最低要求，但能提升审美惊喜和收藏意愿。',
+      },
+      {
+        dimension: '现代融合',
+        name: '传统元素与当代生活场景结合',
+        description: '关于传统文化元素是否能进入青年熟悉的现代消费和生活语境',
+        positive: '如果国潮插画能把传统元素融入当代生活、消费或社交场景，您的感受是？',
+        negative: '如果国潮插画只停留在传统元素展示，缺少现代生活关联，您的感受是？',
+        expectedType: 'A',
+        reason: '现代场景融合有助于青年群体产生亲近感和使用想象。',
+      },
+      {
+        dimension: '情感共鸣',
+        name: '民族文化认同与情绪感染',
+        description: '关于插画是否激发文化自豪感、亲切感或情感记忆',
+        positive: '如果国潮插画能激发您对传统文化的亲切感、自豪感或情感共鸣，您的感受是？',
+        negative: '如果国潮插画缺少情感表达，难以引发文化认同，您的感受是？',
+        expectedType: 'A',
+        reason: '情感共鸣会影响主动分享、收藏和持续关注。',
+      },
+      {
+        dimension: '信息传达',
+        name: '主题含义与文化说明清晰度',
+        description: '关于插画主题、文化来源和设计含义是否易于理解',
+        positive: '如果国潮插画能够让人清楚理解主题含义和文化来源，您的感受是？',
+        negative: '如果国潮插画含义模糊，难以理解其文化来源或主题，您的感受是？',
+        expectedType: 'O',
+        reason: '清晰的信息传达能降低理解门槛，提高传播效率。',
+      },
+      {
+        dimension: '媒介适配',
+        name: '社交媒体传播与屏幕观看适配',
+        description: '关于插画在手机屏幕、社交平台和动态传播中的呈现效果',
+        positive: '如果国潮插画在手机屏幕和社交媒体中依然清晰醒目，您的感受是？',
+        negative: '如果国潮插画在手机屏幕中细节难辨、传播展示效果较差，您的感受是？',
+        expectedType: 'O',
+        reason: '青年群体接触插画的重要场景通常包含移动端和社交媒体。',
+      },
+      {
+        dimension: '应用延展',
+        name: '文创产品与商业应用适配',
+        description: '关于插画是否适合用于服饰、包装、海报、文具或数字周边',
+        positive: '如果国潮插画适合延展到文创产品、包装或数字周边中，您的感受是？',
+        negative: '如果国潮插画难以应用到实际产品或传播物料中，您的感受是？',
+        expectedType: 'A',
+        reason: '应用延展会影响设计价值和消费转化潜力。',
+      },
+      {
+        dimension: '原创性',
+        name: '原创表达与同质化区分',
+        description: '关于作品是否避免模板化、拼贴化和同质化国潮表达',
+        positive: '如果国潮插画具有较强原创性，能区别于常见模板化国潮作品，您的感受是？',
+        negative: '如果国潮插画明显同质化，像常见素材拼贴或模板作品，您的感受是？',
+        expectedType: 'O',
+        reason: '原创性影响作品的新鲜感、专业评价和长期传播价值。',
+      },
+      {
+        dimension: '审美协调',
+        name: '整体风格统一与视觉完成度',
+        description: '关于色彩、造型、符号、构图之间是否协调统一',
+        positive: '如果国潮插画整体风格统一、视觉完成度较高，您的感受是？',
+        negative: '如果国潮插画各元素拼接感强、整体风格不协调，您的感受是？',
+        expectedType: 'M',
+        reason: '整体协调性是插画作品获得基本认可的重要条件。',
+      },
+    ]
+  }
+
+  if (/非遗|短视频/.test(text)) {
     return [
       {
         dimension: '视觉呈现',
@@ -748,7 +800,7 @@ function inferKanoFeatures(title: string, sourceText: string): KanoFeature[] {
   const concreteFromOutline = Array.from(text.matchAll(/\d+(?:\.\d+)*\s*([^\n：:]{4,24})/g))
     .map(match => match[1].trim())
     .filter(item => !/研究|方法|意义|背景|综述|结论|数据|分析/.test(item))
-    .slice(0, 4)
+    .slice(0, 12)
 
   if (concreteFromOutline.length >= 2) {
     return concreteFromOutline.map(item => ({
@@ -775,27 +827,45 @@ function inferKanoFeatures(title: string, sourceText: string): KanoFeature[] {
   ]
 }
 
+function getKanoResearchObject(title: string): string {
+  if (/国潮|插画/.test(title)) return '国潮插画视觉元素'
+  if (/非遗/.test(title)) return '非遗内容视觉呈现'
+  if (/短视频/.test(title)) return '短视频内容呈现'
+  const quoted = title.match(/《([^》]+)》/)
+  if (quoted?.[1]) return quoted[1]
+  return title
+    .replace(/(——|--).*/, '')
+    .replace(/(的)?(影响研究|实证研究|分析调查问卷|调查问卷|研究|分析|探析|探究)$/g, '')
+    .trim() || title
+}
+
 function formatKanoQuestionnaire(title: string, features: KanoFeature[]): string {
+  const researchObject = getKanoResearchObject(title)
+  const audience = /青年/.test(title) ? '18-35岁、对研究对象有接触或兴趣的青年群体' : '对研究对象有接触经验或兴趣的目标用户'
   return [
     '【问卷正文】',
     `问卷标题：${title}调查问卷`,
     `研究题目：${title}`,
-    '调研对象：18-35岁、有短视频平台使用经验的青年用户',
-    `核心题项：${features.length} 组 KANO 正反题，共 ${features.length * 2} 题；另含筛选题、基本信息、平台使用情况、传播意愿量表与注意力检测题。`,
+    `调研对象：${audience}`,
+    `核心题项：${features.length} 组 KANO 正反题，共 ${features.length * 2} 题；另含筛选题、基本信息、接触经验、态度/满意度/传播意愿联动量表与注意力检测题。`,
     '',
     '【问卷说明】',
-    `您好！本问卷旨在了解短视频平台中非遗内容的视觉呈现、文化表达与互动机制对青年用户传播意愿的影响。问卷仅用于学术研究，采用匿名方式收集数据，所有答案没有对错之分，请您根据真实观看经验和主观感受作答。预计填写时间约为 6-8 分钟。`,
+    `您好！本问卷旨在了解“${researchObject}”相关视觉/内容/体验要素对受众满意度、文化认同或传播意愿的影响。问卷仅用于学术研究，采用匿名方式收集数据，所有答案没有对错之分，请您根据真实接触经验和主观感受作答。预计填写时间约为 8-12 分钟。`,
     '',
     '【一、筛选题】',
-    'S1. 您是否使用过抖音、快手、B站、小红书、视频号等短视频或视频社交平台？',
+    `S1. 您是否了解、浏览、购买或关注过与“${researchObject}”相关的作品、产品或内容？`,
     'A. 是',
     'B. 否（选择此项可结束问卷）',
     '',
-    'S2. 您是否在短视频平台上浏览、点赞、收藏、评论或转发过非遗、传统工艺、民俗文化、传统艺术等相关内容？',
+    `S2. 您接触“${researchObject}”相关内容或产品的频率是？`,
     'A. 经常',
     'B. 偶尔',
     'C. 听说过但很少接触',
     'D. 从未接触（选择此项可结束问卷或作为低接触样本单独标记）',
+    '',
+    `S3. 您是否愿意根据真实感受评价“${researchObject}”中的具体视觉、文化和体验要素？`,
+    'A. 愿意',
+    'B. 不愿意（选择此项可结束问卷）',
     '',
     '【二、基本信息】',
     'D1. 您的性别：男 / 女 / 其他 / 不便透露',
@@ -803,11 +873,14 @@ function formatKanoQuestionnaire(title: string, features: KanoFeature[]): string
     'D3. 您的最高学历：高中及以下 / 专科 / 本科 / 硕士及以上',
     'D4. 您目前的身份：在校学生 / 企业职员 / 自由职业 / 文创或艺术相关从业者 / 其他',
     '',
-    '【三、短视频平台使用情况】',
-    'U1. 您平均每天使用短视频平台的时长：30分钟以内 / 30分钟-1小时 / 1-2小时 / 2小时以上',
-    'U2. 您观看非遗或传统文化类短视频的频率：几乎不看 / 偶尔观看 / 有时观看 / 经常观看',
-    'U3. 您最常接触此类内容的平台：抖音 / 快手 / B站 / 小红书 / 视频号 / 其他',
-    'U4. 您接触此类内容的主要方式：平台推荐 / 主动搜索 / 朋友分享 / 关注账号更新 / 课程或工作需要',
+    'D5. 您是否具有艺术、设计、传播、文创或相关学习/工作背景：是 / 否',
+    '',
+    '【三、接触经验与使用情境】',
+    `U1. 您接触“${researchObject}”相关内容或产品的主要渠道：社交媒体 / 电商平台 / 展览活动 / 课程学习 / 朋友推荐 / 线下消费 / 其他`,
+    `U2. 您接触“${researchObject}”相关内容或产品的频率：几乎不接触 / 偶尔接触 / 有时接触 / 经常接触`,
+    'U3. 您最常见的接触形式：海报或平面作品 / 文创产品 / 包装设计 / 数字媒体内容 / 展览展示 / 其他',
+    'U4. 您关注此类内容时最看重：审美效果 / 文化内涵 / 实用价值 / 社交传播 / 情感共鸣 / 价格或可获得性',
+    'U5. 您是否曾经点赞、收藏、购买、评论或转发过类似内容：经常 / 偶尔 / 很少 / 从未',
     '',
     '【四、KANO需求题项】',
     '说明：以下每组问题均包含“如果具备该特征”和“如果不具备该特征”两种情境，请分别选择您的真实感受。选项含义为：非常喜欢 / 理所当然 / 无所谓 / 勉强接受 / 非常不喜欢。',
@@ -831,20 +904,32 @@ function formatKanoQuestionnaire(title: string, features: KanoFeature[]): string
       '非常不喜欢',
       '',
     ]),
-    '【五、传播意愿量表】',
+    '【五、联动量表】',
     '说明：以下题项采用李克特5分制，1=非常不同意，2=不同意，3=一般，4=同意，5=非常同意。',
-    'W1. 如果非遗短视频在视觉呈现上具有较强识别度，我愿意点赞或收藏该类内容。',
-    'W2. 如果非遗短视频能够清楚解释文化内涵，我愿意将其推荐给朋友或同学。',
-    'W3. 如果非遗短视频具有较强叙事吸引力，我愿意在评论区参与讨论。',
-    'W4. 如果非遗短视频设置了合适的互动话题或二创活动，我愿意参与转发或二次创作。',
-    'W5. 总体而言，我愿意持续关注并传播优质非遗短视频内容。',
+    '【文化认同】',
+    `CI1. 如果“${researchObject}”能准确呈现传统文化内涵，我会增强对相关文化的认同感。`,
+    `CI2. 如果“${researchObject}”具有清晰的文化来源和审美逻辑，我会认为其更有研究或消费价值。`,
+    `CI3. 如果“${researchObject}”能把传统元素转化为现代语言，我会觉得传统文化更贴近当代生活。`,
+    `CI4. 总体而言，优秀的“${researchObject}”能够提升我对本土文化表达的好感。`,
+    '【审美满意度】',
+    `SA1. “${researchObject}”的视觉风格会影响我对作品/产品的整体评价。`,
+    `SA2. 当“${researchObject}”具有较高视觉完成度时，我会更愿意停留观看或进一步了解。`,
+    `SA3. 如果“${researchObject}”元素拼贴感较强或同质化明显，我的满意度会降低。`,
+    `SA4. 总体而言，我会因为视觉审美质量更高而更喜欢该类内容或产品。`,
+    '【传播/使用意愿】',
+    `W1. 如果“${researchObject}”具有鲜明识别度，我愿意点赞、收藏或保存。`,
+    `W2. 如果“${researchObject}”能清楚传达文化内涵，我愿意推荐给朋友或同学。`,
+    `W3. 如果“${researchObject}”具有情感共鸣或新鲜表达，我愿意在社交平台分享。`,
+    `W4. 如果“${researchObject}”适合实际产品或生活场景，我愿意尝试购买、使用或持续关注。`,
     '',
     '【六、注意力检测】',
     'C1. 为保证问卷质量，请您在本题选择“同意”。',
+    'C2. 以下陈述用于检测认真作答，请选择“非常不同意”。',
     '',
     '【七、开放题】',
-    'O1. 您认为当前短视频平台中的非遗内容最需要改进的地方是什么？',
-    'O2. 哪类非遗短视频最容易让您产生转发、评论或分享的意愿？请简要说明原因。',
+    `O1. 您认为当前“${researchObject}”相关作品或产品最需要改进的地方是什么？`,
+    `O2. 哪类“${researchObject}”最容易让您产生收藏、购买、评论或分享意愿？请简要说明原因。`,
+    `O3. 请写出一个您印象较深的“${researchObject}”案例，并说明吸引或不吸引您的原因。`,
   ].join('\n')
 }
 
@@ -1397,7 +1482,7 @@ export default function ResearchCenter() {
   const generateTool = async () => {
     if (isGeneratingTool) return
     setIsGeneratingTool(true)
-    setNotice(mode === 'survey' || mode === 'kano' ? '正在调用 AI 生成学术问卷，请稍候…' : '正在生成研究工具…')
+    setNotice(`正在调用 AI 生成专业版${activeOption.label}，并进行学术质检…`)
     const task = researchTaskStore.add({
       projectId: project.id,
       title: `${activeOption.label}生成与回流`,
@@ -1405,20 +1490,33 @@ export default function ResearchCenter() {
       status: mode === 'survey' ? 'survey_ready' : 'route_planned',
       nextActionLabel: mode === 'survey' ? '导出问卷并收集数据' : '导出研究工具并收集材料',
     })
+    const brief = buildResearchDesignBrief(mode, project.title, source, route)
     const generated = buildResearchTool(mode, project.title, source, route)
     let generatedText = generated.text
     let usedAI = false
-    if (mode === 'survey' || mode === 'kano') {
-      try {
-        const aiText = await streamResearchText(buildQuestionnairePrompt(mode, project.title, source, route, generated.text))
-        if (aiText.length > 500) {
-          generatedText = aiText
-          usedAI = true
-        }
-      } catch (error) {
-        console.warn('[ResearchCenter] AI questionnaire generation failed, fallback to template', error)
-        setNotice(`AI 问卷生成失败，已使用标准模板兜底：${error instanceof Error ? error.message : String(error)}`)
+    let quality = validateResearchTool(mode, generatedText)
+    try {
+      setNotice(`正在调用 AI 生成专业版${activeOption.label}…`)
+      const aiText = await streamResearchText(buildResearchToolPrompt(mode, project.title, source, route, generated.text, brief))
+      if (aiText.length > 700) {
+        generatedText = aiText
+        usedAI = true
+        quality = validateResearchTool(mode, generatedText)
       }
+      if (!quality.ok) {
+        setNotice(`正在质检并补全${activeOption.label}：${quality.issues.slice(0, 2).join('；')}`)
+        const repairedText = await streamResearchText(
+          buildResearchToolRepairPrompt(mode, project.title, source, route, brief, generatedText, quality.issues)
+        )
+        if (repairedText.length > generatedText.length * 0.8) {
+          generatedText = repairedText
+          usedAI = true
+          quality = validateResearchTool(mode, generatedText)
+        }
+      }
+    } catch (error) {
+      console.warn('[ResearchCenter] AI research tool generation failed, fallback to template', error)
+      setNotice(`AI 研究工具生成失败，已使用标准模板兜底：${error instanceof Error ? error.message : String(error)}`)
     }
     const asset = researchAssetStore.add({
       projectId: project.id,
@@ -1430,6 +1528,8 @@ export default function ResearchCenter() {
       structuredData: {
         ...(typeof generated.data === 'object' && generated.data ? generated.data as Record<string, unknown> : { value: generated.data }),
         generatedByAI: usedAI,
+        researchDesignBrief: brief,
+        qualityCheck: quality,
       },
       plainText: generatedText,
       status: 'confirmed',
@@ -1437,7 +1537,7 @@ export default function ResearchCenter() {
     setDraftText('')
     setResultView(mode === 'kano' ? 'questionnaire' : 'full')
     refresh(asset.id)
-    setNotice(`已${usedAI ? '调用 AI ' : ''}根据${source.label}生成${activeOption.label}，并保存到研究计算资产。`)
+    setNotice(`已${usedAI ? '调用 AI ' : ''}根据${source.label}生成${activeOption.label}，质检得分 ${quality.score}/100${quality.ok ? '' : `，仍建议人工复核：${quality.issues.slice(0, 2).join('；')}`}。`)
     setIsGeneratingTool(false)
   }
 
