@@ -587,7 +587,7 @@ export default function Stage1() {
       },
       abort.signal
     )
-  }, [inputText, isLoading, mentions, messages, project.context, project.id, selectedLevel, uploadedFile])
+  }, [inputText, isLoading, mentions, messages, project.id, selectedLevel, uploadedFile])
 
   // 文件上传处理
   const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {

@@ -107,7 +107,8 @@ export default function ResearchDrawer({
   useEffect(() => {
     if (!open) return
     if (!selectedAssetId && insertableAssets[0]) {
-      setSelectedAssetId(insertableAssets[0].id)
+      const nextAssetId = insertableAssets[0].id
+      queueMicrotask(() => setSelectedAssetId(nextAssetId))
     }
   }, [insertableAssets, open, selectedAssetId])
 

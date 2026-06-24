@@ -1846,7 +1846,7 @@ export default function Stage3() {
 
     const abort = new AbortController()
     abortRef.current = abort
-    let fullContent = ''
+    let fullContent: string
     try {
       fullContent = await streamGPTText(
         promptGenerateResearchAssetSection(

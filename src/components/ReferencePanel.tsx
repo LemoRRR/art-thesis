@@ -105,7 +105,8 @@ export default function ReferencePanel({ projectId, stage, open, onClose, onChan
     : 0
 
   useEffect(() => {
-    if (open) setSelection(referenceStore.get(projectId, stage))
+    if (!open) return
+    queueMicrotask(() => setSelection(referenceStore.get(projectId, stage)))
   }, [open, projectId, stage])
 
   const saveSelection = (next: ReferenceSelection) => {

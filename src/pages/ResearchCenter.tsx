@@ -1341,12 +1341,12 @@ export default function ResearchCenter() {
   const [resultView, setResultView] = useState<ResultView>('questionnaire')
 
   useEffect(() => {
-    setMode(route.preferredMode)
+    queueMicrotask(() => setMode(route.preferredMode))
   }, [route.preferredMode])
 
   useEffect(() => {
     if (!isEditingMethod) {
-      setMethodDraft(createMethodDraft(route, stage1ResearchPlan))
+      queueMicrotask(() => setMethodDraft(createMethodDraft(route, stage1ResearchPlan)))
     }
   }, [isEditingMethod, route, stage1ResearchPlan])
 

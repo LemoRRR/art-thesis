@@ -160,13 +160,16 @@ function scoreCandidateForFallback(paper: ScholarPaper, queryText: string) {
   return relevance * 4 + citationWeight + abstractWeight
 }
 
-function extractJsonObject(text: string) {
+function extractJsonObject(text: string): Record<string, unknown> | null {
   const cleaned = text.replace(/```json|```/g, '').trim()
   const start = cleaned.indexOf('{')
   const end = cleaned.lastIndexOf('}')
   if (start === -1 || end === -1 || end <= start) return null
   try {
-    return JSON.parse(cleaned.slice(start, end + 1)) as any
+    const parsed: unknown = JSON.parse(cleaned.slice(start, end + 1))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null
   } catch {
     return null
   }
@@ -258,12 +261,14 @@ async function selectSourcesWithAI(params: {
     const selected = Array.isArray(parsed?.selected) ? parsed.selected : []
     const sourceByCandidateId = new Map(params.candidates.map((paper, index) => [`C${index + 1}`, paper]))
     const autoSources = selected
-      .map((item: any) => {
-        const source = sourceByCandidateId.get(String(item.candidateId))
+      .map(item => {
+        if (!item || typeof item !== 'object') return null
+        const selection = item as Record<string, unknown>
+        const source = sourceByCandidateId.get(String(selection.candidateId))
         if (!source) return null
         return {
           ...source,
-          relevanceReason: String(item.relevanceReason ?? '').slice(0, 180),
+          relevanceReason: String(selection.relevanceReason ?? '').slice(0, 180),
         }
       })
       .filter((item: ScholarPaper | null): item is ScholarPaper => Boolean(item))
