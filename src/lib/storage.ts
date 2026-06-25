@@ -14,6 +14,18 @@ import {
 import { auth } from './auth'
 import type { PaperEditorDoc } from './editorDocument'
 
+function stableStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return ''
+  }
+}
+
+function isSameJsonValue(a: unknown, b: unknown): boolean {
+  return stableStringify(a) === stableStringify(b)
+}
+
 const KEYS = {
   CHAT:          'pai_chat_history',
   SECTIONS:      'pai_doc_sections',
@@ -30,6 +42,7 @@ const KEYS = {
   STYLE_PROFILES:'pai_style_profiles',
   RESEARCH_TASKS:'pai_research_tasks',
   RESEARCH_ASSETS:'pai_research_assets',
+  RESEARCH_PACKAGES:'pai_research_content_packages',
 } as const
 
 // ── 通用读写 ──────────────────────────────────────────────────
@@ -101,6 +114,17 @@ export type ResearchAssetType =
   | 'ahp_result'
   | 'qualitative_coding'
   | 'chapter_text'
+export type ResearchCapabilityTier = 'closed_loop' | 'partial_loop' | 'out_of_scope'
+export type ResearchPackageComponentType = 'figure' | 'statistics' | 'analysis' | 'method' | 'table' | 'raw_text'
+export type ResearchVersionTrigger = '首次生成' | '数据更新' | '需求修改' | '手动编辑' | '历史恢复'
+export type ResearchAnalysisMethod =
+  | 'descriptive'
+  | 'cronbach_alpha'
+  | 'correlation'
+  | 'anova'
+  | 'mediation_model_4'
+  | 'efa'
+  | 'out_of_scope'
 
 export interface SectionFootnote {
   id: string
@@ -294,6 +318,91 @@ export interface ResearchAsset {
   updatedAt: number
 }
 
+export interface ResearchIntent {
+  projectId?: string
+  chapterId?: string
+  chapterTitle?: string
+  userRequest: string
+  purpose: string
+  capabilityTier: ResearchCapabilityTier
+  recommendedMethods: ResearchAnalysisMethod[]
+  expectedPackage: ResearchPackageComponentType[]
+  notes: string[]
+}
+
+export interface ResearchAnalysisVariable {
+  role: 'independent' | 'dependent' | 'mediator' | 'moderator' | 'control' | 'group' | 'item' | 'unknown'
+  name: string
+  column?: string
+  confidence?: number
+  note?: string
+}
+
+export interface ResearchAnalysisPlan {
+  id?: string
+  purpose: string
+  method: ResearchAnalysisMethod
+  methods?: ResearchAnalysisMethod[]
+  reason: string
+  variables: ResearchAnalysisVariable[]
+  formula: string
+  requiredColumns: string[]
+  outputs: ResearchPackageComponentType[]
+  limitations: string[]
+  toolCalls: Array<{
+    tool: ResearchAnalysisMethod
+    columns?: string[]
+    groupColumn?: string
+  }>
+  needsVariableConfirmation: boolean
+}
+
+export interface ResearchAnalysisRun {
+  id: string
+  inputDatasetId?: string
+  confirmedPlan: ResearchAnalysisPlan
+  toolCalls: ResearchAnalysisPlan['toolCalls']
+  rawResults: unknown
+  figures: Array<{ id: string; title: string; dataUrl: string; caption?: string }>
+  tables: Array<{ id: string; title: string; rows: unknown[]; columns?: string[] }>
+  warnings: string[]
+  createdAt: number
+}
+
+export interface ResearchPackageComponent {
+  id: string
+  type: ResearchPackageComponentType
+  title?: string
+  label?: string
+  content: string
+  data?: unknown
+  insertedAt?: number
+}
+
+export interface ResearchVersion {
+  versionId: string
+  createdAt: number
+  trigger: ResearchVersionTrigger
+  snapshot: Omit<ResearchContentPackage, 'versions'>
+}
+
+export interface ResearchContentPackage {
+  id: string
+  projectId: string
+  chapterId?: string
+  sourceAssetIds?: string[]
+  title: string
+  method: string
+  methodLabel?: string
+  capabilityTier: ResearchCapabilityTier
+  intentSummary?: string
+  components: ResearchPackageComponent[]
+  insertedComponentIds: string[]
+  versions: ResearchVersion[]
+  createdAt: number
+  updatedAt: number
+}
+
 export interface ResearchTask {
   id: string
   projectId: string
@@ -421,14 +530,35 @@ const uid = (prefix?: string) => {
 const STAGES: WorkflowStage[] = ['stage1', 'stage2', 'stage3']
 
 function canUseRemote(): boolean {
-  return auth.isLoggedIn()
+  return auth.isLoggedIn() && !auth.isLocalSession()
 }
+
+let remoteInFlight = 0
+let remoteFailureCount = 0
+let remotePausedUntil = 0
 
 function remoteTask(task: () => Promise<unknown>) {
   if (!canUseRemote()) return
-  task().catch(error => {
-    console.warn('[Storage] 远端同步失败，已保留本地数据', error)
-  })
+  const now = Date.now()
+  if (now < remotePausedUntil) return
+  if (remoteInFlight >= 2) return
+
+  remoteInFlight += 1
+  task()
+    .then(() => {
+      remoteFailureCount = 0
+      remotePausedUntil = 0
+    })
+    .catch(error => {
+      remoteFailureCount += 1
+      if (remoteFailureCount >= 3) {
+        remotePausedUntil = Date.now() + 30_000
+      }
+      console.warn('[Storage] 远端同步失败，已保留本地数据', error)
+    })
+    .finally(() => {
+      remoteInFlight = Math.max(0, remoteInFlight - 1)
+    })
 }
 
 function toTime(value?: string | null): number {
@@ -866,10 +996,15 @@ export const chatStore = {
     )
   },
   saveForProject: (projectId: string, stage: WorkflowStage, msgs: ChatMessage[]) => {
-    const other = chatStore.getAll().filter(msg =>
+    const allMessages = chatStore.getAll()
+    const existingScoped = allMessages.filter(msg =>
+      msg.projectId === projectId && msg.stage === stage
+    )
+    const other = allMessages.filter(msg =>
       msg.projectId !== projectId || msg.stage !== stage
     )
     const scoped = msgs.map(msg => ({ ...msg, projectId, stage }))
+    if (isSameJsonValue(existingScoped, scoped)) return
     chatStore.save([...other, ...scoped])
     remoteTask(() => chatAPI.saveForProjectStage(projectId, stage, scoped.map(toApiChatMessage)))
   },
@@ -890,13 +1025,16 @@ export const sectionStore = {
   save:   (sections: DocSection[]) => write(KEYS.SECTIONS, sections),
   saveForProject: (projectId: string, sections: DocSection[], options: { syncRemote?: boolean } = {}) => {
     const { syncRemote = true } = options
-    const other = sectionStore.getAll().filter(section => section.projectId !== projectId && section.projectId)
+    const allSections = sectionStore.getAll()
+    const existingScoped = allSections.filter(section => section.projectId === projectId)
+    const other = allSections.filter(section => section.projectId !== projectId && section.projectId)
     const scoped = sections.map((section, index) => ({
       ...section,
       id: ensureUuid(section.id),
       projectId,
       order: section.order ?? index,
     }))
+    if (isSameJsonValue(existingScoped, scoped)) return
     sectionStore.save([...other, ...scoped])
     if (syncRemote) {
       remoteTask(() => sectionsAPI.saveAll(projectId, scoped.map(toApiSection)))
@@ -1181,6 +1319,107 @@ export const researchAssetStore = {
   clear: () => localStorage.removeItem(KEYS.RESEARCH_ASSETS),
 }
 
+function packageSnapshot(pkg: ResearchContentPackage): Omit<ResearchContentPackage, 'versions'> {
+  const { versions: _versions, ...snapshot } = pkg
+  void _versions
+  return {
+    ...snapshot,
+    components: pkg.components.map(component => ({ ...component })),
+    insertedComponentIds: [...pkg.insertedComponentIds],
+    sourceAssetIds: [...(pkg.sourceAssetIds ?? [])],
+  }
+}
+
+function withPackageVersion(pkg: ResearchContentPackage, trigger: ResearchVersionTrigger): ResearchContentPackage {
+  return {
+    ...pkg,
+    versions: [
+      {
+        versionId: uid('research_version'),
+        createdAt: Date.now(),
+        trigger,
+        snapshot: packageSnapshot(pkg),
+      },
+      ...pkg.versions,
+    ].slice(0, 30),
+  }
+}
+
+export const researchPackageStore = {
+  getAll: (): ResearchContentPackage[] => read<ResearchContentPackage[]>(KEYS.RESEARCH_PACKAGES) ?? [],
+  save: (packages: ResearchContentPackage[]) => write(KEYS.RESEARCH_PACKAGES, packages),
+  getByProject: (projectId: string): ResearchContentPackage[] =>
+    researchPackageStore.getAll()
+      .filter(pkg => pkg.projectId === projectId)
+      .sort((a, b) => b.updatedAt - a.updatedAt),
+  getByChapter: (projectId: string, chapterId?: string): ResearchContentPackage[] =>
+    researchPackageStore.getByProject(projectId)
+      .filter(pkg => pkg.chapterId === chapterId),
+  get: (id: string): ResearchContentPackage | null =>
+    researchPackageStore.getAll().find(pkg => pkg.id === id) ?? null,
+  add: (pkg: Omit<ResearchContentPackage, 'id' | 'createdAt' | 'updatedAt' | 'versions'> & { id?: string; versions?: ResearchVersion[] }) => {
+    const now = Date.now()
+    const next: ResearchContentPackage = {
+      ...pkg,
+      id: pkg.id ?? uid('research_package'),
+      insertedComponentIds: pkg.insertedComponentIds ?? [],
+      versions: pkg.versions ?? [],
+      createdAt: now,
+      updatedAt: now,
+    }
+    const versioned = withPackageVersion(next, '首次生成')
+    researchPackageStore.save([versioned, ...researchPackageStore.getAll()])
+    return versioned
+  },
+  update: (id: string, patch: Partial<ResearchContentPackage>, trigger?: ResearchVersionTrigger) => {
+    let updated: ResearchContentPackage | null = null
+    researchPackageStore.save(researchPackageStore.getAll().map(pkg => {
+      if (pkg.id !== id) return pkg
+      const next = {
+        ...pkg,
+        ...patch,
+        id: pkg.id,
+        projectId: pkg.projectId,
+        createdAt: pkg.createdAt,
+        updatedAt: Date.now(),
+      }
+      updated = trigger ? withPackageVersion(next, trigger) : next
+      return updated
+    }))
+    return updated
+  },
+  markInserted: (id: string, componentIds: string[]) => {
+    const pkg = researchPackageStore.get(id)
+    if (!pkg) return null
+    const insertedComponentIds = Array.from(new Set([...pkg.insertedComponentIds, ...componentIds]))
+    return researchPackageStore.update(id, { insertedComponentIds })
+  },
+  restoreVersion: (id: string, versionId: string) => {
+    const pkg = researchPackageStore.get(id)
+    const version = pkg?.versions.find(item => item.versionId === versionId)
+    if (!pkg || !version) return null
+    const restored: ResearchContentPackage = {
+      ...version.snapshot,
+      versions: [
+        {
+          versionId: uid('research_version'),
+          createdAt: Date.now(),
+          trigger: '历史恢复' as ResearchVersionTrigger,
+          snapshot: packageSnapshot(pkg),
+        },
+        ...pkg.versions,
+      ].slice(0, 30),
+      updatedAt: Date.now(),
+    }
+    researchPackageStore.save(researchPackageStore.getAll().map(item => item.id === id ? restored : item))
+    return restored
+  },
+  remove: (id: string) => {
+    researchPackageStore.save(researchPackageStore.getAll().filter(pkg => pkg.id !== id))
+  },
+  clear: () => localStorage.removeItem(KEYS.RESEARCH_PACKAGES),
+}
+
 // ── 文档标题 ──────────────────────────────────────────────────
 export const docTitleStore = {
   get:   () => read<string>(KEYS.DOC_TITLE) ?? '未命名论文',
@@ -1316,8 +1555,14 @@ export const projectStore = {
       projectStore.setActiveId(target.id)
       return target
     }
-    const fallback = createDefaultProject()
-    projectStore.save([fallback, ...projects])
+    const base = createDefaultProject()
+    const fallback = {
+      ...base,
+      id: id || base.id,
+      title: docTitleStore.get(),
+    }
+    write(KEYS.PROJECTS, [fallback, ...projects])
+    remoteTask(() => projectsAPI.create(toApiProject(fallback)))
     projectStore.setActiveId(fallback.id)
     return fallback
   },
@@ -1347,6 +1592,7 @@ export const projectStore = {
     write(KEYS.REFERENCES, referenceStore.getAll().filter(selection => selection.projectId !== projectId))
     write(KEYS.RESEARCH_TASKS, researchTaskStore.getAll().filter(task => task.projectId !== projectId))
     write(KEYS.RESEARCH_ASSETS, researchAssetStore.getAll().filter(asset => asset.projectId !== projectId))
+    write(KEYS.RESEARCH_PACKAGES, researchPackageStore.getAll().filter(pkg => pkg.projectId !== projectId))
     projectStore.update(projectId, { context: createEmptyProjectContext(), currentStage: 'stage1' })
   },
   update: (id: string, patch: Partial<Project>) => {
@@ -1373,6 +1619,7 @@ export const projectStore = {
     write(KEYS.REFERENCES, referenceStore.getAll().filter(selection => selection.projectId !== id))
     write(KEYS.RESEARCH_TASKS, researchTaskStore.getAll().filter(task => task.projectId !== id))
     write(KEYS.RESEARCH_ASSETS, researchAssetStore.getAll().filter(asset => asset.projectId !== id))
+    write(KEYS.RESEARCH_PACKAGES, researchPackageStore.getAll().filter(pkg => pkg.projectId !== id))
     const activeId = read<string>(KEYS.ACTIVE_PROJECT)
     if (activeId === id && nextProjects[0]) {
       projectStore.setActiveId(nextProjects[0].id)

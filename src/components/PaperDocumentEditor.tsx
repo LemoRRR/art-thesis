@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, MouseEvent, ReactNode } from 'react'
+import { type CSSProperties, type MouseEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
@@ -8,9 +7,9 @@ import Placeholder from '@tiptap/extension-placeholder'
 import TextAlign from '@tiptap/extension-text-align'
 import { FontFamily, FontSize, TextStyle } from '@tiptap/extension-text-style'
 import Underline from '@tiptap/extension-underline'
-import { Extension, Mark, mergeAttributes } from '@tiptap/core'
+import { Extension, Mark, Node, mergeAttributes } from '@tiptap/core'
 import type { Editor, JSONContent } from '@tiptap/core'
-import { BookOpen, Check, Edit3, Maximize2, Minimize2, Quote, Sparkles, Wand2, X } from 'lucide-react'
+import { BookOpen, Check, Edit3, FlaskConical, Maximize2, Minimize2, Quote, Sparkles, Wand2, X } from 'lucide-react'
 import FootnoteEditor from './FootnoteEditor'
 import { PAPER_EDITOR_TOOLBAR_EVENT, type PaperEditorToolbarCommand } from './DocumentToolbar'
 import { callDoubao } from '../lib/ai'
@@ -32,7 +31,8 @@ import {
   type PaperLayoutBlock,
 } from '../lib/paperPagination'
 import { promptQuickAction, promptRewriteSelection, type QuickAction } from '../lib/prompts'
-import { revisionStore, type DocSection, type OutlineSection, type SectionFootnote } from '../lib/storage'
+import { researchPackageStore, revisionStore, type DocSection, type OutlineSection, type ResearchContentPackage, type ResearchPackageComponent, type SectionFootnote } from '../lib/storage'
+import { researchPackagePlainText } from '../lib/researchPackages'
 
 interface PaperDocumentEditorProps {
   projectId: string
@@ -45,6 +45,8 @@ interface PaperDocumentEditorProps {
   onSectionsChange: (sections: DocSection[], snapshotLabel?: string) => void
   onPaperTitleChange: (title: string) => void
   onGenerateSection: (title: string) => void
+  onInsertResearchSupport?: (title: string) => void
+  onRegenerateResearchSupport?: (packageId: string) => void
   onUpdateFootnote?: (footnoteId: string, noteText: string) => void
   onDeleteFootnote?: (footnoteId: string) => void
   emptyTitle?: string
@@ -152,6 +154,133 @@ const ResearchBlockParagraphAttributes = Extension.create({
           },
         },
       },
+    ]
+  },
+})
+
+function selectedResearchComponents(pkg: ResearchContentPackage | null, componentIds: string[] = []) {
+  if (!pkg) return [] as ResearchPackageComponent[]
+  const selected = componentIds.length ? new Set(componentIds) : null
+  return pkg.components.filter(component => !selected || selected.has(component.id))
+}
+
+function componentTitle(component: ResearchPackageComponent) {
+  return component.label ? `${component.label} ${component.title ?? ''}`.trim() : component.title ?? ''
+}
+
+function researchFigureData(component: ResearchPackageComponent) {
+  if (component.type !== 'figure' || !component.data || typeof component.data !== 'object') return null
+  const data = component.data as { dataUrl?: unknown; caption?: unknown }
+  return typeof data.dataUrl === 'string' && data.dataUrl.startsWith('data:image/')
+    ? { dataUrl: data.dataUrl, caption: typeof data.caption === 'string' ? data.caption : component.content }
+    : null
+}
+
+function researchArticleSummary(components: ResearchPackageComponent[]) {
+  return components
+    .filter(component => component.type === 'method' || component.type === 'analysis')
+    .map(component => component.content.trim())
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function researchTablePreview(component: ResearchPackageComponent) {
+  if (component.type !== 'statistics' && component.type !== 'table') return []
+  const table = component.data && typeof component.data === 'object'
+    ? component.data as { rows?: unknown[]; columns?: string[] }
+    : null
+  const rows = Array.isArray(table?.rows) ? table.rows : []
+  const columns = Array.isArray(table?.columns) ? table.columns : []
+  if (!rows.length || !columns.length) return []
+  return rows.slice(0, 5).map(row =>
+    columns.slice(0, 4).map(column => {
+      const value = row && typeof row === 'object' ? (row as Record<string, unknown>)[column] : ''
+      return value == null ? '' : String(value)
+    }).join(' / ')
+  )
+}
+
+const ResearchBlockNode = Node.create({
+  name: 'researchBlock',
+
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      researchPackageId: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-research-package-id'),
+        renderHTML: attrs => attrs.researchPackageId ? { 'data-research-package-id': attrs.researchPackageId } : {},
+      },
+      researchComponentIds: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-research-component-ids')?.split(',').filter(Boolean) ?? null,
+        renderHTML: attrs => Array.isArray(attrs.researchComponentIds) && attrs.researchComponentIds.length
+          ? { 'data-research-component-ids': attrs.researchComponentIds.join(',') }
+          : {},
+      },
+      title: {
+        default: '研究支撑',
+        parseHTML: element => element.getAttribute('data-title') || '研究支撑',
+        renderHTML: attrs => attrs.title ? { 'data-title': attrs.title } : {},
+      },
+      previewText: {
+        default: '',
+        parseHTML: element => element.getAttribute('data-preview-text') || element.textContent || '',
+        renderHTML: attrs => attrs.previewText ? { 'data-preview-text': attrs.previewText } : {},
+      },
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'div[data-research-block-node="true"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    const title = String(HTMLAttributes['data-title'] ?? HTMLAttributes.title ?? '研究支撑')
+    const previewText = String(HTMLAttributes['data-preview-text'] ?? HTMLAttributes.previewText ?? '')
+    const packageId = String(HTMLAttributes['data-research-package-id'] ?? HTMLAttributes.researchPackageId ?? '')
+    const componentIds = String(HTMLAttributes['data-research-component-ids'] ?? '')
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean)
+    const pkg = researchPackageStore.get(packageId)
+    const components = selectedResearchComponents(pkg, componentIds)
+    const figureComponents = components.filter(component => researchFigureData(component))
+    const summary = researchArticleSummary(components) || previewText
+    const tableComponent = components.find(component => component.type === 'statistics' || component.type === 'table')
+    const tableLines = tableComponent ? researchTablePreview(tableComponent) : []
+    return [
+      'div',
+      mergeAttributes(HTMLAttributes, {
+        'data-research-block-node': 'true',
+        class: 'paper-research-node',
+        contenteditable: 'false',
+      }),
+      ['div', { class: 'paper-research-node-head' },
+        ['span', { class: 'paper-research-node-badge' }, '研究支撑'],
+        ['strong', {}, title],
+        ['button', { type: 'button', 'data-research-action': 'expand' }, '展开'],
+        ['button', { type: 'button', 'data-research-action': 'regenerate' }, '重新生成'],
+        ['button', { type: 'button', 'data-research-action': 'solidify' }, '转正文'],
+        ['button', { type: 'button', 'data-research-action': 'delete' }, '删除'],
+      ],
+      ['div', { class: 'paper-research-node-body' },
+        ...(summary ? [['div', { class: 'paper-research-node-preview' }, summary]] : []),
+        ...figureComponents.map(figureComponent => {
+          const figure = researchFigureData(figureComponent)
+          return [
+          'figure',
+          { class: 'paper-research-node-figure' },
+            ['img', { class: 'paper-research-node-preview-image', src: figure?.dataUrl ?? '', alt: componentTitle(figureComponent) || title }],
+            ['figcaption', {}, figure?.caption || componentTitle(figureComponent) || '分析结果图'],
+          ]
+        }),
+        ...(tableLines.length ? [['div', { class: 'paper-research-node-table-preview' }, tableLines.join('\n')]] : []),
+      ],
     ]
   },
 })
@@ -417,6 +546,7 @@ function InlineProseMirrorEditor({
       }),
       SectionHeadingAttributes,
       ResearchBlockParagraphAttributes,
+      ResearchBlockNode,
       TextStyle,
       FontFamily.configure({ types: ['textStyle'] }),
       FontSize.configure({ types: ['textStyle'] }),
@@ -598,6 +728,46 @@ function renderPreviewBlock(
     )
   }
 
+  if (block.type === 'research') {
+    const title = typeof block.node?.attrs?.title === 'string' ? block.node.attrs.title : '研究支撑'
+    const packageId = typeof block.node?.attrs?.researchPackageId === 'string' ? block.node.attrs.researchPackageId : ''
+    const componentIds = Array.isArray(block.node?.attrs?.researchComponentIds)
+      ? block.node.attrs.researchComponentIds.filter((item): item is string => typeof item === 'string')
+      : []
+    const pkg = researchPackageStore.get(packageId)
+    const components = selectedResearchComponents(pkg, componentIds)
+    const figureComponents = components.filter(component => researchFigureData(component))
+    const summary = researchArticleSummary(components) || text
+    const tableComponent = components.find(component => component.type === 'statistics' || component.type === 'table')
+    const tableLines = tableComponent ? researchTablePreview(tableComponent) : []
+    return (
+      <div
+        key={block.key}
+        className="paper-preview-block paper-research-block"
+        data-measure-key={block.key}
+        data-section-id={block.sectionId}
+        onClick={event => onClick(block, event)}
+      >
+        <div className="paper-research-preview-head">
+          <span>研究支撑</span>
+          <strong>{title}</strong>
+        </div>
+        {summary && <div className="paper-research-preview-text">{summary}</div>}
+        {figureComponents.map(figureComponent => {
+          const figure = researchFigureData(figureComponent)
+          if (!figure) return null
+          return (
+            <figure key={figureComponent.id} className="paper-research-node-figure">
+              <img className="paper-research-node-preview-image" src={figure.dataUrl} alt={componentTitle(figureComponent) || title} />
+              <figcaption>{figure.caption || componentTitle(figureComponent) || '分析结果图'}</figcaption>
+            </figure>
+          )
+        })}
+        {tableLines.length > 0 && <div className="paper-research-node-table-preview">{tableLines.join('\n')}</div>}
+      </div>
+    )
+  }
+
   return (
     <p
       key={block.key}
@@ -667,12 +837,12 @@ function PaperDocumentStyles() {
       }
 
       .paper-preview-toggle,
-      .paper-preview-full-edit {
+      .paper-preview-full-edit,
+      .paper-preview-research-action {
         position: sticky;
         top: 0;
         z-index: 6;
         align-self: flex-end;
-        margin: 0 calc((100% - ${PAGE.width}px) / 2) 8px 0;
         display: inline-flex;
         align-items: center;
         gap: 5px;
@@ -685,6 +855,28 @@ function PaperDocumentStyles() {
         cursor: pointer;
         font-family: var(--font-sans);
         font-size: 11px;
+      }
+
+      .paper-preview-toggle,
+      .paper-preview-full-edit {
+        margin: 0 calc((100% - ${PAGE.width}px) / 2) 8px 0;
+      }
+
+      .paper-preview-action-bar {
+        position: sticky;
+        top: 0;
+        z-index: 7;
+        align-self: flex-end;
+        margin: 0 calc((100% - ${PAGE.width}px) / 2) 8px 0;
+        display: inline-flex;
+        gap: 8px;
+      }
+
+      .paper-preview-action-bar .paper-preview-toggle,
+      .paper-preview-action-bar .paper-preview-full-edit,
+      .paper-preview-action-bar .paper-preview-research-action {
+        position: static;
+        margin: 0;
       }
 
       .paper-page {
@@ -887,29 +1079,127 @@ function PaperDocumentStyles() {
       }
 
       .paper-research-block,
+      .paper-research-node,
       .ProseMirror p[data-research-block="true"] {
-        border: 1px solid rgba(45, 90, 61, 0.22);
-        border-left: 3px solid var(--color-accent);
-        border-radius: 8px;
-        background: #F6FAF6;
-        padding: 10px 12px;
+        border: none;
+        border-left: 2px solid rgba(45, 90, 61, 0.32);
+        border-radius: 0;
+        background: transparent;
+        padding: 4px 0 4px 14px;
         text-indent: 0;
         white-space: pre-wrap;
       }
 
       .paper-research-block::before,
       .ProseMirror p[data-research-block="true"]::before {
-        content: "研究支撑";
-        display: inline-flex;
-        margin-right: 8px;
-        padding: 1px 6px;
+        content: "";
+        display: none;
+      }
+
+      .paper-research-node {
+        margin: 14px 0 18px;
+        font-family: var(--font-serif);
+        white-space: normal;
+      }
+
+      .paper-research-node-head,
+      .paper-research-preview-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        margin-bottom: 8px;
+        font-family: var(--font-sans);
+      }
+
+      .paper-research-node-badge,
+      .paper-research-preview-head span {
+        flex-shrink: 0;
         border-radius: 999px;
         background: var(--color-accent-light);
         color: var(--color-accent);
-        font-family: var(--font-sans);
+        padding: 2px 7px;
         font-size: 10px;
-        font-weight: 800;
-        vertical-align: 1px;
+        font-weight: 850;
+      }
+
+      .paper-research-node-head strong,
+      .paper-research-preview-head strong {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--color-ink);
+        font-size: 12px;
+      }
+
+      .paper-research-node button {
+        border: 1px solid var(--color-border);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.88);
+        color: var(--color-ink-2);
+        padding: 3px 7px;
+        font-size: 11px;
+        cursor: pointer;
+        font-family: var(--font-sans);
+      }
+
+      .paper-research-node-preview,
+      .paper-research-preview-text {
+        margin-top: 8px;
+        color: var(--color-ink-2);
+        font-size: 14.5px;
+        line-height: 2;
+        max-height: none;
+        overflow: visible;
+        white-space: pre-wrap;
+        text-indent: 2em;
+        text-align: justify;
+      }
+
+      .paper-research-node-body {
+        display: grid;
+        gap: 10px;
+      }
+
+      .paper-research-node-preview-image {
+        display: block;
+        width: 100%;
+        max-width: 620px;
+        max-height: 420px;
+        object-fit: contain;
+        object-position: center;
+        margin: 8px auto 6px;
+        border: 1px solid rgba(45, 90, 61, 0.16);
+        border-radius: 4px;
+        background: #fff;
+      }
+
+      .paper-research-node-figure {
+        margin: 8px 0 12px;
+        text-align: center;
+      }
+
+      .paper-research-node-figure figcaption {
+        margin-top: 6px;
+        color: var(--color-ink-3);
+        font-family: var(--font-serif);
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      .paper-research-node-table-preview {
+        margin: 8px 0 12px;
+        padding: 8px 10px;
+        border: 1px solid rgba(45, 90, 61, 0.14);
+        border-radius: 4px;
+        background: #FAFCFA;
+        color: var(--color-ink-2);
+        font-family: var(--font-sans);
+        font-size: 11px;
+        line-height: 1.6;
+        white-space: pre-wrap;
       }
 
       .paper-preview-paragraph.is-continuation {
@@ -1439,7 +1729,39 @@ function DiffBox({
   )
 }
 
-export default function PaperDocumentEditor({
+function EmptyPaperDocument({ isPreparing, emptyTitle, emptyText, emptyAction }: Pick<PaperDocumentEditorProps, 'isPreparing' | 'emptyTitle' | 'emptyText' | 'emptyAction'>) {
+  const title = emptyTitle ?? (isPreparing ? '正在准备正文' : '文档还是空的')
+  const text = emptyText ?? (isPreparing
+    ? '已读取确认大纲，正在整理全文计划并准备逐章生成正文。'
+    : '先在阶段二确认大纲，或在左侧对话框说明章节标题，AI 会生成正文出现在这里。')
+
+  return (
+    <div className="paper-document-empty">
+      {isPreparing ? <div className="paper-document-spinner" aria-hidden="true" /> : <div style={{ fontSize: 32 }}>□</div>}
+      <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--color-ink-2)' }}>{title}</div>
+      <div style={{ fontSize: 13, lineHeight: 1.7 }}>{text}</div>
+      {emptyAction && <div className="paper-document-empty-action">{emptyAction}</div>}
+      <PaperDocumentStyles />
+    </div>
+  )
+}
+
+export default function PaperDocumentEditor(props: PaperDocumentEditorProps) {
+  if (props.sections.length === 0) {
+    return (
+      <EmptyPaperDocument
+        isPreparing={props.isPreparing}
+        emptyTitle={props.emptyTitle}
+        emptyText={props.emptyText}
+        emptyAction={props.emptyAction}
+      />
+    )
+  }
+
+  return <PaperDocumentEditorCore {...props} />
+}
+
+function PaperDocumentEditorCore({
   projectId,
   paperTitle,
   sections,
@@ -1450,6 +1772,8 @@ export default function PaperDocumentEditor({
   onSectionsChange,
   onPaperTitleChange,
   onGenerateSection,
+  onInsertResearchSupport,
+  onRegenerateResearchSupport,
   onUpdateFootnote,
   onDeleteFootnote,
   emptyTitle,
@@ -1502,6 +1826,7 @@ export default function PaperDocumentEditor({
       }),
       SectionHeadingAttributes,
       ResearchBlockParagraphAttributes,
+      ResearchBlockNode,
       TextStyle,
       FontFamily.configure({ types: ['textStyle'] }),
       FontSize.configure({ types: ['textStyle'] }),
@@ -1521,8 +1846,58 @@ export default function PaperDocumentEditor({
       attributes: {
         class: 'paper-document-editor-content',
       },
-      handleClick: (_view, _pos, event) => {
+      handleClick: (view, _pos, event) => {
         const target = event.target as HTMLElement | null
+        const researchAction = target?.closest<HTMLElement>('[data-research-action]')
+        if (researchAction) {
+          const block = researchAction.closest<HTMLElement>('[data-research-block-node]')
+          const packageId = block?.dataset.researchPackageId
+          const pkg = packageId ? researchPackageStore.get(packageId) : null
+          const componentIds = block?.dataset.researchComponentIds?.split(',').filter(Boolean) ?? []
+          if (!pkg || !packageId) return true
+
+          let nodePos: number | null = null
+          let nodeSize = 1
+          view.state.doc.descendants((node, pos) => {
+            if (node.type.name === 'researchBlock' && node.attrs.researchPackageId === packageId && nodePos == null) {
+              nodePos = pos
+              nodeSize = node.nodeSize
+              return false
+            }
+            return true
+          })
+
+          const action = researchAction.dataset.researchAction
+          if (action === 'expand') {
+            alert(researchPackagePlainText(pkg, componentIds))
+            return true
+          }
+          if (action === 'regenerate') {
+            onRegenerateResearchSupport?.(packageId)
+            return true
+          }
+          if (action === 'solidify' && nodePos != null) {
+            const text = researchPackagePlainText(pkg, componentIds)
+            const paragraphs = text.split(/\n{2,}/).map(part => part.trim()).filter(Boolean).map(part =>
+              view.state.schema.nodes.paragraph.create({}, view.state.schema.text(part))
+            )
+            view.dispatch(view.state.tr.replaceWith(nodePos, nodePos + nodeSize, paragraphs))
+            const nextDoc = view.state.doc.toJSON() as PaperEditorDoc
+            onSectionsChange(paperDocToSections(nextDoc, previousSections.current), `固化研究支撑：${pkg.title}`)
+            setLayoutDoc(nextDoc)
+            return true
+          }
+          if (action === 'delete' && nodePos != null) {
+            const deleteAsset = confirm('是否同时删除关联的研究内容包？选择“取消”仅从正文删除该块。')
+            view.dispatch(view.state.tr.delete(nodePos, nodePos + nodeSize))
+            if (deleteAsset) researchPackageStore.remove(packageId)
+            const nextDoc = view.state.doc.toJSON() as PaperEditorDoc
+            onSectionsChange(paperDocToSections(nextDoc, previousSections.current), `删除研究支撑：${pkg.title}`)
+            setLayoutDoc(nextDoc)
+            return true
+          }
+          return true
+        }
         const anchor = target?.closest<HTMLElement>('[data-footnote-id]')
         const footnoteId = anchor?.dataset.footnoteId
         if (!footnoteId) return false
@@ -1584,7 +1959,8 @@ export default function PaperDocumentEditor({
     onSectionsChange(nextSections, snapshotLabel)
   }, [onSectionsChange])
 
-  const sourcePositions = (() => {
+  const sourcePositions = useMemo(() => {
+    if (editMode) return {}
     if (!editor) return {}
     const positions: Record<string, number> = {}
     editor.state.doc.forEach((node, offset, index) => {
@@ -1592,7 +1968,7 @@ export default function PaperDocumentEditor({
       positions[blockSourceKey(jsonNode, index)] = offset + 1
     })
     return positions
-  })()
+  }, [editMode, editor, layoutDoc])
 
   const footnotes = useMemo(
     () => sections.flatMap(section => section.footnotes ?? []).sort((a, b) => a.number - b.number),
@@ -1600,55 +1976,22 @@ export default function PaperDocumentEditor({
   )
 
   const layoutBlocks = useMemo(
-    () => buildPaperLayoutBlocks(paperTitle, layoutDoc.content ?? [], sourcePositions),
-    [layoutDoc, paperTitle, sourcePositions]
+    () => editMode ? [] : buildPaperLayoutBlocks(paperTitle, layoutDoc.content ?? [], sourcePositions),
+    [editMode, layoutDoc, paperTitle, sourcePositions]
   )
 
   const paginated = useMemo(
-    () => paginatePaperBlocks(layoutBlocks, footnotes, measuredBlocks, measuredFootnotes, PAGE),
-    [footnotes, layoutBlocks, measuredBlocks, measuredFootnotes]
+    () => editMode
+      ? { pages: [], overflowWarnings: [] }
+      : paginatePaperBlocks(layoutBlocks, footnotes, measuredBlocks, measuredFootnotes, PAGE),
+    [editMode, footnotes, layoutBlocks, measuredBlocks, measuredFootnotes]
   )
 
-  const refreshEditPageFootnotes = useCallback(() => {
-    const page = editPageRef.current
-    if (!page || !editMode) {
-      setEditPageFootnotes(prev => prev.length === 0 ? prev : [])
-      return
-    }
-    const contentLayer = page.querySelector<HTMLElement>('.paper-edit-content-layer')
-    const measuredContentHeight = contentLayer
-      ? Array.from(contentLayer.children).reduce((height, child) => {
-          const element = child as HTMLElement
-          return Math.max(height, element.offsetTop + element.offsetHeight)
-        }, 0)
-      : 0
-    const contentHeight = Math.max(measuredContentHeight + PAGE.marginBottom, PAGE.height)
-    const nextPageCount = Math.max(1, Math.ceil(contentHeight / PAGE.height))
-    const footnotesById = new Map(footnotes.map(footnote => [footnote.id, footnote]))
-    const groups = new Map<number, SectionFootnote[]>()
-    const pageRect = page.getBoundingClientRect()
-    page.querySelectorAll<HTMLElement>('[data-footnote-id]').forEach(anchor => {
-      const footnoteId = anchor.dataset.footnoteId
-      const footnote = footnoteId ? footnotesById.get(footnoteId) : null
-      if (!footnote) return
-      const anchorTop = anchor.getBoundingClientRect().top - pageRect.top
-      const pageNumber = Math.max(1, Math.min(nextPageCount, Math.floor(anchorTop / PAGE.height) + 1))
-      const list = groups.get(pageNumber) ?? []
-      if (!list.some(item => item.id === footnote.id)) list.push(footnote)
-      groups.set(pageNumber, list)
-    })
-    const nextGroups = Array.from(groups.entries()).map(([pageNumber, items]) => ({
-      page: pageNumber,
-      top: (pageNumber - 1) * PAGE.height + PAGE.height - PAGE.marginBottom + 10,
-      footnotes: items.slice().sort((a, b) => a.number - b.number),
-    }))
-    setEditPageFootnotes(prev => JSON.stringify(prev) === JSON.stringify(nextGroups) ? prev : nextGroups)
-  }, [editMode, footnotes])
+  const refreshEditPageFootnotes = useCallback(() => undefined, [])
 
   const scheduleEditPageFootnotes = useCallback(() => {
-    if (footnoteOverlayTimer.current) clearTimeout(footnoteOverlayTimer.current)
-    footnoteOverlayTimer.current = setTimeout(refreshEditPageFootnotes, 120)
-  }, [refreshEditPageFootnotes])
+    return
+  }, [])
 
   useEffect(() => {
     scheduleEditPageFootnotesRef.current = scheduleEditPageFootnotes
@@ -1671,6 +2014,11 @@ export default function PaperDocumentEditor({
   }, [editor, outlineSections, paperTitle, refreshEditPageFootnotes, sections])
 
   useLayoutEffect(() => {
+    if (editMode) {
+      setMeasuredBlocks(prev => Object.keys(prev).length === 0 ? prev : {})
+      setMeasuredFootnotes(prev => Object.keys(prev).length === 0 ? prev : {})
+      return
+    }
     const root = measureRef.current
     if (!root) return
     const outerHeight = (element: HTMLElement) => {
@@ -1691,7 +2039,7 @@ export default function PaperDocumentEditor({
     })
     setMeasuredBlocks(prev => JSON.stringify(prev) === JSON.stringify(nextBlocks) ? prev : nextBlocks)
     setMeasuredFootnotes(prev => JSON.stringify(prev) === JSON.stringify(nextFootnotes) ? prev : nextFootnotes)
-  }, [layoutBlocks, footnotes, paperTitle])
+  }, [editMode, layoutBlocks, footnotes, paperTitle])
 
   useEffect(() => {
     if (!editor) return
@@ -1714,26 +2062,8 @@ export default function PaperDocumentEditor({
   }, [editor])
 
   useEffect(() => {
-    if (!editMode) {
-      window.queueMicrotask(() => {
-        setEditPageFootnotes(prev => prev.length === 0 ? prev : [])
-      })
-      return
-    }
-    scheduleEditPageFootnotes()
-    const page = editPageRef.current
-    if (!page) return
-    const observer = new ResizeObserver(scheduleEditPageFootnotes)
-    const mutationObserver = new MutationObserver(scheduleEditPageFootnotes)
-    observer.observe(page)
-    mutationObserver.observe(page, { childList: true, subtree: true, characterData: true })
-    window.addEventListener('resize', scheduleEditPageFootnotes)
-    return () => {
-      observer.disconnect()
-      mutationObserver.disconnect()
-      window.removeEventListener('resize', scheduleEditPageFootnotes)
-    }
-  }, [editMode, scheduleEditPageFootnotes, sections])
+    setEditPageFootnotes(prev => prev.length === 0 ? prev : [])
+  }, [editMode, sections])
 
   useEffect(() => () => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
@@ -2072,18 +2402,42 @@ export default function PaperDocumentEditor({
     <div className="paper-document-root">
       <div className="paper-document-scroll">
         {editMode && (
-          <button type="button" className="paper-preview-toggle" onClick={showPagedPreview}>
-            <Edit3 size={12} />
-            分页预览
-          </button>
+          <div className="paper-preview-action-bar">
+            <button type="button" className="paper-preview-toggle" onClick={showPagedPreview}>
+              <Edit3 size={12} />
+              分页预览
+            </button>
+            {activeSectionId && onInsertResearchSupport && (
+              <button
+                type="button"
+                className="paper-preview-research-action"
+                onClick={() => onInsertResearchSupport(findSectionTitleById(sections, activeSectionId))}
+              >
+                <FlaskConical size={12} />
+                插入研究支撑
+              </button>
+            )}
+          </div>
         )}
 
         {!editMode && (
           <>
-            <button type="button" className="paper-preview-full-edit" onClick={openFullEdit}>
-              <Edit3 size={12} />
-              完整编辑
-            </button>
+            <div className="paper-preview-action-bar">
+              <button type="button" className="paper-preview-full-edit" onClick={openFullEdit}>
+                <Edit3 size={12} />
+                完整编辑
+              </button>
+              {activeSectionId && onInsertResearchSupport && (
+                <button
+                  type="button"
+                  className="paper-preview-research-action"
+                  onClick={() => onInsertResearchSupport(findSectionTitleById(sections, activeSectionId))}
+                >
+                  <FlaskConical size={12} />
+                  插入研究支撑
+                </button>
+              )}
+            </div>
             {paginated.pages.map(page => (
               <article key={page.number} className={`paper-page paper-preview-readonly ${page.footnotes.length > 0 ? 'has-footnotes' : ''}`}>
                 <div className="paper-page-body">
@@ -2124,6 +2478,15 @@ export default function PaperDocumentEditor({
                   >
                     <Sparkles size={12} />
                     生成当前章节
+                  </button>
+                )}
+                {activeSectionId && onInsertResearchSupport && (
+                  <button
+                    type="button"
+                    onClick={() => onInsertResearchSupport(findSectionTitleById(sections, activeSectionId))}
+                  >
+                    <FlaskConical size={12} />
+                    插入研究支撑
                   </button>
                 )}
                 <button type="button" onClick={showPagedPreview}>
@@ -2242,17 +2605,19 @@ export default function PaperDocumentEditor({
           </div>
         )}
 
-        <div className="paper-measure-root" ref={measureRef} aria-hidden="true">
-          {layoutBlocks.map(block => renderPreviewBlock(block, () => undefined))}
-          <div className="paper-page-footnotes">
-            {footnotes.map(footnote => (
-              <button key={footnote.id} type="button" data-measure-footnote-id={footnote.id}>
-                <sup>[{footnote.number}]</sup>
-                <span>{footnote.noteText}</span>
-              </button>
-            ))}
+        {!editMode && (
+          <div className="paper-measure-root" ref={measureRef} aria-hidden="true">
+            {layoutBlocks.map(block => renderPreviewBlock(block, () => undefined))}
+            <div className="paper-page-footnotes">
+              {footnotes.map(footnote => (
+                <button key={footnote.id} type="button" data-measure-footnote-id={footnote.id}>
+                  <sup>[{footnote.number}]</sup>
+                  <span>{footnote.noteText}</span>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {editingFootnote && (

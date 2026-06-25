@@ -573,7 +573,7 @@ router.post('/prepare', requireAuth, async (req, res) => {
   res.json({
     provider: 'OpenAlex/Crossref',
     queries,
-    candidates,
+    candidates: candidates.slice(0, 12),
     autoSources,
     evidencePack,
     auditNote,

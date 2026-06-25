@@ -14,8 +14,10 @@ import {
 } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
+import { researchAPI } from '../lib/api'
 import { callGPT, type Message } from '../lib/ai'
 import { paperTextToEditorDoc } from '../lib/editorDocument'
+import { appendResearchBlockToDoc, createPackageFromAsset } from '../lib/researchPackages'
 import {
   buildResearchDesignBrief,
   buildResearchToolPrompt,
@@ -26,6 +28,7 @@ import {
   outlineStore,
   projectStore,
   researchAssetStore,
+  researchPackageStore,
   researchTaskStore,
   sectionStore,
   type OutlineSection,
@@ -1123,6 +1126,16 @@ function analyzeDataset(fileName: string, text: string): string {
   ].join('\n')
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = ''
+  const bytes = new Uint8Array(buffer)
+  const chunkSize = 0x8000
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
+  }
+  return btoa(binary)
+}
+
 function reviewQuestionnaire(fileName: string, text: string, source: SourceContext): string {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
   const questionLines = lines.filter(line => /^(Q?\d+[.、\s]|第.+题|如果|我认为|我愿意)/.test(line))
@@ -1563,7 +1576,9 @@ export default function ResearchCenter() {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    const text = await file.text()
+    const isExcel = /\.(xlsx|xls)$/i.test(file.name)
+    const text = isExcel ? '' : await file.text()
+    const base64 = isExcel ? arrayBufferToBase64(await file.arrayBuffer()) : undefined
     const task = tasks[0] ?? researchTaskStore.add({
       projectId: project.id,
       title: '数据分析任务',
@@ -1576,9 +1591,9 @@ export default function ResearchCenter() {
       taskId: task.id,
       type: 'quant_dataset',
       title: file.name,
-      summary: `已上传数据文件，${text.split(/\r?\n/).filter(Boolean).length} 行`,
+      summary: isExcel ? '已上传 Excel 数据文件' : `已上传数据文件，${text.split(/\r?\n/).filter(Boolean).length} 行`,
       source: 'uploaded_by_user',
-      structuredData: { fileName: file.name, preview: text.slice(0, 2000) },
+      structuredData: { fileName: file.name, preview: text.slice(0, 2000), base64 },
       plainText: text.slice(0, 10000),
       status: 'confirmed',
     })
@@ -1622,21 +1637,41 @@ export default function ResearchCenter() {
     setNotice('已生成问卷优化报告，并保存到研究资产。')
   }
 
-  const runAnalysis = () => {
+  const runAnalysis = async () => {
     if (!latestDataset) {
-      setNotice('请先上传 CSV/TXT 数据文件，系统识别到最新数据后才能生成分析结果。研究计算是可选步骤，也可以直接进入文章生成。')
+      setNotice('请先上传 CSV/Excel/TXT 数据文件，系统识别到最新数据后才能生成分析结果。研究计算是可选步骤，也可以直接进入文章生成。')
       return
     }
     const task = latestDataset.taskId ? researchTaskStore.get(latestDataset.taskId) : tasks[0]
-    const analysisText = analyzeDataset(latestDataset.title, latestDataset.plainText)
+    setNotice('Python 后端正在运行统计分析…')
+    let analysisText = ''
+    let structuredResult: unknown = null
+    try {
+      const data = latestDataset.structuredData as { base64?: string } | null
+      const result = await researchAPI.analyze({
+        fileName: latestDataset.title,
+        text: latestDataset.plainText,
+        base64: data?.base64,
+      })
+      structuredResult = result
+      analysisText = [
+        '【数据分析结果】',
+        result.plainText,
+        result.cautions.length ? `\n【环境提示】\n${result.cautions.join('\n')}` : '',
+      ].filter(Boolean).join('\n')
+    } catch (error) {
+      console.warn('[ResearchCenter] Python analysis failed, fallback to browser analysis', error)
+      analysisText = analyzeDataset(latestDataset.title, latestDataset.plainText)
+      structuredResult = { fallback: true, error: error instanceof Error ? error.message : String(error) }
+    }
     const asset = researchAssetStore.add({
       projectId: project.id,
       taskId: latestDataset.taskId,
       type: 'quant_analysis_result',
       title: `${latestDataset.title}-分析结果`,
-      summary: '基于上传数据生成的初步统计分析结果，可插入论文第四章。',
+      summary: '基于上传数据由 Python 后端生成的统计分析结果，可插入论文第四章。',
       source: 'generated_from_project',
-      structuredData: { datasetAssetId: latestDataset.id },
+      structuredData: { datasetAssetId: latestDataset.id, result: structuredResult },
       plainText: analysisText,
       status: 'confirmed',
     })
@@ -1648,7 +1683,7 @@ export default function ResearchCenter() {
       })
     }
     refresh(asset.id)
-    setNotice('已生成初步分析结果。完整版本后续可接入信效度、相关、回归和中介效应计算。')
+    setNotice('已生成统计分析结果，并保存为研究资产。')
   }
 
   const insertIntoPaper = () => {
@@ -1663,15 +1698,23 @@ export default function ResearchCenter() {
       activeText,
     ].join('\n')
     const sectionId = `research-${activeAsset.id}-${Date.now()}`
+    const pkg = createPackageFromAsset({
+      projectId: project.id,
+      chapterId: sectionId,
+      asset: { ...activeAsset, plainText: activeText },
+      intentSummary: `从独立研究计算页面插入 Stage3：${activeAsset.title}`,
+    })
+    const componentIds = pkg.components.map(component => component.id)
+    researchPackageStore.markInserted(pkg.id, componentIds)
     sectionStore.add({
       id: sectionId,
       projectId: project.id,
       title,
       content,
-      editorDoc: paperTextToEditorDoc(content),
+      editorDoc: appendResearchBlockToDoc(paperTextToEditorDoc(''), pkg, componentIds),
       status: 'done',
       order: researchAssetOrder(activeAsset),
-      sourceRefs: [activeAsset.id],
+      sourceRefs: [activeAsset.id, pkg.id],
       generationPlan: `由研究计算资产「${activeAsset.title}」插入`,
     })
     researchAssetStore.update(activeAsset.id, {
@@ -1814,6 +1857,9 @@ export default function ResearchCenter() {
         />
 
         <main style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
+          <div style={{ maxWidth: 1280, margin: '0 auto 14px', border: '1px solid rgba(45, 90, 61, 0.18)', borderRadius: 8, padding: '10px 12px', background: 'var(--color-accent-light)', color: 'var(--color-accent)', fontSize: 12, lineHeight: 1.7 }}>
+            独立研究页现在定位为早期规划入口。若论文已经开始写作，建议回到 Stage3 对应章节点击「插入研究支撑」，系统会带入当前章节上下文，变量映射和结果文字会更贴合正文。
+          </div>
           <section style={{ ...panelStyle, maxWidth: 1280, margin: '0 auto 14px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
               <div>
@@ -2048,7 +2094,7 @@ export default function ResearchCenter() {
                       <label style={{ ...primaryButtonStyle, justifyContent: 'center' }}>
                         <Upload size={13} />
                         上传已有数据或材料
-                        <input type="file" accept=".csv,.txt" onChange={uploadData} style={{ display: 'none' }} />
+                        <input type="file" accept=".csv,.txt,.xlsx,.xls" onChange={uploadData} style={{ display: 'none' }} />
                       </label>
                       <button
                         onClick={runAnalysis}
@@ -2157,7 +2203,7 @@ export default function ResearchCenter() {
                         <label style={{ ...secondaryButtonStyle, justifyContent: 'center' }}>
                           <Upload size={13} />
                           上传回收数据
-                          <input type="file" accept=".csv,.txt" onChange={uploadData} style={{ display: 'none' }} />
+                          <input type="file" accept=".csv,.txt,.xlsx,.xls" onChange={uploadData} style={{ display: 'none' }} />
                         </label>
                         <button
                           onClick={runAnalysis}

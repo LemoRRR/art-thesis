@@ -14,6 +14,16 @@ import ResearchCenter from './pages/ResearchCenter'
 import { projectStore, syncRemoteData } from './lib/storage'
 
 const AUTH_EXPIRED_EVENT = 'paper-ai-auth-expired'
+const AUTH_ENTRY_ROUTES = new Set(['/login', '/demo'])
+
+function isAuthEntryPath(pathname: string) {
+  return AUTH_ENTRY_ROUTES.has(pathname)
+}
+
+function safeLoginRedirect(location: ReturnType<typeof useLocation>) {
+  if (isAuthEntryPath(location.pathname)) return ''
+  return `${location.pathname}${location.search}${location.hash}`
+}
 
 function DefaultConversationRedirect() {
   const projectId = projectStore.getActiveId()
@@ -22,22 +32,26 @@ function DefaultConversationRedirect() {
 
 function AuthGuard({ children }: { children: ReactNode }) {
   const location = useLocation()
-  if (auth.isAuthRequired() && !auth.isLoggedIn() && location.pathname !== '/login' && location.pathname !== '/demo') {
-    const redirect = `${location.pathname}${location.search}${location.hash}`
-    return <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />
+  const isAuthEntryRoute = isAuthEntryPath(location.pathname)
+  if (auth.isAuthRequired() && !auth.isLoggedIn() && !isAuthEntryRoute) {
+    const redirect = safeLoginRedirect(location)
+    return <Navigate to={redirect ? `/login?redirect=${encodeURIComponent(redirect)}` : '/login'} replace />
   }
   return <>{children}</>
 }
 
 function RemoteDataGate({ children }: { children: ReactNode }) {
   const location = useLocation()
-  const isAuthEntryRoute = location.pathname === '/login' || location.pathname === '/demo'
+  const isAuthEntryRoute = isAuthEntryPath(location.pathname)
   const [ready, setReady] = useState(!auth.isLoggedIn())
   const [error, setError] = useState('')
   const [redirectToLogin, setRedirectToLogin] = useState(false)
   const syncedRef = useRef(false)
 
   useEffect(() => {
+    if (isAuthEntryRoute) {
+      setRedirectToLogin(false)
+    }
     const handleAuthExpired = () => {
       if (auth.isAuthRequired() && !isAuthEntryRoute) {
         setRedirectToLogin(true)
@@ -49,7 +63,7 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
-    if (!auth.isLoggedIn() || isAuthEntryRoute || syncedRef.current) {
+    if (!auth.isLoggedIn() || auth.isLocalSession() || isAuthEntryRoute || syncedRef.current) {
       setReady(true)
       return
     }
@@ -85,9 +99,9 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
     }
   }, [isAuthEntryRoute, location.pathname])
 
-  if (redirectToLogin) {
-    const redirect = `${location.pathname}${location.search}${location.hash}`
-    return <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />
+  if (redirectToLogin && !isAuthEntryRoute) {
+    const redirect = safeLoginRedirect(location)
+    return <Navigate to={redirect ? `/login?redirect=${encodeURIComponent(redirect)}` : '/login'} replace />
   }
 
   if (!ready) {

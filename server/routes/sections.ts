@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { removeUndefined } from '../lib/object.js'
 import { createUserClient } from '../lib/supabase.js'
+import { ensureProjectForUser } from '../lib/ensureProject.js'
 import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
@@ -34,6 +35,13 @@ router.get('/project/:projectId', async (req: AuthRequest, res) => {
 router.post('/', async (req: AuthRequest, res) => {
   const db = createUserClient(req.accessToken!)
   const { id, project_id, title, content = '', content_doc, status = 'pending', sort_order = 0 } = req.body
+  if (project_id) {
+    const ensured = await ensureProjectForUser(db, project_id, req.userId!)
+    if (ensured.error) {
+      res.status(500).json({ error: ensured.error.message })
+      return
+    }
+  }
   const row = removeUndefined({ id, project_id, title, content, content_doc, status, sort_order })
   let { data, error } = await db
     .from('sections')
@@ -90,7 +98,12 @@ router.patch('/:id', async (req: AuthRequest, res) => {
 router.put('/project/:projectId', async (req: AuthRequest, res) => {
   const db = createUserClient(req.accessToken!)
   const { sections = [] } = req.body
-  const projectId = req.params.projectId
+  const projectId = String(req.params.projectId)
+  const ensured = await ensureProjectForUser(db, projectId, req.userId!)
+  if (ensured.error) {
+    res.status(500).json({ error: ensured.error.message })
+    return
+  }
 
   if (sections.length > 0) {
     const rows = sections.map((section: Record<string, unknown>, index: number) => ({

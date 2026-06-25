@@ -16,7 +16,7 @@ export interface PaperPageSettings {
 export interface PaperLayoutBlock {
   key: string
   sourceKey: string
-  type: 'title' | 'paragraph' | 'heading'
+  type: 'title' | 'paragraph' | 'heading' | 'research'
   node?: PaperEditorNode
   text?: string
   level?: number
@@ -53,6 +53,7 @@ export const DEFAULT_PAPER_PAGE_SETTINGS: PaperPageSettings = {
 export function editorNodeText(node: PaperEditorNode | undefined): string {
   if (!node) return ''
   if (node.type === 'text') return node.text ?? ''
+  if (node.type === 'researchBlock') return typeof node.attrs?.previewText === 'string' ? node.attrs.previewText : ''
   return (node.content ?? []).map(editorNodeText).join('')
 }
 
@@ -89,14 +90,14 @@ export function buildPaperLayoutBlocks(
   }
 
   nodes.forEach((node, index) => {
-    if (node.type !== 'paragraph' && node.type !== 'heading') return
+    if (node.type !== 'paragraph' && node.type !== 'heading' && node.type !== 'researchBlock') return
     const level = typeof node.attrs?.level === 'number' ? node.attrs.level : undefined
     const sectionId = typeof node.attrs?.sectionId === 'string' ? node.attrs.sectionId : undefined
     const sourceKey = blockSourceKey(node, index)
     blocks.push({
       key: sourceKey,
       sourceKey,
-      type: node.type,
+      type: node.type === 'researchBlock' ? 'research' : node.type,
       node,
       level,
       sectionId,
@@ -123,6 +124,7 @@ function fallbackBlockHeight(block: PaperLayoutBlock, settings: PaperPageSetting
     const base = block.level === 2 ? 62 : 42
     return base + Math.max(0, Math.ceil(textLength / charsPerLine) - 1) * 26
   }
+  if (block.type === 'research') return Math.max(84, Math.ceil(Math.max(1, textLength) / charsPerLine) * 24 + 54)
   return Math.max(34, Math.ceil(Math.max(1, textLength) / charsPerLine) * 30 + 10)
 }
 
@@ -247,7 +249,7 @@ export function paginatePaperBlocks(
     }
 
     if (wouldOverflow && page.blocks.length === 0) {
-      overflowWarnings.push(`${block.type === 'heading' ? '标题' : '段落'}内容超过单页可用高度，已临时整块放置。`)
+      overflowWarnings.push(`${block.type === 'heading' ? '标题' : block.type === 'research' ? '研究支撑块' : '段落'}内容超过单页可用高度，已临时整块放置。`)
     }
 
     page.blocks.push(block)

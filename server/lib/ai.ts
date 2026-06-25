@@ -96,6 +96,8 @@ export async function callAIOnce(
     throw new Error(`AI 调用失败 ${response.status}: ${detail}`)
   }
 
-  const data = await response.json()
+  const data = await response.json() as {
+    choices?: Array<{ message?: { content?: string } }>
+  }
   return data.choices?.[0]?.message?.content ?? ''
 }

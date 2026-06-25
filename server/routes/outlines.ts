@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { createUserClient } from '../lib/supabase.js'
+import { ensureProjectForUser } from '../lib/ensureProject.js'
 import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 
 const router = Router()
@@ -23,10 +24,17 @@ router.get('/project/:projectId', async (req: AuthRequest, res) => {
 router.put('/project/:projectId', async (req: AuthRequest, res) => {
   const db = createUserClient(req.accessToken!)
   const { sections = [], confirmed_at } = req.body
+  const projectId = String(req.params.projectId)
+  const ensured = await ensureProjectForUser(db, projectId, req.userId!)
+  if (ensured.error) {
+    res.status(500).json({ error: ensured.error.message })
+    return
+  }
+
   const { data, error } = await db
     .from('outlines')
     .upsert({
-      project_id: req.params.projectId,
+      project_id: projectId,
       sections,
       confirmed_at,
     }, { onConflict: 'project_id' })

@@ -7,9 +7,22 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 let browserSupabase: SupabaseClient | null = null
 let browserSupabaseConfigKey = ''
 const AUTH_EXPIRED_EVENT = 'paper-ai-auth-expired'
+const LOCAL_TOKEN_PREFIX = 'dev-local-demo-token-'
 
 export function getToken(): string | null {
-  return localStorage.getItem('access_token')
+  const token = localStorage.getItem('access_token')
+  if (token) return token
+  if (!import.meta.env.PROD && import.meta.env.VITE_AUTH_REQUIRED !== 'true') {
+    const localToken = `${LOCAL_TOKEN_PREFIX}browser`
+    localStorage.setItem('access_token', localToken)
+    localStorage.setItem('auth_user', JSON.stringify({
+      id: 'local-demo-user',
+      email: 'local-demo@example.local',
+      user_metadata: { displayName: '本地演示' },
+    }))
+    return localToken
+  }
+  return null
 }
 
 function clearExpiredAuth() {
@@ -172,6 +185,84 @@ export const referencesAPI = {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
+  enhance: (data: unknown) =>
+    request<{ ok: true; patches: unknown[]; auditNote: string; skipped: string[] }>('/api/references/enhance', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }, 120_000),
+}
+
+export interface ResearchAnalysisResult {
+  ok: true
+  method: string
+  sampleSize: number
+  numericColumns: string[]
+  categoricalColumns?: string[]
+  descriptive: unknown[]
+  cronbachAlpha?: unknown
+  correlations: unknown[]
+  anova: unknown[]
+  mediation?: unknown
+  efa?: unknown
+  tables?: Array<{ id: string; title: string; rows: unknown[]; columns?: string[] }>
+  figures?: Array<{ id: string; title: string; dataUrl: string; caption?: string }>
+  methodText?: string
+  analysisText?: string
+  cautions: string[]
+  plainText: string
+}
+
+export interface ResearchIntentResult {
+  ok: true
+  intent: import('./storage').ResearchIntent
+}
+
+export interface ResearchAnalysisPlanResult {
+  ok: true
+  plan: import('./storage').ResearchAnalysisPlan
+  columns: string[]
+  numericColumns: string[]
+  categoricalColumns: string[]
+}
+
+export const researchAPI = {
+  intent: (data: {
+    projectId: string
+    chapterId?: string
+    chapterTitle?: string
+    chapterContent?: string
+    outlineContext?: string
+    stage1ResearchPlan?: unknown
+    userRequest: string
+    existingAssets?: unknown[]
+  }) =>
+    request<ResearchIntentResult>('/api/research/intent', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }, 60_000),
+  analysisPlan: (data: {
+    intent: import('./storage').ResearchIntent
+    fileName: string
+    text?: string
+    base64?: string
+  }) =>
+    request<ResearchAnalysisPlanResult>('/api/research/analysis-plan', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }, 80_000),
+  analyze: (data: {
+    fileName: string
+    text?: string
+    base64?: string
+    groupColumn?: string
+    method?: string
+    confirmedPlan?: import('./storage').ResearchAnalysisPlan
+    selectedComponentTypes?: string[]
+  }) =>
+    request<ResearchAnalysisResult>('/api/research/analyze', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }, 140_000),
 }
 
 export interface ScholarPaper {

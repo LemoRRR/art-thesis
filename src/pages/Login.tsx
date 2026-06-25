@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { CSSProperties } from 'react'
+import { useEffect, useState } from 'react'
+import type { CSSProperties, FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { authAPI } from '../lib/api'
 import { auth } from '../lib/auth'
@@ -13,10 +13,19 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [loading, setLoading] = useState(false)
+  const [status, setStatus] = useState('')
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    const rawRedirect = searchParams.get('redirect')
+    if (rawRedirect && !normalizeRedirect(rawRedirect)) {
+      navigate('/login', { replace: true })
+    }
+  }, [navigate, searchParams])
+
   const goToNewConversation = () => {
-    const redirect = searchParams.get('redirect')
-    if (redirect?.startsWith('/')) {
+    const redirect = normalizeRedirect(searchParams.get('redirect'))
+    if (redirect) {
       navigate(redirect, { replace: true })
       return
     }
@@ -25,7 +34,6 @@ export default function Login() {
   }
 
   const handleLogin = async () => {
-    if (loading) return
     if (!email || !password) {
       setError('请填写邮箱和密码')
       return
@@ -34,20 +42,44 @@ export default function Login() {
       setError('请输入有效邮箱，不能只填用户名')
       return
     }
+
     setLoading(true)
+    setStatus('正在验证账号，请稍候…')
     setError('')
     try {
-      await auth.login(email, password)
+      await auth.login(email.trim(), password)
+      setStatus('登录成功，正在进入项目…')
       goToNewConversation()
     } catch (err) {
-      setError(err instanceof Error ? err.message : '登录失败')
+      setError(formatAuthError(err))
+      setStatus('')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDemoLogin = async () => {
+    if (loading) return
+    setLoading(true)
+    setStatus('正在进入演示账号…')
+    setError('')
+    try {
+      auth.clearSession()
+      const data = await authAPI.demoLogin()
+      if (!data.session?.access_token) throw new Error('Demo 登录没有返回有效会话')
+      localStorage.setItem('access_token', data.session.access_token)
+      localStorage.setItem('auth_user', JSON.stringify(data.user))
+      setStatus('已进入演示账号，正在打开项目…')
+      goToNewConversation()
+    } catch (err) {
+      setError(formatAuthError(err))
+      setStatus('')
     } finally {
       setLoading(false)
     }
   }
 
   const handleRegister = async () => {
-    if (loading) return
     if (!email || !password) {
       setError('请填写邮箱和密码')
       return
@@ -60,28 +92,38 @@ export default function Login() {
       setError('密码至少需要 6 位')
       return
     }
+
     setLoading(true)
+    setStatus('正在创建账号，请稍候…')
     setError('')
     try {
-      const data = await authAPI.register(email, password, displayName) as {
+      const data = await authAPI.register(email.trim(), password, displayName) as {
         user: unknown
         session?: { access_token: string }
       }
       if (data.session?.access_token) {
         localStorage.setItem('access_token', data.session.access_token)
         localStorage.setItem('auth_user', JSON.stringify(data.user))
+        setStatus('注册成功，正在进入项目…')
         goToNewConversation()
       } else {
-        navigate('/login', { replace: true })
+        setStatus('')
+        setError('注册成功，请回到登录页登录。')
+        setTab('login')
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '注册失败')
+      setError(formatAuthError(err))
+      setStatus('')
     } finally {
       setLoading(false)
     }
   }
 
-  const submit = tab === 'login' ? handleLogin : handleRegister
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (loading) return
+    void (tab === 'login' ? handleLogin() : handleRegister())
+  }
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-bg)' }}>
@@ -95,20 +137,27 @@ export default function Login() {
           {(['login', 'register'] as const).map(item => (
             <button
               key={item}
-              onClick={() => setTab(item)}
-              style={{ flex: 1, padding: '8px 0', border: 'none', borderBottom: `2px solid ${tab === item ? 'var(--color-accent)' : 'transparent'}`, background: 'transparent', color: tab === item ? 'var(--color-accent)' : 'var(--color-ink-3)', fontSize: 13, fontWeight: tab === item ? 500 : 400, cursor: 'pointer' }}
+              type="button"
+              onClick={() => {
+                if (loading) return
+                setTab(item)
+                setError('')
+                setStatus('')
+              }}
+              style={{ flex: 1, padding: '8px 0', border: 'none', borderBottom: `2px solid ${tab === item ? 'var(--color-accent)' : 'transparent'}`, background: 'transparent', color: tab === item ? 'var(--color-accent)' : 'var(--color-ink-3)', fontSize: 13, fontWeight: tab === item ? 500 : 400, cursor: loading ? 'not-allowed' : 'pointer' }}
             >
               {item === 'login' ? '登录' : '注册'}
             </button>
           ))}
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {tab === 'register' && (
             <input
               value={displayName}
               onChange={event => setDisplayName(event.target.value)}
               placeholder="昵称（可选）"
+              disabled={loading}
               style={inputStyle}
             />
           )}
@@ -117,6 +166,8 @@ export default function Login() {
             onChange={event => setEmail(event.target.value)}
             placeholder="邮箱（用于登录）"
             type="email"
+            autoComplete="email"
+            disabled={loading}
             style={inputStyle}
           />
           <input
@@ -124,23 +175,34 @@ export default function Login() {
             onChange={event => setPassword(event.target.value)}
             placeholder="密码"
             type="password"
-            onKeyDown={event => event.key === 'Enter' && submit()}
+            autoComplete={tab === 'login' ? 'current-password' : 'new-password'}
+            disabled={loading}
             style={inputStyle}
           />
-          {error && <div style={{ fontSize: 12, color: '#C0392B' }}>{error}</div>}
+          {error && <div style={{ fontSize: 12, color: '#C0392B', lineHeight: 1.6 }}>{error}</div>}
           {!error && (
-            <div style={{ fontSize: 12, color: 'var(--color-ink-3)' }}>
-              注册请使用邮箱，密码至少 6 位。
+            <div style={{ fontSize: 12, color: status ? 'var(--color-accent)' : 'var(--color-ink-3)', lineHeight: 1.6 }}>
+              {status || '注册请使用邮箱，密码至少 6 位。'}
             </div>
           )}
           <button
-            onClick={submit}
+            type="submit"
             disabled={loading}
             style={{ width: '100%', border: 'none', borderRadius: 'var(--radius-sm)', background: loading ? 'var(--color-border)' : 'var(--color-accent)', color: '#fff', padding: '11px 0', fontSize: 14, fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer' }}
           >
-            {loading ? '处理中…' : tab === 'login' ? '登录' : '注册'}
+            {loading ? (tab === 'login' ? '正在登录…' : '正在注册…') : tab === 'login' ? '登录' : '注册'}
           </button>
-        </div>
+          {tab === 'login' && (
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => void handleDemoLogin()}
+              style={{ width: '100%', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'transparent', color: loading ? 'var(--color-ink-3)' : 'var(--color-ink-2)', padding: '10px 0', fontSize: 13, fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer' }}
+            >
+              使用演示账号进入
+            </button>
+          )}
+        </form>
       </div>
     </div>
   )
@@ -148,6 +210,26 @@ export default function Login() {
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+function normalizeRedirect(value: string | null) {
+  if (!value?.startsWith('/')) return ''
+  let pathname: string
+  try {
+    pathname = new URL(value, window.location.origin).pathname
+  } catch {
+    pathname = value.split('?')[0] || value
+  }
+  if (pathname === '/login' || pathname === '/demo') return ''
+  return value
+}
+
+function formatAuthError(error: unknown) {
+  const message = error instanceof Error ? error.message : '登录失败'
+  if (message.includes('401') || message.includes('incorrect')) return '邮箱或密码不正确，请检查后重试。'
+  if (message.includes('timed out') || message.includes('504')) return '登录服务响应较慢，请稍后重试；本地测试可点击“使用演示账号进入”。'
+  if (message.includes('Cannot connect')) return '暂时无法连接后端服务，请确认本地服务已启动。'
+  return message
 }
 
 const inputStyle: CSSProperties = {

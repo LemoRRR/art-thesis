@@ -19,8 +19,8 @@ export default function DemoLogin() {
         if (!data.session?.access_token) throw new Error('Demo 登录没有返回有效会话')
         localStorage.setItem('access_token', data.session.access_token)
         localStorage.setItem('auth_user', JSON.stringify(data.user))
-        const redirect = searchParams.get('redirect')
-        if (!cancelled && redirect?.startsWith('/')) {
+        const redirect = normalizeRedirect(searchParams.get('redirect'))
+        if (!cancelled && redirect) {
           navigate(redirect, { replace: true })
           return
         }
@@ -47,4 +47,16 @@ export default function DemoLogin() {
       </div>
     </div>
   )
+}
+
+function normalizeRedirect(value: string | null) {
+  if (!value?.startsWith('/')) return ''
+  let pathname: string
+  try {
+    pathname = new URL(value, window.location.origin).pathname
+  } catch {
+    pathname = value.split('?')[0] || value
+  }
+  if (pathname === '/login' || pathname === '/demo') return ''
+  return value
 }

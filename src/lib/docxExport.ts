@@ -3,6 +3,7 @@ import {
   Document,
   FootnoteReferenceRun,
   HeadingLevel,
+  ImageRun,
   Packer,
   Paragraph,
   TextRun,
@@ -12,7 +13,7 @@ import { cleanTitle, isDuplicateSectionTitle, parsePaperBlocks } from './documen
 import type { PaperEditorMark, PaperEditorNode } from './editorDocument'
 import { editorDocWithFootnoteMarks, isPaperEditorDoc, walkEditorText } from './editorDocument'
 import { getFootnotesForBlock, splitTextWithFootnotes } from './footnotes'
-import type { DocSection } from './storage'
+import { researchPackageStore, type DocSection, type ResearchPackageComponent } from './storage'
 
 const FONT = '宋体'
 const HEADING_FONT = '黑体'
@@ -159,6 +160,76 @@ function createBodyParagraphFromEditorNode(node: PaperEditorNode) {
   })
 }
 
+function createResearchComponentParagraphs(component: ResearchPackageComponent) {
+  const title = component.label ? `${component.label} ${component.title ?? ''}`.trim() : component.title
+  const figureData = component.type === 'figure' && component.data && typeof component.data === 'object'
+    ? (component.data as { dataUrl?: string; caption?: string })
+    : null
+  const dataUrl = figureData?.dataUrl
+  if (dataUrl?.startsWith('data:image/')) {
+    return [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 160, after: 100 },
+        children: [new TextRun({ text: title ?? '图表', bold: true, font: HEADING_FONT, size: 24 })],
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 100 },
+        children: [
+          new ImageRun({
+            type: 'png',
+            data: dataUrlToBytes(dataUrl),
+            transformation: { width: 460, height: 280 },
+          }),
+        ],
+      }),
+      ...(component.content.trim() ? [new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 120 },
+        children: [new TextRun({ text: component.content.trim(), font: FONT, size: 21 })],
+      })] : []),
+    ]
+  }
+  return [
+    ...(title ? [new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 160, after: 100 },
+      children: [new TextRun({ text: title, bold: true, font: HEADING_FONT, size: 24 })],
+    })] : []),
+    ...component.content.split(/\n+/).filter(Boolean).map(line => new Paragraph({
+      alignment: component.type === 'statistics' || component.type === 'table' ? AlignmentType.CENTER : AlignmentType.JUSTIFIED,
+      indent: component.type === 'statistics' || component.type === 'table' ? undefined : { firstLine: 480 },
+      spacing: { line: 360, after: 120 },
+      children: [new TextRun({ text: line.trim(), font: FONT, size: 24 })],
+    })),
+  ]
+}
+
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  const base64 = dataUrl.split(',')[1] ?? ''
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes
+}
+
+function createResearchBlockParagraphs(node: PaperEditorNode) {
+  const packageId = typeof node.attrs?.researchPackageId === 'string' ? node.attrs.researchPackageId : ''
+  const pkg = packageId ? researchPackageStore.get(packageId) : null
+  if (!pkg) return [createBodyParagraphFromEditorNode(node)]
+
+  const rawComponentIds = Array.isArray(node.attrs?.researchComponentIds) ? node.attrs.researchComponentIds : []
+  const componentIds = new Set(rawComponentIds.filter((id): id is string => typeof id === 'string'))
+  const components = componentIds.size
+    ? pkg.components.filter(component => componentIds.has(component.id))
+    : pkg.components
+
+  return components.flatMap(createResearchComponentParagraphs)
+}
+
 function createFrontMatterHeading(text: string) {
   return new Paragraph({
     heading: HeadingLevel.HEADING_1,
@@ -230,7 +301,56 @@ function createFrontMatterParagraphs(section: DocSection) {
   if (blocks.keywordsEn) {
     children.push(createKeywordParagraph('Keywords: ', blocks.keywordsEn, true))
   }
-  return children.length > 0 ? children : [createFrontMatterHeading('摘要')]
+  if (children.length > 0) return children
+
+  const rawBlocks = parsePaperBlocks(section.content)
+    .filter((block, index) => index > 0 || !isDuplicateSectionTitle(block.text, section.title))
+    .map(block => block.text.trim())
+    .filter(Boolean)
+
+  if (rawBlocks.length === 0) return [createFrontMatterHeading('摘要')]
+
+  const fallbackChildren: Paragraph[] = []
+  let hasHeading = false
+  let english = false
+  const ensureHeading = () => {
+    if (hasHeading) return
+    fallbackChildren.push(createFrontMatterHeading('摘要'))
+    hasHeading = true
+  }
+
+  rawBlocks.forEach(text => {
+    if (/^【?\s*摘要\s*】?$/.test(text)) {
+      fallbackChildren.push(createFrontMatterHeading('摘要'))
+      hasHeading = true
+      english = false
+      return
+    }
+    if (/^【?\s*Abstract\s*】?$/i.test(text)) {
+      fallbackChildren.push(createFrontMatterHeading('Abstract'))
+      hasHeading = true
+      english = true
+      return
+    }
+
+    const zhKeywords = text.match(/^【?\s*关键词\s*】?\s*[:：]?\s*(.+)$/)
+    if (zhKeywords?.[1]) {
+      fallbackChildren.push(createKeywordParagraph('关键词：', zhKeywords[1].trim()))
+      return
+    }
+
+    const enKeywords = text.match(/^【?\s*Keywords?\s*】?\s*:?\s*(.+)$/i)
+    if (enKeywords?.[1]) {
+      fallbackChildren.push(createKeywordParagraph('Keywords: ', enKeywords[1].trim(), true))
+      return
+    }
+
+    ensureHeading()
+    const looksEnglish = english || (/^[A-Za-z0-9\s,.;:'"()/-]+$/.test(text) && /[A-Za-z]{4}/.test(text))
+    fallbackChildren.push(createFrontMatterBodyParagraph(text, looksEnglish))
+  })
+
+  return fallbackChildren.length > 0 ? fallbackChildren : [createFrontMatterHeading('摘要')]
 }
 
 function buildFootnotesMap(sections: DocSection[]) {
@@ -291,6 +411,8 @@ function buildDocChildren(title: string, sections: DocSection[]) {
         .forEach(node => {
           if (node.type === 'heading') {
             children.push(createSubHeading(plainTextFromEditorNode(node), node.attrs?.level === 3 ? 3 : 2))
+          } else if (node.type === 'researchBlock' || (node.type === 'paragraph' && node.attrs?.researchBlock)) {
+            children.push(...createResearchBlockParagraphs(node))
           } else if (node.type === 'paragraph') {
             children.push(createBodyParagraphFromEditorNode(node))
           }

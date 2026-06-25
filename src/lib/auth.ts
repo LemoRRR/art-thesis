@@ -11,10 +11,12 @@ export interface AuthUser {
 }
 
 const AUTH_REQUIRED = import.meta.env.PROD || import.meta.env.VITE_AUTH_REQUIRED === 'true'
+const LOCAL_TOKEN_PREFIX = 'dev-local-demo-token-'
 
 export const auth = {
   isAuthRequired: () => AUTH_REQUIRED,
   getToken: () => localStorage.getItem('access_token'),
+  isLocalSession: () => auth.getToken()?.startsWith(LOCAL_TOKEN_PREFIX) ?? false,
   getUser: (): AuthUser | null => {
     const raw = localStorage.getItem('auth_user')
     if (!raw) return null

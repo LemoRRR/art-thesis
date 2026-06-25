@@ -1041,7 +1041,13 @@ export default function Stage2() {
 
   const confirmOutline = () => {
     if (!hasOutlineContent(outline)) return
-    outlineStore.confirm(project.id)
+    outlineStore.save({
+      ...outline,
+      projectId: project.id,
+      sections: ensureAbstractOutlineSection(outline.sections),
+      confirmedAt: Date.now(),
+      updatedAt: Date.now(),
+    })
     navigate(`/projects/${project.id}/research`)
   }
 
