@@ -69,6 +69,7 @@ export function ensurePaperEditorDoc(content: string, editorDoc?: unknown): Pape
 function nodeText(node: PaperEditorNode): string {
   if (node.type === 'text') return node.text ?? ''
   if (node.type === 'researchBlock') return typeof node.attrs?.previewText === 'string' ? node.attrs.previewText : ''
+  if (node.type === 'researchImage') return typeof node.attrs?.caption === 'string' ? node.attrs.caption : ''
   return (node.content ?? []).map(nodeText).join('')
 }
 

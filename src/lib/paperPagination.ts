@@ -16,7 +16,7 @@ export interface PaperPageSettings {
 export interface PaperLayoutBlock {
   key: string
   sourceKey: string
-  type: 'title' | 'paragraph' | 'heading' | 'research'
+  type: 'title' | 'paragraph' | 'heading' | 'research' | 'image'
   node?: PaperEditorNode
   text?: string
   level?: number
@@ -54,6 +54,7 @@ export function editorNodeText(node: PaperEditorNode | undefined): string {
   if (!node) return ''
   if (node.type === 'text') return node.text ?? ''
   if (node.type === 'researchBlock') return typeof node.attrs?.previewText === 'string' ? node.attrs.previewText : ''
+  if (node.type === 'researchImage') return typeof node.attrs?.caption === 'string' ? node.attrs.caption : ''
   return (node.content ?? []).map(editorNodeText).join('')
 }
 
@@ -90,14 +91,14 @@ export function buildPaperLayoutBlocks(
   }
 
   nodes.forEach((node, index) => {
-    if (node.type !== 'paragraph' && node.type !== 'heading' && node.type !== 'researchBlock') return
+    if (node.type !== 'paragraph' && node.type !== 'heading' && node.type !== 'researchBlock' && node.type !== 'researchImage') return
     const level = typeof node.attrs?.level === 'number' ? node.attrs.level : undefined
     const sectionId = typeof node.attrs?.sectionId === 'string' ? node.attrs.sectionId : undefined
     const sourceKey = blockSourceKey(node, index)
     blocks.push({
       key: sourceKey,
       sourceKey,
-      type: node.type === 'researchBlock' ? 'research' : node.type,
+      type: node.type === 'researchBlock' ? 'research' : node.type === 'researchImage' ? 'image' : node.type,
       node,
       level,
       sectionId,
@@ -124,6 +125,7 @@ function fallbackBlockHeight(block: PaperLayoutBlock, settings: PaperPageSetting
     const base = block.level === 2 ? 62 : 42
     return base + Math.max(0, Math.ceil(textLength / charsPerLine) - 1) * 26
   }
+  if (block.type === 'image') return 360
   if (block.type === 'research') return Math.max(84, Math.ceil(Math.max(1, textLength) / charsPerLine) * 24 + 54)
   return Math.max(34, Math.ceil(Math.max(1, textLength) / charsPerLine) * 30 + 10)
 }

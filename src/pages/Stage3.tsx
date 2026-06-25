@@ -62,7 +62,7 @@ import {
   type ResearchAsset,
   type StyleProfile,
 } from '../lib/storage'
-import { createPackageFromAsset, researchBlockNode } from '../lib/researchPackages'
+import { createPackageFromAsset, researchPackageToPaperNodes } from '../lib/researchPackages'
 
 type Mode = 'revise' | 'finish'
 type GenerationStepStatus = 'active' | 'done' | 'error'
@@ -2444,12 +2444,12 @@ export default function Stage3() {
     })
     const componentIds = pkg.components.map(component => component.id)
     researchPackageStore.markInserted(pkg.id, componentIds)
-    const blockNode = researchBlockNode(pkg, componentIds)
+    const researchNodes = researchPackageToPaperNodes(pkg, componentIds)
 
     if (sections.length === 0) {
       const editorDoc = {
         type: 'doc' as const,
-        content: [blockNode],
+        content: researchNodes,
       }
       const section: DocSection = {
         id: `research-section-${asset.id}-${now}`,
@@ -2471,7 +2471,7 @@ export default function Stage3() {
         const sourceDoc = ensurePaperEditorDoc(section.content, section.editorDoc)
         const editorDoc = {
           ...sourceDoc,
-          content: [...(sourceDoc.content ?? []), blockNode],
+          content: [...(sourceDoc.content ?? []), ...researchNodes],
         }
         return {
           ...section,

@@ -177,6 +177,95 @@ export function researchBlockNode(pkg: ResearchContentPackage, componentIds?: st
   }
 }
 
+function textNode(text: string): PaperEditorNode {
+  return { type: 'text', text }
+}
+
+function paragraphNode(text: string, attrs?: Record<string, unknown>): PaperEditorNode {
+  return {
+    type: 'paragraph',
+    attrs,
+    content: text ? [textNode(text)] : undefined,
+  }
+}
+
+function splitParagraphs(text: string) {
+  return text
+    .split(/\n{2,}|\r?\n/)
+    .map(part => part.trim())
+    .filter(Boolean)
+}
+
+function componentFigureData(component: ResearchPackageComponent) {
+  if (component.type !== 'figure' || !component.data || typeof component.data !== 'object') return null
+  const data = component.data as { dataUrl?: unknown; caption?: unknown; title?: unknown }
+  if (typeof data.dataUrl !== 'string' || !data.dataUrl.startsWith('data:image/')) return null
+  return {
+    dataUrl: data.dataUrl,
+    caption: typeof data.caption === 'string' ? data.caption : component.content,
+    title: typeof data.title === 'string' ? data.title : component.title,
+  }
+}
+
+function componentTableRows(component: ResearchPackageComponent): PaperEditorNode[] {
+  if (component.type !== 'statistics' && component.type !== 'table') return []
+  const table = component.data && typeof component.data === 'object'
+    ? component.data as { rows?: unknown[]; columns?: string[] }
+    : null
+  const rows = Array.isArray(table?.rows) ? table.rows : []
+  const columns = Array.isArray(table?.columns) ? table.columns : []
+  const title = component.label ? `${component.label} ${component.title ?? ''}`.trim() : component.title
+  if (!rows.length || !columns.length) {
+    return title ? [paragraphNode(title, { textAlign: 'center', researchTableCaption: true })] : []
+  }
+
+  const previewRows = rows.slice(0, 8)
+  const visibleColumns = columns.slice(0, 5)
+  return [
+    ...(title ? [paragraphNode(title, { textAlign: 'center', researchTableCaption: true })] : []),
+    paragraphNode(visibleColumns.join('    '), { textAlign: 'center', researchTableRow: true }),
+    ...previewRows.map(row => paragraphNode(visibleColumns.map(column => {
+      const value = row && typeof row === 'object' ? (row as Record<string, unknown>)[column] : ''
+      return value == null ? '' : String(value)
+    }).join('    '), { textAlign: 'center', researchTableRow: true })),
+  ]
+}
+
+function componentToPaperNodes(component: ResearchPackageComponent): PaperEditorNode[] {
+  if (component.type === 'method' || component.type === 'analysis' || component.type === 'raw_text') {
+    return splitParagraphs(component.content).map(text => paragraphNode(text))
+  }
+
+  const figure = componentFigureData(component)
+  if (figure) {
+    const title = component.label ? `${component.label} ${component.title ?? ''}`.trim() : component.title
+    return [
+      {
+        type: 'researchImage',
+        attrs: {
+          src: figure.dataUrl,
+          alt: title ?? '分析结果图',
+          title: title ?? figure.title ?? '分析结果图',
+          caption: figure.caption,
+        },
+      },
+      paragraphNode(figure.caption || title || '分析结果图', { textAlign: 'center', researchFigureCaption: true }),
+    ]
+  }
+
+  const tableNodes = componentTableRows(component)
+  if (tableNodes.length) return tableNodes
+
+  return splitParagraphs(component.content).map(text => paragraphNode(text))
+}
+
+export function researchPackageToPaperNodes(pkg: ResearchContentPackage, componentIds?: string[]): PaperEditorNode[] {
+  const allowed = componentIds?.length ? new Set(componentIds) : null
+  return pkg.components
+    .filter(item => !allowed || allowed.has(item.id))
+    .flatMap(componentToPaperNodes)
+}
+
 export function appendResearchBlockToDoc(doc: PaperEditorDoc, pkg: ResearchContentPackage, componentIds?: string[]): PaperEditorDoc {
   return {
     ...doc,

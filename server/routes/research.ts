@@ -643,12 +643,136 @@ async function makeEntropyWeightChart(rows: Record<string, unknown>[]) {
   })
 }
 
+function escapeXml(value: unknown) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function svgDataUrl(width: number, height: number, body: string) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+<rect width="100%" height="100%" fill="#fffdf8"/>
+<style>
+text{font-family:Arial,'Microsoft YaHei','Noto Sans CJK SC',sans-serif;fill:#1f3328}
+.title{font-size:28px;font-weight:700;fill:#234234}
+.sub{font-size:16px;fill:#6d756f}
+.small{font-size:13px;fill:#53645a}
+.axis{font-size:16px;fill:#24382d}
+</style>
+${body}
+</svg>`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
+async function makeKanoStackedChartSvg(rows: Record<string, unknown>[]) {
+  const types = [
+    { label: 'M', parts: ['M_', '占比'], color: '#2f6f4e' },
+    { label: 'O', parts: ['O_', '占比'], color: '#5d9a65' },
+    { label: 'A', parts: ['A_', '占比'], color: '#94bd77' },
+    { label: 'I', parts: ['I_', '占比'], color: '#d5e5c8' },
+    { label: 'Q/R', parts: ['Q_', '占比'], color: '#c9b06f' },
+  ]
+  const legend = types.map((type, index) => {
+    const x = 620 + index * 72
+    return `<rect x="${x}" y="52" width="18" height="12" fill="${type.color}"/><text x="${x + 24}" y="64" class="small">${escapeXml(type.label)}</text>`
+  }).join('')
+  const bars = rows.slice(0, 12).map((row, index) => {
+    const y = 118 + index * 44
+    let x = 210
+    const segments = types.map(type => {
+      const value = type.label === 'Q/R'
+        ? rowMetric(row, ['Q_', '占比']) + rowMetric(row, ['R_', '占比'])
+        : rowMetric(row, type.parts)
+      const width = Math.max(0, Math.round((value / 100) * 760))
+      const rect = `<rect x="${x}" y="${y}" width="${width}" height="24" fill="${type.color}"/>`
+      x += width
+      return rect
+    }).join('')
+    return `<text x="42" y="${y + 17}" font-size="15" font-weight="700">D${String(index + 1).padStart(2, '0')}</text>
+${segments}<rect x="210" y="${y}" width="760" height="24" fill="none" stroke="#d9e2d6"/>
+<text x="988" y="${y + 17}" class="small">Dominant: ${escapeXml(rowTextByParts(row, ['主导', 'KANO'], '-'))}</text>`
+  }).join('')
+  return svgDataUrl(1180, 680, `<text x="34" y="46" class="title">KANO Category Distribution</text>
+<text x="34" y="76" class="sub">Stacked percentage by design dimension (M/O/A/I/Q-R).</text>
+${legend}${bars}`)
+}
+
+async function makeBetterWorseChartSvg(rows: Record<string, unknown>[]) {
+  const left = 92
+  const top = 112
+  const size = 560
+  const points = rows.slice(0, 12).map((row, index) => {
+    const better = rowMetric(row, ['Better'])
+    const worse = rowMetric(row, ['Worse'])
+    const x = left + Math.min(1, Math.max(0, better)) * size
+    const y = top + size - Math.min(1, Math.max(0, worse)) * size
+    const labelDy = y > top + size - 34 ? -18 - (index % 4) * 12 : -8
+    return `<circle cx="${x}" cy="${y}" r="${index < 3 ? 8 : 6}" fill="${index < 3 ? '#1f6b45' : '#6ba46f'}"/>
+<text x="${x + 9}" y="${y + labelDy}" font-size="13" font-weight="700">D${String(index + 1).padStart(2, '0')}</text>`
+  }).join('')
+  return svgDataUrl(980, 760, `<text x="34" y="46" class="title">Better-Worse Coefficient Matrix</text>
+<text x="34" y="76" class="sub">X: Better coefficient; Y: absolute Worse coefficient.</text>
+<rect x="${left + size / 2}" y="${top}" width="${size / 2}" height="${size / 2}" fill="#eef6ed"/>
+<rect x="${left}" y="${top + size / 2}" width="${size / 2}" height="${size / 2}" fill="#f7fbf5"/>
+<rect x="${left}" y="${top}" width="${size}" height="${size}" fill="none" stroke="#c9d6c7"/>
+<line x1="${left + size / 2}" y1="${top}" x2="${left + size / 2}" y2="${top + size}" stroke="#c9d6c7"/>
+<line x1="${left}" y1="${top + size / 2}" x2="${left + size}" y2="${top + size / 2}" stroke="#c9d6c7"/>
+${points}
+<text x="${left + 190}" y="${top + size + 44}" class="axis">Better coefficient</text>
+<text transform="translate(28 ${top + 360}) rotate(-90)" class="axis">Worse coefficient (absolute)</text>
+<text x="700" y="180" class="small">Dimension labels use D01-D12.</text>
+<text x="700" y="208" class="small">See the KANO summary table for full names.</text>
+<text x="700" y="252" class="small">Upper-right points indicate strong</text>
+<text x="700" y="280" class="small">satisfaction gain and dissatisfaction risk.</text>`)
+}
+
+async function makeEntropyWeightChartSvg(rows: Record<string, unknown>[]) {
+  const chartRows = rows.filter(Boolean)
+  const maxWeight = Math.max(...chartRows.map(row => rowMetric(row, ['权重'])), 1)
+  const items = chartRows.map((row, index) => {
+    const y = 128 + index * 76
+    const weight = rowMetric(row, ['权重'])
+    const width = Math.round((weight / maxWeight) * 560)
+    return `<text x="46" y="${y + 18}" font-size="16" font-weight="700">Indicator ${index + 1}</text>
+<rect x="190" y="${y}" width="580" height="24" fill="#dfeadc"/>
+<rect x="190" y="${y}" width="${width}" height="24" fill="#2f7d4b"/>
+<text x="790" y="${y + 18}" font-size="15">${weight.toFixed(2)}%</text>`
+  }).join('')
+  return svgDataUrl(920, 430, `<text x="34" y="46" class="title">Entropy Weight Distribution</text>
+<text x="34" y="76" class="sub">Objective weights used in the coupled priority score.</text>
+${items}`)
+}
+
+async function makePriorityChartSvg(rows: Record<string, unknown>[]) {
+  const width = 1160
+  const rowHeight = 42
+  const height = 120 + Math.max(1, rows.length) * rowHeight
+  const maxScore = Math.max(...rows.map(row => maybeNumber(row['耦合优先级总得分']) ?? 0), 1)
+  const items = rows.slice(0, 12).map((row, index) => {
+    const y = 112 + index * rowHeight
+    const rank = rowValue(row, '最终耦合优先级排名') || String(index + 1)
+    const type = rowValue(row, '主导KANO类型')
+    const score = maybeNumber(row['耦合优先级总得分']) ?? 0
+    const barWidth = Math.max(10, Math.round((score / maxScore) * 560))
+    return `<rect x="24" y="${y - 26}" width="${width - 48}" height="${rowHeight - 6}" fill="${index % 2 === 0 ? '#f5faf2' : '#ffffff'}"/>
+<text x="42" y="${y}" font-size="17" font-weight="700">Rank ${escapeXml(rank)}  D${String(index + 1).padStart(2, '0')}</text>
+<rect x="245" y="${y - 17}" width="570" height="18" fill="#dfeadc"/>
+<rect x="245" y="${y - 17}" width="${barWidth}" height="18" fill="${index < 3 ? '#2f7d4b' : '#6ba46f'}"/>
+<text x="835" y="${y}" font-size="15">KANO: ${escapeXml(type || '-')}   Score: ${score.toFixed(4)}</text>`
+  }).join('')
+  return svgDataUrl(width, height, `<text x="34" y="46" class="title">KANO-Entropy Priority Ranking</text>
+<text x="34" y="76" class="sub">Lower score indicates higher design optimization priority.</text>
+${items}`)
+}
+
 async function makeKanoEntropyCharts(summaryRows: Record<string, unknown>[], weightRows: Record<string, unknown>[], priorityRows: Record<string, unknown>[]) {
   const [stacked, quadrant, weights, priority] = await Promise.all([
-    makeKanoStackedChart(summaryRows),
-    makeBetterWorseChart(summaryRows),
-    weightRows.length ? makeEntropyWeightChart(weightRows) : Promise.resolve(''),
-    makePriorityChart(priorityRows),
+    makeKanoStackedChartSvg(summaryRows),
+    makeBetterWorseChartSvg(summaryRows),
+    weightRows.length ? makeEntropyWeightChartSvg(weightRows) : Promise.resolve(''),
+    makePriorityChartSvg(priorityRows),
   ])
   return [
     stacked ? {

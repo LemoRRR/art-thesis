@@ -176,13 +176,7 @@ function createResearchComponentParagraphs(component: ResearchPackageComponent) 
       new Paragraph({
         alignment: AlignmentType.CENTER,
         spacing: { after: 100 },
-        children: [
-          new ImageRun({
-            type: 'png',
-            data: dataUrlToBytes(dataUrl),
-            transformation: { width: 460, height: 280 },
-          }),
-        ],
+        children: [imageRunFromDataUrl(dataUrl)],
       }),
       ...(component.content.trim() ? [new Paragraph({
         alignment: AlignmentType.CENTER,
@@ -207,13 +201,55 @@ function createResearchComponentParagraphs(component: ResearchPackageComponent) 
 }
 
 function dataUrlToBytes(dataUrl: string): Uint8Array {
-  const base64 = dataUrl.split(',')[1] ?? ''
-  const binary = atob(base64)
+  const payload = dataUrl.split(',')[1] ?? ''
+  const isBase64 = dataUrl.slice(0, dataUrl.indexOf(',')).includes(';base64')
+  const binary = isBase64 ? atob(payload) : decodeURIComponent(payload)
   const bytes = new Uint8Array(binary.length)
   for (let index = 0; index < binary.length; index += 1) {
     bytes[index] = binary.charCodeAt(index)
   }
   return bytes
+}
+
+const TRANSPARENT_PNG = new Uint8Array([
+  137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+  8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 255,
+  255, 63, 0, 5, 254, 2, 254, 167, 53, 129, 132, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66,
+  96, 130,
+])
+
+function imageRunFromDataUrl(dataUrl: string, width = 460, height = 280) {
+  if (dataUrl.startsWith('data:image/svg+xml')) {
+    return new ImageRun({
+      type: 'svg',
+      data: dataUrlToBytes(dataUrl),
+      fallback: { type: 'png', data: TRANSPARENT_PNG },
+      transformation: { width, height },
+    })
+  }
+  return new ImageRun({
+    type: 'png',
+    data: dataUrlToBytes(dataUrl),
+    transformation: { width, height },
+  })
+}
+
+function createResearchImageParagraphs(node: PaperEditorNode) {
+  const src = typeof node.attrs?.src === 'string' ? node.attrs.src : ''
+  const caption = typeof node.attrs?.caption === 'string' ? node.attrs.caption : ''
+  if (!src.startsWith('data:image/')) return []
+  return [
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 160, after: 100 },
+      children: [imageRunFromDataUrl(src)],
+    }),
+    ...(caption ? [new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 120 },
+      children: [new TextRun({ text: caption, font: FONT, size: 21 })],
+    })] : []),
+  ]
 }
 
 function createResearchBlockParagraphs(node: PaperEditorNode) {
@@ -411,6 +447,8 @@ function buildDocChildren(title: string, sections: DocSection[]) {
         .forEach(node => {
           if (node.type === 'heading') {
             children.push(createSubHeading(plainTextFromEditorNode(node), node.attrs?.level === 3 ? 3 : 2))
+          } else if (node.type === 'researchImage') {
+            children.push(...createResearchImageParagraphs(node))
           } else if (node.type === 'researchBlock' || (node.type === 'paragraph' && node.attrs?.researchBlock)) {
             children.push(...createResearchBlockParagraphs(node))
           } else if (node.type === 'paragraph') {

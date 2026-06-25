@@ -152,6 +152,21 @@ const ResearchBlockParagraphAttributes = Extension.create({
               ? { 'data-research-component-ids': attrs.researchComponentIds.join(',') }
               : {},
           },
+          researchFigureCaption: {
+            default: false,
+            parseHTML: element => element.getAttribute('data-research-figure-caption') === 'true',
+            renderHTML: attrs => attrs.researchFigureCaption ? { 'data-research-figure-caption': 'true' } : {},
+          },
+          researchTableCaption: {
+            default: false,
+            parseHTML: element => element.getAttribute('data-research-table-caption') === 'true',
+            renderHTML: attrs => attrs.researchTableCaption ? { 'data-research-table-caption': 'true' } : {},
+          },
+          researchTableRow: {
+            default: false,
+            parseHTML: element => element.getAttribute('data-research-table-row') === 'true',
+            renderHTML: attrs => attrs.researchTableRow ? { 'data-research-table-row': 'true' } : {},
+          },
         },
       },
     ]
@@ -281,6 +296,60 @@ const ResearchBlockNode = Node.create({
         }),
         ...(tableLines.length ? [['div', { class: 'paper-research-node-table-preview' }, tableLines.join('\n')]] : []),
       ],
+    ]
+  },
+})
+
+const ResearchImageNode = Node.create({
+  name: 'researchImage',
+
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      src: {
+        default: null,
+        parseHTML: element => element.querySelector('img')?.getAttribute('src') ?? element.getAttribute('data-src'),
+        renderHTML: attrs => attrs.src ? { 'data-src': attrs.src } : {},
+      },
+      alt: {
+        default: '',
+        parseHTML: element => element.querySelector('img')?.getAttribute('alt') ?? '',
+        renderHTML: attrs => attrs.alt ? { 'data-alt': attrs.alt } : {},
+      },
+      title: {
+        default: '',
+        parseHTML: element => element.getAttribute('data-title') ?? '',
+        renderHTML: attrs => attrs.title ? { 'data-title': attrs.title } : {},
+      },
+      caption: {
+        default: '',
+        parseHTML: element => element.querySelector('figcaption')?.textContent ?? '',
+        renderHTML: attrs => attrs.caption ? { 'data-caption': attrs.caption } : {},
+      },
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'figure[data-research-image="true"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    const src = String(HTMLAttributes['data-src'] ?? HTMLAttributes.src ?? '')
+    const alt = String(HTMLAttributes['data-alt'] ?? HTMLAttributes.alt ?? HTMLAttributes.title ?? '分析结果图')
+    const caption = String(HTMLAttributes['data-caption'] ?? HTMLAttributes.caption ?? '')
+    return [
+      'figure',
+      mergeAttributes(HTMLAttributes, {
+        'data-research-image': 'true',
+        class: 'paper-research-figure',
+        contenteditable: 'false',
+      }),
+      ['img', { src, alt, class: 'paper-research-figure-image' }],
+      ...(caption ? [['figcaption', {}, caption]] : []),
     ]
   },
 })
@@ -547,6 +616,7 @@ function InlineProseMirrorEditor({
       SectionHeadingAttributes,
       ResearchBlockParagraphAttributes,
       ResearchBlockNode,
+      ResearchImageNode,
       TextStyle,
       FontFamily.configure({ types: ['textStyle'] }),
       FontSize.configure({ types: ['textStyle'] }),
@@ -765,6 +835,23 @@ function renderPreviewBlock(
         })}
         {tableLines.length > 0 && <div className="paper-research-node-table-preview">{tableLines.join('\n')}</div>}
       </div>
+    )
+  }
+
+  if (block.type === 'image') {
+    const src = typeof block.node?.attrs?.src === 'string' ? block.node.attrs.src : ''
+    const alt = typeof block.node?.attrs?.alt === 'string' ? block.node.attrs.alt : '分析结果图'
+    const caption = typeof block.node?.attrs?.caption === 'string' ? block.node.attrs.caption : ''
+    return (
+      <figure
+        key={block.key}
+        className="paper-preview-block paper-research-figure"
+        data-measure-key={block.key}
+        data-section-id={block.sectionId}
+      >
+        {src && <img className="paper-research-figure-image" src={src} alt={alt} />}
+        {caption && <figcaption>{caption}</figcaption>}
+      </figure>
     )
   }
 
@@ -1199,6 +1286,50 @@ function PaperDocumentStyles() {
         font-family: var(--font-sans);
         font-size: 11px;
         line-height: 1.6;
+        white-space: pre-wrap;
+      }
+
+      .paper-research-figure {
+        margin: 18px 0 14px;
+        text-align: center;
+        break-inside: avoid;
+      }
+
+      .paper-research-figure-image {
+        display: block;
+        width: 100%;
+        max-width: 620px;
+        max-height: none;
+        object-fit: contain;
+        object-position: center;
+        margin: 0 auto 8px;
+        border: 1px solid rgba(30, 42, 34, 0.12);
+        background: #fff;
+      }
+
+      .paper-research-figure figcaption,
+      .ProseMirror p[data-research-figure-caption="true"] {
+        margin: 6px 0 12px;
+        color: var(--color-ink);
+        font-family: var(--font-serif);
+        font-size: 13px;
+        line-height: 1.8;
+        text-align: center;
+        text-indent: 0;
+      }
+
+      .ProseMirror p[data-research-table-caption="true"] {
+        text-align: center;
+        text-indent: 0;
+        font-weight: 650;
+      }
+
+      .ProseMirror p[data-research-table-row="true"] {
+        text-align: center;
+        text-indent: 0;
+        font-family: var(--font-sans);
+        font-size: 12px;
+        line-height: 1.7;
         white-space: pre-wrap;
       }
 
@@ -1827,6 +1958,7 @@ function PaperDocumentEditorCore({
       SectionHeadingAttributes,
       ResearchBlockParagraphAttributes,
       ResearchBlockNode,
+      ResearchImageNode,
       TextStyle,
       FontFamily.configure({ types: ['textStyle'] }),
       FontSize.configure({ types: ['textStyle'] }),

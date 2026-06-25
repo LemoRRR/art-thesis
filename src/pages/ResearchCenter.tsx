@@ -16,8 +16,7 @@ import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import { researchAPI } from '../lib/api'
 import { callGPT, type Message } from '../lib/ai'
-import { paperTextToEditorDoc } from '../lib/editorDocument'
-import { appendResearchBlockToDoc, createPackageFromAsset } from '../lib/researchPackages'
+import { createPackageFromAsset, researchPackageToPaperNodes } from '../lib/researchPackages'
 import {
   buildResearchDesignBrief,
   buildResearchToolPrompt,
@@ -1711,7 +1710,10 @@ export default function ResearchCenter() {
       projectId: project.id,
       title,
       content,
-      editorDoc: appendResearchBlockToDoc(paperTextToEditorDoc(''), pkg, componentIds),
+      editorDoc: {
+        type: 'doc',
+        content: researchPackageToPaperNodes(pkg, componentIds),
+      },
       status: 'done',
       order: researchAssetOrder(activeAsset),
       sourceRefs: [activeAsset.id, pkg.id],
