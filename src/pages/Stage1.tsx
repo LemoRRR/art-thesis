@@ -556,7 +556,9 @@ export default function Stage1() {
 
   useEffect(() => {
     if (!isCompleted || !comprehension?.rawSummary) return
-    void prepareSharedCitationPool(comprehension)
+    queueMicrotask(() => {
+      void prepareSharedCitationPool(comprehension)
+    })
   }, [comprehension, isCompleted, prepareSharedCitationPool])
 
   const sendMessage = useCallback(async () => {

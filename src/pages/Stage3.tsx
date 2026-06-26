@@ -617,7 +617,7 @@ function FullGenerationProgressPage({
   const logRef = useRef<HTMLDivElement>(null)
   const visibleSteps = steps.length > 0
     ? steps
-    : [{ id: 'boot', label: '正在启动全文生成任务', status: 'active' as const, timestamp: Date.now() }]
+    : [{ id: 'boot', label: '正在启动全文生成任务', status: 'active' as const, timestamp: 0 }]
 
   useEffect(() => {
     const node = logRef.current
@@ -1630,7 +1630,7 @@ export default function Stage3() {
         },
       ]))
     }
-  }, [academicLevel, activeStyleGuide, buildChapterCitationContext, prepareAutoCitationContext, project.id, pushGenerationStep, saveStageMessages])
+  }, [academicLevel, activeStyleGuide, buildChapterCitationContext, prepareAutoCitationContext, project.id, projectTitle, pushGenerationStep, saveStageMessages])
 
   const generateAdditionalSections = useCallback(async (
     newOutlineSections: OutlineSection[],
@@ -1966,7 +1966,7 @@ export default function Stage3() {
     if (project.currentStage !== 'stage3') {
       projectStore.update(project.id, { currentStage: 'stage3' })
     }
-  }, [location.key, project.currentStage, project.id, reconcileSectionsWithOutline, repairMissingResearchTables, saveStageMessages])
+  }, [location.key, location.state, project.context, project.currentStage, project.id, reconcileSectionsWithOutline, repairMissingResearchTables, saveStageMessages])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -2851,7 +2851,7 @@ export default function Stage3() {
           />
         )}
 
-        {false && isGeneratingFull && (
+        {isGeneratingFull && (
           <div style={{ position: 'absolute', top: 92, left: 12, right: 12, zIndex: 100, background: 'rgba(255,255,255,0.96)', border: '1px solid var(--color-border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', padding: '10px 12px', display: 'grid', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <Sparkles size={15} color="var(--color-accent)" />

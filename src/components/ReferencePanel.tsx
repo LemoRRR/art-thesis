@@ -725,12 +725,6 @@ export default function ReferencePanel({
     setEnhancementStatus('running')
     setEnhancementStep(0)
 
-    if (false && sourceCards.length === 0) {
-      setEnhancementStatus('done')
-      setEnhancementStep(4)
-      setScanNotice('暂时没有可引用来源，系统无法安全补引用。建议先生成或补充文献来源。')
-      return
-    }
     if (targetSections.length === 0) {
       setEnhancementStatus('done')
       setEnhancementStep(4)

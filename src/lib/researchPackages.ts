@@ -55,9 +55,13 @@ function fallbackTableNarrative(table: { rows?: unknown[]; columns?: string[] },
   const dimension = '\u8bbe\u8ba1\u7ef4\u5ea6'
   const score = '\u8026\u5408\u4f18\u5148\u7ea7\u603b\u5f97\u5206'
   const first = rows[0]
-  const topDimension = first && typeof first[dimension] === 'string' ? String(first[dimension]) : ''
-  const topScore = first && first[score] != null ? String(first[score]) : ''
-  const hasRank = columns.includes(rank) && Boolean(topDimension)
+  const topDimension = first && (first[dimension] != null || first['维度'] != null)
+    ? String(first[dimension] ?? first['维度'])
+    : ''
+  const topScore = first && (first[score] != null || first['综合分'] != null)
+    ? String(first[score] ?? first['综合分'])
+    : ''
+  const hasRank = (columns.includes(rank) || columns.includes('排名')) && Boolean(topDimension)
   return {
     beforeText: `为保证研究结果具有可核验性，本文将核心计算结果汇总为${title}，用于呈现样本、指标或模型输出的关键数值。`,
     afterText: hasRank

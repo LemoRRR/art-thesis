@@ -2371,7 +2371,7 @@ function PaperDocumentEditorCore({
       positions[blockSourceKey(jsonNode, index)] = offset + 1
     })
     return positions
-  }, [editMode, editor, layoutDoc])
+  }, [editMode, editor])
 
   const footnotes = useMemo(
     () => sections.flatMap(section => section.footnotes ?? []).sort((a, b) => a.number - b.number),
@@ -2418,8 +2418,10 @@ function PaperDocumentEditorCore({
 
   useLayoutEffect(() => {
     if (editMode) {
-      setMeasuredBlocks(prev => Object.keys(prev).length === 0 ? prev : {})
-      setMeasuredFootnotes(prev => Object.keys(prev).length === 0 ? prev : {})
+      window.queueMicrotask(() => {
+        setMeasuredBlocks(prev => Object.keys(prev).length === 0 ? prev : {})
+        setMeasuredFootnotes(prev => Object.keys(prev).length === 0 ? prev : {})
+      })
       return
     }
     const root = measureRef.current
@@ -2465,7 +2467,9 @@ function PaperDocumentEditorCore({
   }, [editor])
 
   useEffect(() => {
-    setEditPageFootnotes(prev => prev.length === 0 ? prev : [])
+    window.queueMicrotask(() => {
+      setEditPageFootnotes(prev => prev.length === 0 ? prev : [])
+    })
   }, [editMode, sections])
 
   useEffect(() => () => {

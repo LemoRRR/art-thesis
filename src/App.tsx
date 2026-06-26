@@ -49,9 +49,6 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
   const syncedRef = useRef(false)
 
   useEffect(() => {
-    if (isAuthEntryRoute) {
-      setRedirectToLogin(false)
-    }
     const handleAuthExpired = () => {
       if (auth.isAuthRequired() && !isAuthEntryRoute) {
         setRedirectToLogin(true)
@@ -99,7 +96,7 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
     }
   }, [isAuthEntryRoute, location.pathname])
 
-  if (redirectToLogin && !isAuthEntryRoute) {
+  if (redirectToLogin && !isAuthEntryRoute && auth.isAuthRequired() && !auth.isLoggedIn()) {
     const redirect = safeLoginRedirect(location)
     return <Navigate to={redirect ? `/login?redirect=${encodeURIComponent(redirect)}` : '/login'} replace />
   }

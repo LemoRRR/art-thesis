@@ -1518,8 +1518,8 @@ export default function ResearchCenter() {
     })
     const brief = buildResearchDesignBrief(mode, project.title, source, route)
     const generated = buildResearchTool(mode, project.title, source, route)
-    let generatedText = ''
-    let quality = validateResearchTool(mode, generated.text)
+    let generatedText: string
+    let quality: ReturnType<typeof validateResearchTool>
     try {
       setNotice(`正在调用 AI 生成专业版${activeOption.label}…`)
       const aiText = await streamResearchText(buildResearchToolPrompt(mode, project.title, source, route, generated.text, brief))
@@ -1667,8 +1667,8 @@ export default function ResearchCenter() {
     setAnalysisPhase('planning')
     setAnalysisError('')
     setNotice('AI 正在识别数据结构和适合的研究方法…')
-    let analysisText = ''
-    let structuredResult: unknown = null
+    let analysisText: string
+    let structuredResult: unknown
     let confirmedPlan: Awaited<ReturnType<typeof researchAPI.analysisPlan>>['plan'] | null = null
     let usedBrowserFallback = false
     let usedInterpretFallback = false

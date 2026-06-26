@@ -163,7 +163,9 @@ export default function ResearchDrawer({
   useEffect(() => {
     if (!open) return
     if (!requestText) {
-      setRequestText(activeSectionTitle ? `为「${activeSectionTitle}」分析上传数据，生成可插入论文的图表、统计表和分析文字。` : '分析这组数据中核心变量之间的关系，并生成可插入论文的研究支撑。')
+      queueMicrotask(() => {
+        setRequestText(activeSectionTitle ? `为「${activeSectionTitle}」分析上传数据，生成可插入论文的图表、统计表和分析文字。` : '分析这组数据中核心变量之间的关系，并生成可插入论文的研究支撑。')
+      })
     }
     if (!selectedAssetId && insertableAssets[0]) {
       queueMicrotask(() => setSelectedAssetId(insertableAssets[0].id))
