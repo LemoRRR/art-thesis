@@ -2777,11 +2777,14 @@ export default function Stage3() {
                 </select>
               )}
               <button
-                onClick={() => setShowReferences(value => !value)}
+                onClick={() => {
+                  setShowReferences(value => !value)
+                  setShowResearchDrawer(false)
+                }}
                 style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: `1px solid ${showReferences ? 'var(--color-accent)' : 'var(--color-border)'}`, background: showReferences ? 'var(--color-accent-light)' : 'transparent', color: showReferences ? 'var(--color-accent)' : 'var(--color-ink-3)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
               >
                 <BookOpen size={13} />
-                来源
+                来源/引用增强
               </button>
               <button
                 onClick={() => {
