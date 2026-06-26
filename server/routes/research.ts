@@ -537,6 +537,7 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
 }
 
 type SheetTable = { name: string; columns: string[]; rows: Record<string, unknown>[] }
+type AhpMatrix = { name: string; labels: string[]; matrix: number[][] }
 
 async function readWorkbookTablesInNode(payload: Record<string, unknown>): Promise<SheetTable[]> {
   const fileName = String(payload.fileName ?? '')
@@ -548,6 +549,18 @@ async function readWorkbookTablesInNode(payload: Record<string, unknown>): Promi
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
     const columns = rows[0] ? Object.keys(rows[0]) : []
     return { name, columns, rows }
+  })
+}
+
+async function readWorkbookSheetArraysInNode(payload: Record<string, unknown>): Promise<Array<{ name: string; rows: unknown[][] }>> {
+  const fileName = String(payload.fileName ?? '')
+  if (!payload.base64 || !fileName.toLowerCase().match(/\.(xlsx|xls)$/)) return []
+  const XLSX = await import('xlsx')
+  const workbook = XLSX.read(Buffer.from(String(payload.base64), 'base64'), { type: 'buffer' })
+  return workbook.SheetNames.map(name => {
+    const sheet = workbook.Sheets[name]
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' })
+    return { name, rows }
   })
 }
 
@@ -645,6 +658,97 @@ function rowMetric(row: Record<string, unknown>, parts: string[]) {
 function rowTextByParts(row: Record<string, unknown>, parts: string[], fallback = '') {
   const key = rowKey(row, parts)
   return key ? rowValue(row, key) : fallback
+}
+
+function parseAhpNumber(value: unknown) {
+  const text = String(value ?? '').trim()
+  if (!text) return null
+  const fraction = text.match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/)
+  if (fraction) {
+    const numerator = Number(fraction[1])
+    const denominator = Number(fraction[2])
+    return denominator ? numerator / denominator : null
+  }
+  const number = Number(text)
+  return Number.isFinite(number) && number > 0 ? number : null
+}
+
+function findAhpMatricesInRows(sheetName: string, rows: unknown[][]): AhpMatrix[] {
+  const matrices: AhpMatrix[] = []
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex] ?? []
+    for (let colIndex = 0; colIndex < row.length; colIndex += 1) {
+      const labels = row.slice(colIndex + 1).map(cell => String(cell ?? '').trim()).filter(Boolean)
+      if (labels.length < 2 || labels.length > 9) continue
+      const matrixRows: number[][] = []
+      const rowLabels: string[] = []
+      for (let offset = 1; offset <= labels.length; offset += 1) {
+        const current = rows[rowIndex + offset] ?? []
+        const rowLabel = String(current[colIndex] ?? '').trim()
+        const values = current.slice(colIndex + 1, colIndex + 1 + labels.length).map(parseAhpNumber)
+        if (!rowLabel || values.some(value => value == null)) break
+        rowLabels.push(rowLabel)
+        matrixRows.push(values as number[])
+      }
+      if (matrixRows.length !== labels.length) continue
+      const sameLabels = labels.every((label, index) => rowLabels[index] === label || rowLabels.includes(label))
+      const diagonalOk = matrixRows.every((values, index) => Math.abs(values[index] - 1) < 0.08)
+      if (!sameLabels || !diagonalOk) continue
+      matrices.push({
+        name: `${sheetName}${matrices.length ? `-${matrices.length + 1}` : ''}`,
+        labels,
+        matrix: matrixRows.map((values, index) => values.map((value, innerIndex) => index === innerIndex ? 1 : value)),
+      })
+      rowIndex += labels.length
+      break
+    }
+  }
+  return matrices
+}
+
+async function readAhpWorkbook(payload: Record<string, unknown>) {
+  const sheets = await readWorkbookSheetArraysInNode(payload)
+  const matrices = sheets.flatMap(sheet => findAhpMatricesInRows(sheet.name, sheet.rows))
+  return matrices.length ? { sheets: sheets.map(sheet => sheet.name), matrices } : null
+}
+
+const AHP_RI: Record<number, number> = {
+  1: 0,
+  2: 0,
+  3: 0.58,
+  4: 0.9,
+  5: 1.12,
+  6: 1.24,
+  7: 1.32,
+  8: 1.41,
+  9: 1.45,
+}
+
+function calculateAhpMatrix(input: AhpMatrix) {
+  const n = input.labels.length
+  const geometricMeans = input.matrix.map(row => Math.pow(row.reduce((product, value) => product * value, 1), 1 / n))
+  const total = geometricMeans.reduce((sum, value) => sum + value, 0) || 1
+  const weights = geometricMeans.map(value => value / total)
+  const weightedSums = input.matrix.map(row => row.reduce((sum, value, index) => sum + value * weights[index], 0))
+  const lambdaValues = weightedSums.map((value, index) => value / Math.max(weights[index], 1e-8))
+  const lambdaMax = lambdaValues.reduce((sum, value) => sum + value, 0) / n
+  const ci = n <= 2 ? 0 : (lambdaMax - n) / (n - 1)
+  const ri = AHP_RI[n] ?? 1.49
+  const cr = ri === 0 ? 0 : ci / ri
+  return {
+    ...input,
+    n,
+    lambdaMax,
+    ci: Math.max(0, ci),
+    ri,
+    cr: Math.max(0, cr),
+    passed: cr < 0.1,
+    weights: input.labels.map((label, index) => ({
+      criterion: label,
+      weight: weights[index],
+      weightPercent: weights[index] * 100,
+    })).sort((left, right) => right.weight - left.weight).map((row, index) => ({ ...row, rank: index + 1 })),
+  }
 }
 
 type ChartCanvasContext = CanvasRenderingContext2D
@@ -1228,6 +1332,64 @@ async function makeEfaLoadingFigure(efa: Record<string, unknown> | null | undefi
   })
 }
 
+async function makeAhpWeightFigure(rows: Record<string, unknown>[]) {
+  const items = rows.slice(0, 12)
+  const width = 980
+  const height = 150 + items.length * 44
+  const max = Math.max(...items.map(row => Number(row.weightPercent) || 0), 1)
+  return canvasDataUrl(width, height, ctx => {
+    drawChartHeader(ctx, 'AHP指标权重排序图', '依据判断矩阵计算得到的指标权重及排序。')
+    items.forEach((row, index) => {
+      const y = 118 + index * 44
+      const weight = Number(row.weightPercent) || 0
+      const barWidth = Math.max(5, Math.round((weight / max) * 560))
+      ctx.fillStyle = '#1f3328'
+      ctx.font = chartFont(14, '700')
+      ctx.fillText(`${row.rank ?? index + 1}. ${shortLabel(row.criterion, 16)}`, 42, y + 17)
+      ctx.fillStyle = '#dfeadc'
+      ctx.fillRect(260, y, 580, 22)
+      ctx.fillStyle = index < 3 ? '#2f7d4b' : '#6ba46f'
+      ctx.fillRect(260, y, barWidth, 22)
+      ctx.fillStyle = '#263a2e'
+      ctx.font = chartFont(13)
+      ctx.fillText(`${weight.toFixed(2)}%`, 858, y + 16)
+    })
+    drawFootnote(ctx, '注：权重越高，表示该指标在目标评价中的相对重要性越强。', 42, height - 22)
+  })
+}
+
+async function makeAhpConsistencyFigure(rows: Record<string, unknown>[]) {
+  const items = rows.slice(0, 8)
+  const width = 980
+  const height = 160 + items.length * 52
+  return canvasDataUrl(width, height, ctx => {
+    drawChartHeader(ctx, 'AHP一致性检验结果', 'CR < 0.10 通常表示判断矩阵一致性可接受。')
+    items.forEach((row, index) => {
+      const y = 124 + index * 52
+      const cr = Number(row.CR) || 0
+      const barWidth = Math.min(700, Math.max(4, Math.round((cr / 0.2) * 560)))
+      ctx.fillStyle = '#1f3328'
+      ctx.font = chartFont(14, '700')
+      ctx.fillText(shortLabel(row.matrix, 18), 42, y + 17)
+      ctx.fillStyle = '#eadfda'
+      ctx.fillRect(250, y, 580, 22)
+      ctx.fillStyle = cr < 0.1 ? '#2f7d4b' : '#9a5b4f'
+      ctx.fillRect(250, y, barWidth, 22)
+      ctx.fillStyle = '#263a2e'
+      ctx.font = chartFont(13)
+      ctx.fillText(`CR=${cr.toFixed(4)}  ${row.consistency ?? ''}`, 848, y + 16)
+    })
+    ctx.strokeStyle = '#5f5b52'
+    ctx.setLineDash([4, 4])
+    ctx.beginPath()
+    ctx.moveTo(250 + 580 * 0.5, 112)
+    ctx.lineTo(250 + 580 * 0.5, height - 52)
+    ctx.stroke()
+    ctx.setLineDash([])
+    drawFootnote(ctx, '注：虚线为 CR=0.10 参考阈值；超过阈值的矩阵建议重新组织专家评分或复核极端判断。', 42, height - 22)
+  })
+}
+
 async function buildGenericQuantFigures(
   descriptive: Record<string, unknown>[],
   correlations: Record<string, unknown>[],
@@ -1657,6 +1819,136 @@ function compactTableForPrompt(table: Record<string, unknown>) {
     title: table.title,
     columns: Array.isArray(table.columns) ? table.columns.slice(0, 8) : [],
     rows: arrayRecords(table.rows).slice(0, 8),
+  }
+}
+
+async function buildAhpResult(payload: Record<string, unknown>, workbook?: Awaited<ReturnType<typeof readAhpWorkbook>>) {
+  workbook = workbook ?? await readAhpWorkbook(payload)
+  if (!workbook) return null
+  const calculated = workbook.matrices.map(calculateAhpMatrix)
+  if (!calculated.length) return null
+  const topMatrix = calculated[0]
+  const allWeights = calculated.flatMap(matrix => matrix.weights.map(row => ({
+    matrix: matrix.name,
+    criterion: row.criterion,
+    weight: Number(row.weight.toFixed(4)),
+    weightPercent: Number(row.weightPercent.toFixed(2)),
+    rank: row.rank,
+  })))
+  const consistencyRows = calculated.map(matrix => ({
+    matrix: matrix.name,
+    n: matrix.n,
+    lambdaMax: Number(matrix.lambdaMax.toFixed(4)),
+    CI: Number(matrix.ci.toFixed(4)),
+    RI: matrix.ri,
+    CR: Number(matrix.cr.toFixed(4)),
+    consistency: matrix.passed ? '通过' : '需复核',
+  }))
+  const [weightFigure, consistencyFigure] = await Promise.all([
+    makeAhpWeightFigure(allWeights),
+    makeAhpConsistencyFigure(consistencyRows),
+  ])
+  const topWeights = topMatrix.weights.slice(0, 3)
+  return {
+    ok: true,
+    method: 'ahp',
+    sampleSize: calculated.length,
+    numericColumns: [],
+    categoricalColumns: [],
+    descriptive: [],
+    cronbachAlpha: null,
+    correlations: [],
+    anova: [],
+    mediation: null,
+    efa: null,
+    tables: [
+      {
+        id: 'table_ahp_consistency',
+        title: 'AHP判断矩阵一致性检验表',
+        rows: consistencyRows,
+        columns: ['matrix', 'n', 'lambdaMax', 'CI', 'RI', 'CR', 'consistency'],
+      },
+      {
+        id: 'table_ahp_weights',
+        title: 'AHP指标权重与排序表',
+        rows: allWeights,
+        columns: ['matrix', 'criterion', 'weight', 'weightPercent', 'rank'],
+      },
+    ],
+    figures: [
+      weightFigure ? {
+        id: 'figure_ahp_weights',
+        title: 'AHP指标权重排序图',
+        caption: '依据专家判断矩阵计算得到的各评价指标相对权重及排序。',
+        dataUrl: weightFigure,
+      } : null,
+      consistencyFigure ? {
+        id: 'figure_ahp_consistency',
+        title: 'AHP一致性检验图',
+        caption: '以CR值呈现各判断矩阵的一致性检验结果。',
+        dataUrl: consistencyFigure,
+      } : null,
+    ].filter((item): item is { id: string; title: string; caption: string; dataUrl: string } => Boolean(item)),
+    methodText: '本研究采用层次分析法(AHP)对评价指标的重要性进行量化判断。首先依据研究目标建立层级结构，并邀请专家按照1-9标度法对同一层级指标进行两两比较，形成判断矩阵；随后采用几何平均法计算各指标权重，并通过最大特征根、CI和CR进行一致性检验。当CR小于0.10时，说明专家判断矩阵的一致性处于可接受范围，可进入后续权重排序与策略解释。',
+    analysisText: [
+      `AHP计算结果显示，本次共识别 ${calculated.length} 个判断矩阵。${consistencyRows.every(row => row.consistency === '通过') ? '各判断矩阵CR值均小于0.10，一致性检验通过，说明专家两两比较结果具有较好的逻辑一致性。' : '部分判断矩阵CR值达到或超过0.10，正式论文写作时应说明复核过程，必要时重新回收专家评分。'}`,
+      topWeights.length ? `从权重排序看，${topWeights.map(row => `“${row.criterion}”权重为${row.weightPercent.toFixed(2)}%`).join('，')}，说明这些指标在评价体系中具有更高相对重要性，应作为后续结果讨论和优化建议的重点。` : '',
+      '上述结果可用于支撑论文中评价指标体系的权重确定、关键因素排序和策略优先级判断。写作时应结合研究对象解释高权重指标为何具有更强影响，并避免仅罗列权重数值而缺少理论或场景解释。',
+    ].filter(Boolean).join('\n'),
+    cautions: consistencyRows.some(row => row.consistency !== '通过')
+      ? ['存在CR未通过的判断矩阵，建议复核专家评分后再用于正式结论。']
+      : [],
+    plainText: [
+      '【AHP判断矩阵一致性检验表】',
+      tableContent(consistencyRows, ['matrix', 'n', 'lambdaMax', 'CI', 'RI', 'CR', 'consistency']),
+      '',
+      '【AHP指标权重与排序表】',
+      tableContent(allWeights, ['matrix', 'criterion', 'weight', 'weightPercent', 'rank']),
+    ].join('\n'),
+    workbookSheets: workbook.sheets,
+    analysisProvider: 'ahp-workbook',
+  }
+}
+
+async function buildAhpPlan(payload: Record<string, unknown>) {
+  const workbook = await readAhpWorkbook(payload)
+  const text = [
+    payload.method,
+    payload.userRequest,
+    payload.fileName,
+    payload.intent && typeof payload.intent === 'object' ? (payload.intent as Record<string, unknown>).method : '',
+  ].map(value => String(value ?? '')).join('\n')
+  if (!workbook && !/ahp|层次分析|判断矩阵|专家评分|一致性|权重/i.test(text)) return null
+  const matrices = workbook?.matrices ?? []
+  return {
+    workbook,
+    response: {
+      ok: true,
+      plan: {
+        purpose: '基于专家两两比较判断矩阵完成AHP层次分析，输出指标权重、排序结果和一致性检验，并生成可写入论文结果章节的图表与分析文字。',
+        method: 'ahp',
+        methods: ['ahp'],
+        reason: matrices.length
+          ? `上传文件中识别到 ${matrices.length} 个AHP判断矩阵，可直接计算权重和CR一致性。`
+          : '当前任务指向AHP专家评分，但尚未识别到可计算判断矩阵；请上传包含行列指标名称和1-9标度数值的方阵。',
+        variables: (matrices[0]?.labels ?? []).map((label, index) => ({
+          role: index === 0 ? 'dependent' : 'item',
+          name: label,
+          column: label,
+          confidence: 0.9,
+          note: 'AHP判断矩阵指标',
+        })),
+        formula: '判断矩阵 → 几何平均法计算权重 → λmax → CI=(λmax-n)/(n-1) → CR=CI/RI → 权重排序。',
+        requiredColumns: matrices[0]?.labels ?? [],
+        outputs: ['method', 'statistics', 'figure', 'analysis'],
+        limitations: matrices.length ? [] : ['需要上传AHP专家判断矩阵后才能完成权重与一致性计算。'],
+        toolCalls: [{ tool: 'ahp', columns: matrices[0]?.labels ?? [] }],
+        needsVariableConfirmation: matrices.length === 0,
+      },
+      columns: matrices[0]?.labels ?? [],
+      numericColumns: matrices[0]?.labels ?? [],
+      categoricalColumns: [],
+    },
   }
 }
 
@@ -2214,6 +2506,11 @@ router.post('/analysis-plan', async (req, res) => {
     })
     return
   }
+  const ahpPlan = await buildAhpPlan(body)
+  if (ahpPlan) {
+    res.json(ahpPlan.response)
+    return
+  }
   const kanoPlan = await buildKanoEntropyPlan(body)
   if (kanoPlan) {
     res.json(kanoPlan.response)
@@ -2297,6 +2594,12 @@ router.post('/analyze', async (req, res) => {
         return
       }
       res.json(normalizeResultLabels(await interpretAnalysisResult(qualitativeResult, req.body ?? {})))
+      return
+    }
+
+    const ahpResult = await buildAhpResult(req.body ?? {})
+    if (ahpResult) {
+      res.json(normalizeResultLabels(await interpretAnalysisResult(ahpResult, req.body ?? {})))
       return
     }
 

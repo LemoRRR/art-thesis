@@ -181,6 +181,10 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
       { type: 'figure', id: 'figure_entropy_weights' },
       { type: 'table', id: 'table_priority_ranking' },
       { type: 'figure', id: 'figure_kano_entropy_priority' },
+      { type: 'table', id: 'table_ahp_consistency' },
+      { type: 'table', id: 'table_ahp_weights' },
+      { type: 'figure', id: 'figure_ahp_weights' },
+      { type: 'figure', id: 'figure_ahp_consistency' },
       { type: 'table', id: 'table_data_quality' },
       { type: 'table', id: 'table_descriptive' },
       { type: 'figure', id: 'figure_descriptive_means' },
@@ -383,6 +387,16 @@ const RESEARCH_TABLE_COLUMN_LABELS: Record<string, string> = {
   includedOpenCodes: '包含开放编码',
   evidenceCount: '证据数',
   writingUse: '写作用途',
+  matrix: '矩阵',
+  criterion: '指标',
+  weight: '权重',
+  weightPercent: '权重(%)',
+  rank: '排名',
+  lambdaMax: 'λmax',
+  CI: 'CI',
+  RI: 'RI',
+  CR: 'CR',
+  consistency: '一致性',
 }
 
 function researchTableColumnLabel(column: string) {
@@ -412,7 +426,11 @@ function selectResearchTableColumns(columns: string[], title = '') {
       ? [dimension, sampleSize, kanoType, better, worse, rank]
       : title.includes('\u71b5\u6743')
         ? [indicator, entropy, diff, weight]
-        : []
+        : title.includes('AHP') && title.includes('一致性')
+          ? ['matrix', 'n', 'lambdaMax', 'CI', 'RI', 'CR', 'consistency']
+          : title.includes('AHP')
+            ? ['matrix', 'criterion', 'weight', 'weightPercent', 'rank']
+            : []
   const selected = preferred.filter(column => columnSet.has(column))
   return (selected.length ? selected : columns).slice(0, 7)
 }
@@ -459,6 +477,9 @@ function researchTableNote(component: ResearchPackageComponent) {
   }
   if (id.includes('entropy') || title.includes('熵权')) {
     return '注：熵值越低、差异系数越高，表示该指标对综合评价的区分作用越强；权重用于后续耦合优先级计算。'
+  }
+  if (id.includes('ahp') || title.includes('ahp')) {
+    return '注：AHP权重由专家两两比较判断矩阵计算得到；CR<0.10通常表示一致性检验通过。'
   }
   return ''
 }
