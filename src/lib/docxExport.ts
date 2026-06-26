@@ -10,8 +10,10 @@ import {
   Paragraph,
   Table,
   TableCell,
+  TableLayoutType,
   TableRow,
   TextRun,
+  VerticalAlignTable,
   WidthType,
 } from 'docx'
 import { isFrontMatterTitle, stripAcademicTitlePrefix } from './academicFormat'
@@ -26,6 +28,9 @@ const HEADING_FONT = '黑体'
 const EN_FONT = 'Times New Roman'
 const TEXT_COLOR = '000000'
 const FILE_SAFE_PATTERN = /[\\/:*?"<>|]/g
+const TABLE_BORDER = { style: BorderStyle.SINGLE, size: 8, color: TEXT_COLOR }
+const TABLE_LIGHT_BORDER = { style: BorderStyle.SINGLE, size: 3, color: 'BFBFBF' }
+const TABLE_NO_BORDER = { style: BorderStyle.NIL, size: 0, color: 'FFFFFF' }
 
 function editorAlignment(value: unknown) {
   if (value === 'center') return AlignmentType.CENTER
@@ -168,14 +173,52 @@ function createBodyParagraphFromEditorNode(node: PaperEditorNode) {
 
 type DocxBlock = Paragraph | Table
 
-function tableCell(text: string, bold = false, bottomBorder = false) {
+function isShortResearchTableColumn(label: string, column?: string) {
+  const text = `${label} ${column ?? ''}`
+  return /^(N|p|r|F|M|SD)$/i.test(label.trim())
+    || /排名|序号|KANO|Better|Worse|权重|熵值|差异|综合分|样本|均值|标准差|显著|Alpha|得分/.test(text)
+}
+
+function researchColumnWidths(columns: string[], labels: string[]) {
+  const weights = columns.map((column, index) => {
+    const label = labels[index] ?? column
+    if (/维度|指标|变量|题项|主题|证据|说明|摘录|名称/.test(`${label} ${column}`)) return 1.8
+    if (isShortResearchTableColumn(label, column)) return 0.95
+    return 1.25
+  })
+  const total = weights.reduce((sum, weight) => sum + weight, 0) || 1
+  return weights.map(weight => Math.max(760, Math.round(9000 * weight / total)))
+}
+
+function researchTableCellAlignment(label: string, column?: string) {
+  return isShortResearchTableColumn(label, column) ? AlignmentType.CENTER : AlignmentType.LEFT
+}
+
+function tableCell(options: {
+  text: string
+  bold?: boolean
+  header?: boolean
+  bottomBorder?: boolean
+  width?: number
+  alignment?: (typeof AlignmentType)[keyof typeof AlignmentType]
+}) {
+  const { text, bold = false, header = false, bottomBorder = false, width, alignment = AlignmentType.CENTER } = options
   return new TableCell({
-    margins: { top: 80, bottom: 80, left: 80, right: 80 },
-    borders: bottomBorder ? { bottom: { style: BorderStyle.SINGLE, size: 6, color: TEXT_COLOR } } : undefined,
+    width: width ? { size: width, type: WidthType.DXA } : undefined,
+    margins: { top: 90, bottom: 90, left: 120, right: 120 },
+    verticalAlign: VerticalAlignTable.CENTER,
+    shading: header ? { fill: 'F2F2F2' } : undefined,
+    borders: {
+      top: TABLE_NO_BORDER,
+      left: TABLE_NO_BORDER,
+      right: TABLE_NO_BORDER,
+      bottom: bottomBorder ? TABLE_BORDER : TABLE_LIGHT_BORDER,
+    },
     children: [
       new Paragraph({
-        alignment: AlignmentType.CENTER,
-        children: [new TextRun({ text, bold, font: FONT, size: 21 })],
+        alignment,
+        spacing: { line: 260, before: 0, after: 0 },
+        children: [new TextRun({ text, bold, font: bold ? HEADING_FONT : FONT, size: header ? 20 : 19 })],
       }),
     ],
   })
@@ -199,25 +242,39 @@ function createResearchTableBlocksFromData(data: {
   const note = typeof data.note === 'string' ? data.note : ''
   if (!columns.length || !rows.length) return []
 
-  const noBorder = { style: BorderStyle.NIL, size: 0, color: 'FFFFFF' }
-  const lineBorder = { style: BorderStyle.SINGLE, size: 8, color: TEXT_COLOR }
+  const widths = researchColumnWidths(columns, labels)
   const table = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
+    width: { size: 9000, type: WidthType.DXA },
+    columnWidths: widths,
+    layout: TableLayoutType.FIXED,
+    alignment: AlignmentType.CENTER,
     borders: {
-      top: lineBorder,
-      bottom: lineBorder,
-      left: noBorder,
-      right: noBorder,
-      insideVertical: noBorder,
-      insideHorizontal: noBorder,
+      top: TABLE_BORDER,
+      bottom: TABLE_BORDER,
+      left: TABLE_NO_BORDER,
+      right: TABLE_NO_BORDER,
+      insideVertical: TABLE_NO_BORDER,
+      insideHorizontal: TABLE_LIGHT_BORDER,
     },
     rows: [
       new TableRow({
-        children: labels.map(label => tableCell(label, true, true)),
+        cantSplit: true,
+        children: labels.map((label, index) => tableCell({
+          text: label,
+          bold: true,
+          header: true,
+          bottomBorder: true,
+          width: widths[index],
+          alignment: AlignmentType.CENTER,
+        })),
         tableHeader: true,
       }),
       ...rows.map(row => new TableRow({
-        children: columns.map(column => tableCell(String(row[column] ?? ''))),
+        children: columns.map((column, index) => tableCell({
+          text: String(row[column] ?? ''),
+          width: widths[index],
+          alignment: researchTableCellAlignment(labels[index] ?? column, column),
+        })),
       })),
     ],
   })
@@ -226,6 +283,7 @@ function createResearchTableBlocksFromData(data: {
     ...(title ? [new Paragraph({
       alignment: AlignmentType.CENTER,
       spacing: { before: 160, after: 80 },
+      keepNext: true,
       children: [new TextRun({ text: title, bold: true, font: HEADING_FONT, size: 24 })],
     })] : []),
     table,
@@ -234,8 +292,8 @@ function createResearchTableBlocksFromData(data: {
   if (note || extra) {
     blocks.push(new Paragraph({
       alignment: AlignmentType.LEFT,
-      spacing: { after: 120 },
-      children: [new TextRun({ text: `${note}${extra}`, font: FONT, size: 20 })],
+      spacing: { before: 80, after: 160, line: 260 },
+      children: [new TextRun({ text: `${note}${extra}`, font: FONT, size: 18 })],
     }))
   }
   return blocks
@@ -248,21 +306,26 @@ function createResearchComponentParagraphs(component: ResearchPackageComponent):
     : null
   const dataUrl = figureData?.dataUrl
   if (dataUrl?.startsWith('data:image/')) {
+    const caption = title ?? '图表'
+    const description = component.content.trim()
     return [
       new Paragraph({
         alignment: AlignmentType.CENTER,
-        spacing: { before: 160, after: 100 },
-        children: [new TextRun({ text: title ?? '图表', bold: true, font: HEADING_FONT, size: 24 })],
+        spacing: { before: 160, after: 80 },
+        keepNext: true,
+        children: [imageRunFromDataUrl(dataUrl)],
       }),
       new Paragraph({
         alignment: AlignmentType.CENTER,
-        spacing: { after: 100 },
-        children: [imageRunFromDataUrl(dataUrl)],
+        spacing: { after: description && description !== caption ? 80 : 160 },
+        keepNext: Boolean(description && description !== caption),
+        children: [new TextRun({ text: caption, bold: true, font: HEADING_FONT, size: 22 })],
       }),
-      ...(component.content.trim() ? [new Paragraph({
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 120 },
-        children: [new TextRun({ text: component.content.trim(), font: FONT, size: 21 })],
+      ...(description && description !== caption ? [new Paragraph({
+        alignment: AlignmentType.JUSTIFIED,
+        indent: { firstLine: 480 },
+        spacing: { line: 320, after: 160 },
+        children: [new TextRun({ text: description, font: FONT, size: 22 })],
       })] : []),
     ]
   }
