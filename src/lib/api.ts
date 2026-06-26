@@ -32,6 +32,12 @@ function clearExpiredAuth() {
   window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT))
 }
 
+function clearExpiredAuthIfCurrent(requestToken: string | null) {
+  if (!requestToken || localStorage.getItem('access_token') === requestToken) {
+    clearExpiredAuth()
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}, timeoutMs = 20_000): Promise<T> {
   const token = getToken()
   const controller = new AbortController()
@@ -62,7 +68,7 @@ async function request<T>(path: string, options: RequestInit = {}, timeoutMs = 2
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: 'Request failed' }))
     if (res.status === 401) {
-      clearExpiredAuth()
+      clearExpiredAuthIfCurrent(token)
     }
     throw new Error(`${path} ${res.status}: ${error.error ?? 'Request failed'}`)
   }
@@ -499,7 +505,7 @@ export const filesAPI = {
           : 'File upload failed',
       }))
       if (res.status === 401) {
-        clearExpiredAuth()
+        clearExpiredAuthIfCurrent(token)
       }
       throw new Error(error.error ?? `File upload failed (HTTP ${res.status})`)
     }
