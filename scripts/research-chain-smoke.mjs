@@ -4,7 +4,7 @@ import express from 'express'
 import JSZip from 'jszip'
 import researchRouter from '../server/routes/research.ts'
 import { buildSectionsDocxBlob } from '../src/lib/docxExport.ts'
-import { researchPackageToPaperNodes } from '../src/lib/researchPackages.ts'
+import { researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../src/lib/researchPackages.ts'
 
 const defaultWorkbook = path.resolve(
   process.cwd(),
@@ -33,32 +33,56 @@ async function post(base, route, body) {
 }
 
 function componentsFromAnalysis(analysis) {
-  const components = []
-  if (analysis.methodText) {
-    components.push({ id: 'method', type: 'method', title: '研究方法说明', content: analysis.methodText })
+  return splitResearchAssetIntoComponents({
+    id: 'smoke-asset',
+    projectId: 'smoke',
+    taskId: 'smoke-task',
+    type: 'quant_analysis_result',
+    title: 'KANO-熵权法分析结果',
+    summary: '真实问卷数据的 KANO-熵权法分析结果',
+    plainText: analysis.plainText ?? '',
+    structuredData: { result: analysis },
+    status: 'ready',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  })
+}
+
+function pngDimensionsFromDataUrl(dataUrl) {
+  const match = /^data:image\/png;base64,(.+)$/.exec(String(dataUrl ?? ''))
+  assert(match, 'figure is missing a PNG data URL')
+  const buffer = Buffer.from(match[1], 'base64')
+  assert(buffer.length > 24 && buffer.toString('ascii', 1, 4) === 'PNG', 'figure data is not a valid PNG')
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20),
+    bytes: buffer.length,
   }
-  for (const table of analysis.tables ?? []) {
-    components.push({
-      id: table.id,
-      type: 'statistics',
-      title: table.title,
-      content: '',
-      data: table,
-    })
+}
+
+function assertResearchOutputQuality(analysis, components) {
+  const tables = analysis.tables ?? []
+  const figures = analysis.figures ?? []
+  const priorityTable = tables.find(table => table.id === 'table_priority_ranking')
+  assert(priorityTable, 'priority ranking table is missing')
+  assert(
+    JSON.stringify(priorityTable.columns) === JSON.stringify(['排名', '维度', 'KANO', 'Better', 'Worse', '熵权', '综合分']),
+    `priority ranking table columns are not paper-ready: ${JSON.stringify(priorityTable.columns)}`
+  )
+  for (const table of tables) {
+    assert((table.columns ?? []).length <= 7, `${table.title} has too many displayed columns`)
+    assert(!(table.columns ?? []).includes('维度全称'), `${table.title} still exposes the long dimension column`)
   }
-  for (const figure of analysis.figures ?? []) {
-    components.push({
-      id: figure.id,
-      type: 'figure',
-      title: figure.title,
-      content: figure.caption ?? figure.title,
-      data: figure,
-    })
+  for (const figure of figures) {
+    const dimensions = pngDimensionsFromDataUrl(figure.dataUrl)
+    assert(dimensions.width >= 1600, `${figure.title} width is too low: ${dimensions.width}`)
+    assert(dimensions.height >= 800, `${figure.title} height is too low: ${dimensions.height}`)
   }
-  if (analysis.analysisText) {
-    components.push({ id: 'analysis', type: 'analysis', title: '结果分析', content: analysis.analysisText })
-  }
-  return components
+  const narrativeComponents = components.filter(component => component.type === 'analysis')
+  const beforeCount = narrativeComponents.filter(component => String(component.title ?? '').endsWith(': before')).length
+  const afterCount = narrativeComponents.filter(component => String(component.title ?? '').endsWith(': after')).length
+  assert(beforeCount >= tables.length + figures.length, `not every table/figure has a before paragraph: ${beforeCount}`)
+  assert(afterCount >= tables.length + figures.length, `not every table/figure has an after paragraph: ${afterCount}`)
 }
 
 async function inspectDocx(buffer) {
@@ -101,6 +125,7 @@ async function main() {
     const plan = await post(base, '/api/research/analysis-plan', common)
     const analysis = await post(base, '/api/research/analyze', { ...common, plan: plan.plan })
     const components = componentsFromAnalysis(analysis)
+    assertResearchOutputQuality(analysis, components)
     const sections = [
       { id: 's3', title: '三、研究设计与数据来源', content: '' },
       { id: 's4', title: '四、数据分析与研究结果', content: '' },
@@ -182,6 +207,7 @@ async function main() {
       planMethod: plan.plan.method,
       tableCount,
       figureCount,
+      componentCount: components.length,
       placements: placements.map(item => ({
         role: item.role,
         targetSectionId: item.targetSectionId,
