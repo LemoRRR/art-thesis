@@ -780,6 +780,12 @@ ${body}
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }
 
+function svgIntrinsicWidth(svg: string) {
+  const match = svg.match(/<svg[^>]*\bwidth="(\d+(?:\.\d+)?)"/i)
+  const width = match ? Number(match[1]) : 0
+  return Number.isFinite(width) && width > 0 ? width : 1180
+}
+
 async function svgDataUrlToPngDataUrl(dataUrl: string) {
   try {
     const svg = decodeURIComponent(dataUrl.split(',')[1] ?? '')
@@ -789,7 +795,7 @@ async function svgDataUrlToPngDataUrl(dataUrl: string) {
       const { default: sharp } = await import('sharp')
       const rendered = new Resvg(svg, {
         background: CHART_THEME.background,
-        fitTo: { mode: 'original' },
+        fitTo: { mode: 'width', value: Math.round(svgIntrinsicWidth(svg) * 2) },
         font: {
           fontFiles: [chartFontPath],
           defaultFontFamily: 'Noto Sans CJK SC',
