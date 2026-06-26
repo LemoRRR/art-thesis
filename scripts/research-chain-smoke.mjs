@@ -93,11 +93,37 @@ async function inspectDocx(buffer) {
     .map(match => match[1])
     .join('')
   const media = Object.keys(zip.files).filter(name => name.startsWith('word/media/') && !name.endsWith('/'))
+  const pageSize = documentXml.match(/<w:pgSz[^>]*w:w="(\d+)"[^>]*w:h="(\d+)"[^>]*>/)
+  const pageMargin = documentXml.match(/<w:pgMar[^>]*w:top="(\d+)"[^>]*w:right="(\d+)"[^>]*w:bottom="(\d+)"[^>]*w:left="(\d+)"/)
+  const tableCount = (documentXml.match(/<w:tbl>/g) ?? []).length
+  const tableGridCount = (documentXml.match(/<w:tblGrid>/g) ?? []).length
+  const cellWidthCount = (documentXml.match(/<w:tcW\b/g) ?? []).length
+  const imageExtents = Array.from(documentXml.matchAll(/<wp:extent[^>]*cx="(\d+)"[^>]*cy="(\d+)"[^>]*>/g))
+    .map(match => ({ cx: Number(match[1]), cy: Number(match[2]) }))
+  const minImageExtent = imageExtents.reduce(
+    (min, item) => ({
+      cx: Math.min(min.cx, item.cx),
+      cy: Math.min(min.cy, item.cy),
+    }),
+    { cx: Number.POSITIVE_INFINITY, cy: Number.POSITIVE_INFINITY }
+  )
   const badTerms = ['系统识别到', '研究支撑', '上传工作簿', '当前工作簿', '该方案直接采用', '寤鸿', '鐔', '璁', '銆']
     .filter(term => text.includes(term))
   return {
-    tableCount: (documentXml.match(/<w:tbl>/g) ?? []).length,
+    page: {
+      width: pageSize ? Number(pageSize[1]) : 0,
+      height: pageSize ? Number(pageSize[2]) : 0,
+      marginTop: pageMargin ? Number(pageMargin[1]) : 0,
+      marginRight: pageMargin ? Number(pageMargin[2]) : 0,
+      marginBottom: pageMargin ? Number(pageMargin[3]) : 0,
+      marginLeft: pageMargin ? Number(pageMargin[4]) : 0,
+    },
+    tableCount,
+    tableGridCount,
+    cellWidthCount,
     imageCount: media.length,
+    imageExtentCount: imageExtents.length,
+    minImageExtent,
     tableCaptionCount: (text.match(/表4-/g) ?? []).length,
     figureCaptionCount: (text.match(/图4-/g) ?? []).length,
     badTerms,
@@ -194,8 +220,15 @@ async function main() {
     fs.writeFileSync(outputPath, buffer)
 
     const docx = await inspectDocx(buffer)
+    assert(docx.page.width === 11906 && docx.page.height === 16838, `DOCX 页面不是 A4 纵向：${JSON.stringify(docx.page)}`)
+    assert(docx.page.marginLeft >= 1440 && docx.page.marginRight >= 1440, `DOCX 左右页边距过窄：${JSON.stringify(docx.page)}`)
+    assert(docx.page.marginTop >= 1200 && docx.page.marginBottom >= 1200, `DOCX 上下页边距过窄：${JSON.stringify(docx.page)}`)
     assert(docx.tableCount >= 3, `DOCX 表格数量不足：${docx.tableCount}`)
+    assert(docx.tableGridCount >= docx.tableCount, 'DOCX 表格缺少固定列宽网格，可能在 Word 中挤压变形')
+    assert(docx.cellWidthCount > 0, 'DOCX 表格缺少单元格宽度，可能在 Word 中自动撑爆')
     assert(docx.imageCount >= 4, `DOCX 图片数量不足：${docx.imageCount}`)
+    assert(docx.imageExtentCount >= 4, `DOCX 图片缺少 Word 显示尺寸：${docx.imageExtentCount}`)
+    assert(docx.minImageExtent.cx >= 3000000 && docx.minImageExtent.cy >= 1400000, `DOCX 图片显示尺寸过小：${JSON.stringify(docx.minImageExtent)}`)
     assert(docx.tableCaptionCount >= 3, `DOCX 表题数量不足：${docx.tableCaptionCount}`)
     assert(docx.figureCaptionCount >= 4, `DOCX 图题数量不足：${docx.figureCaptionCount}`)
     assert(docx.badTerms.length === 0, `DOCX 出现不应展示的内部/乱码词：${docx.badTerms.join('、')}`)
