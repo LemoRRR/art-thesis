@@ -1735,12 +1735,30 @@ export const projectStore = {
   },
   pruneEmptyDrafts: (exceptId?: string) => {
     const snapshots = createDraftSnapshots()
-    const emptyIds = projectStore
+    const emptyIds = new Set(projectStore
       .getAll()
       .filter(project => project.id !== exceptId && projectStore.isEmptyDraft(project, snapshots))
       .map(project => project.id)
-    emptyIds.forEach(id => projectStore.remove(id))
-    return emptyIds.length
+    )
+    if (emptyIds.size === 0) return 0
+
+    write(KEYS.PROJECTS, projectStore.getAll().filter(project => !emptyIds.has(project.id)))
+    write(KEYS.SECTIONS, sectionStore.getAll().filter(section => !emptyIds.has(section.projectId ?? '')))
+    write(KEYS.OUTLINE, outlineStore.getAll().filter(outline => !emptyIds.has(outline.projectId ?? '')))
+    write(KEYS.CHAT, chatStore.getAll().filter(message => !emptyIds.has(message.projectId ?? '')))
+    write(KEYS.VERSIONS, versionStore.getAll().filter(snapshot => !emptyIds.has(snapshot.projectId ?? '')))
+    write(KEYS.REFERENCES, referenceStore.getAll().filter(selection => !emptyIds.has(selection.projectId ?? '')))
+    write(KEYS.RESEARCH_TASKS, researchTaskStore.getAll().filter(task => !emptyIds.has(task.projectId ?? '')))
+    write(KEYS.RESEARCH_ASSETS, researchAssetStore.getAll().filter(asset => !emptyIds.has(asset.projectId ?? '')))
+    write(KEYS.RESEARCH_PACKAGES, researchPackageStore.getAll().filter(pkg => !emptyIds.has(pkg.projectId ?? '')))
+
+    const activeId = read<string>(KEYS.ACTIVE_PROJECT)
+    if (activeId && emptyIds.has(activeId)) {
+      const nextProject = projectStore.getAll()[0]
+      if (nextProject) projectStore.setActiveId(nextProject.id)
+    }
+    emptyIds.forEach(id => remoteTask(() => projectsAPI.delete(id)))
+    return emptyIds.size
   },
   bindLibraryItem: (projectId: string, itemId: string) => {
     const project = projectStore.get(projectId)

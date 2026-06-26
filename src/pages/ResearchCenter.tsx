@@ -34,6 +34,7 @@ import {
   type OutlineSection,
   type ResearchAsset,
   type ResearchAssetType,
+  type ResearchContentPackage,
   type ResearchMethodType,
   type ResearchPackageComponent,
   type ResearchPlan,
@@ -1847,6 +1848,48 @@ export default function ResearchCenter() {
       .sort((a, b) => b.score - a.score)[0]?.section ?? null
   }
 
+  const researchPlacementForRole = (
+    role: ResearchInsertRole,
+    asset: ResearchAsset,
+    componentIds: string[],
+    reason: string
+  ): ResearchWritePlanPlacement => {
+    const targetSection = findResearchTargetSection(asset, role)
+    return {
+      targetSectionId: targetSection?.id,
+      targetSectionTitle: targetSection?.title ?? researchInsertTitle(role, asset),
+      role,
+      insertPosition: 'append',
+      reason,
+      componentIds,
+    }
+  }
+
+  const alignResearchPlacements = (
+    rawPlacements: ResearchWritePlanPlacement[],
+    pkg: ResearchContentPackage,
+    asset: ResearchAsset
+  ): ResearchWritePlanPlacement[] => {
+    const componentById = new Map(pkg.components.map(component => [component.id, component]))
+    const grouped = new Map<ResearchInsertRole, string[]>()
+    rawPlacements.forEach(placement => {
+      placement.componentIds.forEach(id => {
+        const component = componentById.get(id)
+        if (!component) return
+        const role = componentInsertRole(component)
+        grouped.set(role, [...(grouped.get(role) ?? []), id])
+      })
+    })
+    return (['method', 'result', 'discussion'] as ResearchInsertRole[])
+      .map(role => researchPlacementForRole(
+        role,
+        asset,
+        Array.from(new Set(grouped.get(role) ?? [])),
+        '按论文结构护栏重新校准写入位置，避免方法、图表结果和讨论建议混入同一章节'
+      ))
+      .filter(placement => placement.componentIds.length > 0)
+  }
+
   const insertIntoPaper = async () => {
     if (!activeAsset || !activeText.trim() || isWritingToPaper) return
     setIsWritingToPaper(true)
@@ -1863,18 +1906,12 @@ export default function ResearchCenter() {
         return map
       }, new Map<ResearchInsertRole, string[]>())
       const fallbackPlacements: ResearchWritePlanPlacement[] = (['method', 'result', 'discussion'] as ResearchInsertRole[])
-        .map(role => {
-          const componentIds = fallbackGrouped.get(role) ?? []
-          const targetSection = findResearchTargetSection(activeAsset, role)
-          return {
-            targetSectionId: targetSection?.id,
-            targetSectionTitle: targetSection?.title ?? researchInsertTitle(role, activeAsset),
-            role,
-            insertPosition: 'append' as const,
-            reason: targetSection ? '根据章节语义自动匹配' : '未找到明确章节，创建论文常用章节承接',
-            componentIds,
-          }
-        })
+        .map(role => researchPlacementForRole(
+          role,
+          activeAsset,
+          fallbackGrouped.get(role) ?? [],
+          '根据组件类型和章节语义自动匹配'
+        ))
         .filter(placement => placement.componentIds.length > 0)
 
       let placements = fallbackPlacements
@@ -1897,7 +1934,7 @@ export default function ResearchCenter() {
           })),
         })
         if (planResult.plan.placements.length > 0) {
-          placements = planResult.plan.placements
+          placements = alignResearchPlacements(planResult.plan.placements, pkg, activeAsset)
         }
       } catch (error) {
         console.warn('[ResearchCenter] write plan unavailable, using local fallback', error)
