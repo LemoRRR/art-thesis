@@ -1129,7 +1129,7 @@ async function interpretAnalysisResult(result: Record<string, unknown>, payload:
       ? ai.analysisText.trim()
       : fallback.analysisText
     const aiWarnings = Array.isArray(ai?.warnings)
-      ? ai.warnings.filter((item): item is string => typeof item === 'string' && item.trim())
+      ? ai.warnings.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
       : []
     return {
       ...result,
