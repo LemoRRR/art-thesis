@@ -13,7 +13,7 @@ import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import VersionPanel from '../components/VersionPanel'
 import { callDoubao, callGPT, type Message } from '../lib/ai'
-import { outlinesAPI, scholarAPI, type ScholarPaper } from '../lib/api'
+import { outlinesAPI, researchAPI, scholarAPI, type ScholarPaper } from '../lib/api'
 import { formatAcademicOutlineText, formatAcademicOutlineTitle, formatAcademicSectionContentWithOutline, isFrontMatterTitle } from '../lib/academicFormat'
 import {
   finalizeSectionWithCitations,
@@ -2574,7 +2574,7 @@ export default function Stage3() {
     setCitationAuditNote('已把证据卡放入右侧修改指令。你可以直接提交修改，让 AI 局部改写并插入引用。')
   }
 
-  const insertResearchAssetIntoCurrentSection = (asset: ResearchAsset) => {
+  const insertResearchAssetIntoCurrentSection = async (asset: ResearchAsset) => {
     const now = Date.now()
     const targetId = activeSectionId ?? sections[0]?.id
     const pkg = createPackageFromAsset({
@@ -2584,10 +2584,10 @@ export default function Stage3() {
       intentSummary: asset.summary,
     })
     const componentIds = pkg.components.map(component => component.id)
-    researchPackageStore.markInserted(pkg.id, componentIds)
-    const researchNodes = researchPackageToPaperNodes(pkg, componentIds)
 
     if (sections.length === 0) {
+      researchPackageStore.markInserted(pkg.id, componentIds)
+      const researchNodes = researchPackageToPaperNodes(pkg, componentIds)
       const editorDoc = {
         type: 'doc' as const,
         content: researchNodes,
@@ -2607,9 +2607,47 @@ export default function Stage3() {
       setActiveSectionId(section.id)
       markResearchAssetUsed(asset, section.id)
     } else {
+      let insertedBySection = new Map<string, string[]>()
+      try {
+        const writePlan = await researchAPI.writePlan({
+          paperTitle: projectTitle,
+          assetTitle: asset.title,
+          assetSummary: asset.summary,
+          sections: sections.map(section => ({
+            id: section.id,
+            title: section.title,
+            content: section.content,
+          })),
+          components: pkg.components.map(component => ({
+            id: component.id,
+            type: component.type,
+            title: component.title,
+            content: component.content,
+          })),
+        })
+        const validSectionIds = new Set(sections.map(section => section.id))
+        const validComponentIds = new Set(componentIds)
+        for (const placement of writePlan.plan?.placements ?? []) {
+          const sectionId = placement.targetSectionId
+          if (!sectionId || !validSectionIds.has(sectionId)) continue
+          const ids = placement.componentIds.filter((id: string) => validComponentIds.has(id))
+          if (!ids.length) continue
+          insertedBySection.set(sectionId, Array.from(new Set([...(insertedBySection.get(sectionId) ?? []), ...ids])))
+        }
+      } catch (error) {
+        console.warn('[research] write-plan failed, inserting into current section:', error)
+      }
+
+      if (insertedBySection.size === 0 && targetId) {
+        insertedBySection = new Map([[targetId, componentIds]])
+      }
+      const insertedComponentIds = Array.from(new Set(Array.from(insertedBySection.values()).flat()))
+      researchPackageStore.markInserted(pkg.id, insertedComponentIds)
       setSections(prev => persistSections(prev.map(section => {
-        if (section.id !== targetId) return section
+        const ids = insertedBySection.get(section.id)
+        if (!ids?.length) return section
         const sourceDoc = ensurePaperEditorDoc(section.content, section.editorDoc)
+        const researchNodes = researchPackageToPaperNodes(pkg, ids)
         const editorDoc = {
           ...sourceDoc,
           content: [...(sourceDoc.content ?? []), ...researchNodes],
@@ -2623,8 +2661,18 @@ export default function Stage3() {
           sourceRefs: Array.from(new Set([...(section.sourceRefs ?? []), asset.id])),
         }
       }), `插入研究结果：${asset.title}`))
-      if (targetId) setActiveSectionId(targetId)
-      markResearchAssetUsed(asset, targetId)
+      const firstTargetId = Array.from(insertedBySection.keys())[0] ?? targetId
+      if (firstTargetId) setActiveSectionId(firstTargetId)
+      researchAssetStore.update(asset.id, {
+        status: 'used_in_paper',
+        linkedSectionIds: Array.from(new Set([...(asset.linkedSectionIds ?? []), ...Array.from(insertedBySection.keys())])),
+      })
+      if (asset.taskId) {
+        researchTaskStore.update(asset.taskId, {
+          status: 'inserted_into_paper',
+          nextActionLabel: '在 Stage3 润色并整合',
+        })
+      }
     }
 
     setShowResearchDrawer(false)

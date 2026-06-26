@@ -1302,12 +1302,13 @@ async function enrichQuantResult<T extends Record<string, unknown>>(result: T, p
       ? qualityReport.warnings.filter((item): item is string => typeof item === 'string')
       : []
     const tables = Array.isArray(enriched.tables) ? enriched.tables : []
-    const hasQualityTable = tables.some(table => table && typeof table === 'object' && (table as Record<string, unknown>).id === 'table_data_quality')
+    const qualityTable = tables.find(table => table && typeof table === 'object' && (table as Record<string, unknown>).id === 'table_data_quality')
+    const nonQualityTables = tables.filter(table => !(table && typeof table === 'object' && (table as Record<string, unknown>).id === 'table_data_quality'))
     enriched = {
       ...enriched,
       qualityReport,
       cautions: uniqueWarnings([...(Array.isArray(enriched.cautions) ? enriched.cautions : []), ...qualityWarnings]),
-      tables: hasQualityTable ? tables : [
+      tables: qualityTable ? [qualityTable, ...nonQualityTables] : [
         {
           id: 'table_data_quality',
           title: '数据质量与方法适用性检查表',
