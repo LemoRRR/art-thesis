@@ -1732,6 +1732,14 @@ function normalizeWriteRole(value: unknown): WritePlanRole {
   return 'result'
 }
 
+function guardedRoleForWriteComponent(component: { type: string; title?: string; content?: string }): WritePlanRole {
+  const text = `${component.title ?? ''}\n${component.content ?? ''}`
+  if (component.type === 'method') return 'method'
+  if (component.type === 'analysis' && /(\u5efa\u8bae|\u7b56\u7565|\u4f18\u5316|\u8ba8\u8bba|\u542f\u793a|\u5bf9\u7b56|\u5c40\u9650|\u5c55\u671b|suggest|strategy|discussion|optimization|limitation)/i.test(text)) return 'discussion'
+  if (/建议|策略|优化|讨论|启示|对策|局限|展望|寤鸿|绛栫暐|浼樺寲|璁ㄨ|鍚ず|瀵圭瓥/.test(text)) return 'discussion'
+  return 'result'
+}
+
 function sectionScore(section: Record<string, unknown>, role: WritePlanRole) {
   const text = `${section.title ?? ''}\n${section.content ?? ''}`.toLowerCase()
   const keywords = role === 'method'
@@ -1742,6 +1750,49 @@ function sectionScore(section: Record<string, unknown>, role: WritePlanRole) {
         ? ['结论', '总结', '不足', '展望', 'conclusion']
         : ['结果', '分析', '实证', '数据分析', '研究结果', '第四章', 'chapter 4', 'result']
   return keywords.reduce((sum, keyword) => sum + (text.includes(keyword.toLowerCase()) ? 1 : 0), 0)
+}
+
+function fallbackTitleForGuardedWriteRole(role: WritePlanRole) {
+  return role === 'method'
+    ? '研究方法与数据来源'
+    : role === 'discussion'
+      ? '讨论与优化建议'
+      : '数据分析与研究结果'
+}
+
+function bestSectionForGuardedWriteRole(sections: Record<string, unknown>[], role: WritePlanRole) {
+  const target = sections
+    .map(section => ({ section, score: sectionScore(section, role) }))
+    .sort((a, b) => b.score - a.score)[0]
+  return target && target.score > 0 ? target.section : null
+}
+
+function guardedWritePlanFromIds(
+  orderedIds: string[],
+  components: Array<{ id: string; type: string; title?: string; content?: string }>,
+  sections: Record<string, unknown>[]
+) {
+  const componentById = new Map(components.map(component => [component.id, component]))
+  const grouped = new Map<WritePlanRole, string[]>()
+  orderedIds.forEach(id => {
+    const component = componentById.get(id)
+    if (!component) return
+    const role = guardedRoleForWriteComponent(component)
+    grouped.set(role, [...(grouped.get(role) ?? []), id])
+  })
+  return Array.from(grouped.entries()).map(([role, componentIds]) => {
+    const matched = bestSectionForGuardedWriteRole(sections, role)
+    return {
+      targetSectionId: typeof matched?.id === 'string' ? matched.id : undefined,
+      targetSectionTitle: typeof matched?.title === 'string' ? matched.title : fallbackTitleForGuardedWriteRole(role),
+      role,
+      insertPosition: 'append',
+      reason: matched
+        ? '按论文结构护栏校准写入位置，确保方法、结果图表和讨论建议进入对应章节。'
+        : '当前大纲未发现明确章节，创建论文常用章节承接该内容。',
+      componentIds,
+    }
+  }).filter(placement => placement.componentIds.length > 0)
 }
 
 function fallbackWritePlan(body: Record<string, unknown>) {
@@ -2349,11 +2400,16 @@ router.post('/write-plan', async (req, res) => {
       const fallbackResult = fallbackWritePlan({ ...body, components: components.filter(component => missingIds.includes(component.id)) })
       placements.push(...fallbackResult.placements)
     }
+    const guardedPlacements = guardedWritePlanFromIds(
+      placements.flatMap(placement => placement.componentIds),
+      components,
+      sections
+    )
 
     res.json({
       ok: true,
       plan: {
-        placements,
+        placements: guardedPlacements,
         summary: typeof ai?.summary === 'string' ? ai.summary : fallback.summary,
       },
     })
