@@ -28,12 +28,13 @@ export default function StepBar({ current }: StepBarProps) {
   const outline = outlineStore.get(project.id)
   const sections = sectionStore.getByProject(project.id)
   const stage1Messages = chatStore.getByProject(project.id, 'stage1')
+  const hasDraftContent = sections.some(section => section.content.replace(/\s/g, '').length > 80)
 
   const canAccess = [
     true,
     Boolean(current >= 1 || project.context.rawSummary || outline?.sections?.length || stage1Messages.length > 1),
     Boolean(current >= 2 || sections.length > 0 || outline?.confirmedAt || outline?.sections?.length),
-    Boolean(current >= 3 || sections.length > 0 || outline?.confirmedAt || outline?.sections?.length),
+    Boolean(current >= 3 || hasDraftContent),
   ]
 
   return (

@@ -21,10 +21,10 @@ import { auth } from '../lib/auth'
 const NAV_ITEMS = [
   { label: '资料库', icon: BookOpen, path: '/library' },
   { label: '风格档案', icon: Type, path: '/style-profiles' },
-  { label: '研究计算', icon: FlaskConical, path: 'active-project-research' },
   { label: '项目', icon: Folder, path: '/projects' },
   { label: '应用', icon: Shapes, path: '/projects' },
   { label: '更多', icon: MoreHorizontal, path: '/projects' },
+  { label: '研究计算', icon: FlaskConical, path: 'active-project-research' },
 ]
 
 function getProjectDisplayTitle(project: ReturnType<typeof projectStore.getAll>[number]) {
