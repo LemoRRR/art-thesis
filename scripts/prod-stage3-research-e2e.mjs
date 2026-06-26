@@ -186,7 +186,9 @@ async function main() {
       timeout: 60000,
     })
     await clickByTestId(page, 'stage3-open-research')
-    await page.getByTestId('research-upload-input').setInputFiles(workbookPath)
+    const uploadInput = await page.getByTestId('research-upload-input').elementHandle({ timeout: 30000 })
+    assert(uploadInput, 'Research upload input is missing')
+    await uploadInput.setInputFiles(workbookPath)
     await page.waitForFunction(() => {
       const button = document.querySelector('[data-testid="research-generate-plan"]')
       return button instanceof HTMLButtonElement && !button.disabled

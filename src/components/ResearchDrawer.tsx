@@ -385,7 +385,7 @@ export default function ResearchDrawer({
           <label style={uploadStyle} data-testid="research-upload-label">
             <Upload size={13} />
             {isUploadingDataset ? '正在读取文件…' : dataset ? dataset.fileName : '上传 CSV / Excel'}
-            <input data-testid="research-upload-input" type="file" accept=".csv,.txt,.xlsx,.xls" onChange={uploadDataset} disabled={isUploadingDataset || Boolean(loadingStep)} style={{ display: 'none' }} />
+            <input data-testid="research-upload-input" type="file" accept=".csv,.txt,.xlsx,.xls" onChange={uploadDataset} style={{ display: 'none' }} />
           </label>
           {dataset && (
             <div style={{ fontSize: 11, color: 'var(--color-ink-3)', marginTop: 6 }}>
