@@ -898,6 +898,37 @@ function drawVerticalTicks(ctx: ChartCanvasContext, left: number, top: number, h
   })
 }
 
+function drawChartArea(ctx: ChartCanvasContext, left: number, top: number, width: number, height: number) {
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(left, top, width, height)
+  ctx.strokeStyle = CHART_THEME.rule
+  ctx.lineWidth = 1
+  ctx.strokeRect(left, top, width, height)
+}
+
+function drawVerticalGrid(
+  ctx: ChartCanvasContext,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+  values: number[],
+  maxValue: number,
+  formatter: (value: number) => string
+) {
+  ctx.strokeStyle = CHART_THEME.grid
+  ctx.fillStyle = CHART_THEME.inkSoft
+  ctx.font = chartFont(12)
+  values.forEach(value => {
+    const x = left + (value / maxValue) * width
+    ctx.beginPath()
+    ctx.moveTo(x, top)
+    ctx.lineTo(x, top + height)
+    ctx.stroke()
+    ctx.fillText(formatter(value), x - 14, top + height + 22)
+  })
+}
+
 async function makeKanoStackedChart(rows: Record<string, unknown>[]) {
   const types = [
     { label: 'M', parts: ['M_', '占比'], color: '#2f6f4e' },
@@ -1415,58 +1446,88 @@ async function makeEfaLoadingFigure(efa: Record<string, unknown> | null | undefi
 
 async function makeAhpWeightFigure(rows: Record<string, unknown>[]) {
   const items = rows.slice(0, 12)
-  const width = 980
-  const height = 150 + items.length * 44
-  const max = Math.max(...items.map(row => Number(row.weightPercent) || 0), 1)
+  const width = 1180
+  const rowHeight = 58
+  const height = Math.max(520, 184 + items.length * rowHeight)
+  const axisMax = Math.min(100, Math.max(20, Math.ceil(Math.max(...items.map(row => Number(row.weightPercent) || 0), 1) / 10) * 10))
   return canvasDataUrl(width, height, ctx => {
     drawChartHeader(ctx, 'AHP指标权重排序图', '依据判断矩阵计算得到的指标权重及排序。')
+    const left = 330
+    const top = 126
+    const chartWidth = 660
+    const chartHeight = Math.max(1, items.length) * rowHeight - 12
+    drawChartArea(ctx, left, top - 18, chartWidth, chartHeight)
+    drawVerticalGrid(ctx, left, top - 18, chartWidth, chartHeight, [0, axisMax * 0.25, axisMax * 0.5, axisMax * 0.75, axisMax], axisMax, value => `${Math.round(value)}%`)
     items.forEach((row, index) => {
-      const y = 118 + index * 44
+      const y = top + index * rowHeight
       const weight = Number(row.weightPercent) || 0
-      const barWidth = Math.max(5, Math.round((weight / max) * 560))
+      const barWidth = Math.max(5, Math.round((weight / axisMax) * chartWidth))
+      ctx.fillStyle = index % 2 === 0 ? '#f7fbf5' : '#ffffff'
+      ctx.fillRect(28, y - 20, width - 56, rowHeight - 10)
+      ctx.fillStyle = index < 3 ? CHART_THEME.primaryDark : CHART_THEME.inkSoft
+      ctx.font = chartFont(13, '700')
+      ctx.fillText(`第${row.rank ?? index + 1}位`, 42, y + 16)
       ctx.fillStyle = '#1f3328'
-      ctx.font = chartFont(14, '700')
-      ctx.fillText(`${row.rank ?? index + 1}. ${shortLabel(row.criterion, 16)}`, 42, y + 17)
-      ctx.fillStyle = '#dfeadc'
-      ctx.fillRect(260, y, 580, 22)
-      ctx.fillStyle = index < 3 ? '#2f7d4b' : '#6ba46f'
-      ctx.fillRect(260, y, barWidth, 22)
+      ctx.font = chartFont(17, '700')
+      ctx.fillText(shortLabel(row.criterion, 18), 118, y + 16)
+      ctx.fillStyle = CHART_THEME.track
+      ctx.fillRect(left, y, chartWidth, 24)
+      ctx.fillStyle = index < 3 ? CHART_THEME.primary : CHART_THEME.primaryMid
+      ctx.fillRect(left, y, barWidth, 24)
       ctx.fillStyle = '#263a2e'
-      ctx.font = chartFont(13)
-      ctx.fillText(`${weight.toFixed(2)}%`, 858, y + 16)
+      ctx.font = chartFont(15, '700')
+      ctx.fillText(`${weight.toFixed(2)}%`, left + chartWidth + 22, y + 18)
     })
-    drawFootnote(ctx, '注：权重越高，表示该指标在目标评价中的相对重要性越强。', 42, height - 22)
+    drawAxisLabel(ctx, '权重占比（%）', left + 258, height - 50)
+    drawFootnote(ctx, '注：权重越高，表示该指标在目标评价中的相对重要性越强；排序用于识别论文讨论中的重点影响因素。', 42, height - 22)
   })
 }
 
 async function makeAhpConsistencyFigure(rows: Record<string, unknown>[]) {
   const items = rows.slice(0, 8)
-  const width = 980
-  const height = 160 + items.length * 52
+  const width = 1180
+  const rowHeight = 62
+  const height = Math.max(440, 186 + items.length * rowHeight)
   return canvasDataUrl(width, height, ctx => {
     drawChartHeader(ctx, 'AHP一致性检验结果', 'CR < 0.10 通常表示判断矩阵一致性可接受。')
-    items.forEach((row, index) => {
-      const y = 124 + index * 52
-      const cr = Number(row.CR) || 0
-      const barWidth = Math.min(700, Math.max(4, Math.round((cr / 0.2) * 560)))
-      ctx.fillStyle = '#1f3328'
-      ctx.font = chartFont(14, '700')
-      ctx.fillText(shortLabel(row.matrix, 18), 42, y + 17)
-      ctx.fillStyle = '#eadfda'
-      ctx.fillRect(250, y, 580, 22)
-      ctx.fillStyle = cr < 0.1 ? '#2f7d4b' : '#9a5b4f'
-      ctx.fillRect(250, y, barWidth, 22)
-      ctx.fillStyle = '#263a2e'
-      ctx.font = chartFont(13)
-      ctx.fillText(`CR=${cr.toFixed(4)}  ${row.consistency ?? ''}`, 848, y + 16)
-    })
-    ctx.strokeStyle = '#5f5b52'
-    ctx.setLineDash([4, 4])
+    const left = 300
+    const top = 130
+    const chartWidth = 650
+    const chartHeight = Math.max(1, items.length) * rowHeight - 12
+    drawChartArea(ctx, left, top - 20, chartWidth, chartHeight)
+    drawVerticalGrid(ctx, left, top - 20, chartWidth, chartHeight, [0, 0.05, 0.1, 0.15, 0.2], 0.2, value => value.toFixed(2))
+    const thresholdX = left + chartWidth * 0.5
+    ctx.strokeStyle = CHART_THEME.warm
+    ctx.setLineDash([6, 5])
     ctx.beginPath()
-    ctx.moveTo(250 + 580 * 0.5, 112)
-    ctx.lineTo(250 + 580 * 0.5, height - 52)
+    ctx.moveTo(thresholdX, top - 28)
+    ctx.lineTo(thresholdX, top + chartHeight - 8)
     ctx.stroke()
     ctx.setLineDash([])
+    ctx.fillStyle = CHART_THEME.warm
+    ctx.font = chartFont(13, '700')
+    ctx.fillText('CR=0.10', thresholdX + 8, top - 32)
+    items.forEach((row, index) => {
+      const y = top + index * rowHeight
+      const cr = Number(row.CR) || 0
+      const passed = cr < 0.1
+      const barWidth = Math.min(chartWidth, Math.max(4, Math.round((cr / 0.2) * chartWidth)))
+      ctx.fillStyle = index % 2 === 0 ? '#f7fbf5' : '#ffffff'
+      ctx.fillRect(28, y - 22, width - 56, rowHeight - 10)
+      ctx.fillStyle = '#1f3328'
+      ctx.font = chartFont(16, '700')
+      ctx.fillText(shortLabel(row.matrix, 18), 42, y + 18)
+      ctx.fillStyle = CHART_THEME.warmTrack
+      ctx.fillRect(left, y, chartWidth, 24)
+      ctx.fillStyle = passed ? CHART_THEME.primary : CHART_THEME.warm
+      ctx.fillRect(left, y, barWidth, 24)
+      ctx.fillStyle = '#263a2e'
+      ctx.font = chartFont(15, '700')
+      ctx.fillText(`CR=${cr.toFixed(4)}`, left + chartWidth + 22, y + 18)
+      ctx.fillStyle = passed ? CHART_THEME.primaryDark : CHART_THEME.warm
+      ctx.fillText(passed ? '通过' : '需复核', left + chartWidth + 128, y + 18)
+    })
+    drawAxisLabel(ctx, '一致性比例 CR', left + 264, height - 50)
     drawFootnote(ctx, '注：虚线为 CR=0.10 参考阈值；超过阈值的矩阵建议重新组织专家评分或复核极端判断。', 42, height - 22)
   })
 }

@@ -64,10 +64,16 @@ function assertResearchOutputQuality(analysis, components) {
   const tables = analysis.tables ?? []
   const figures = analysis.figures ?? []
   const priorityTable = tables.find(table => table.id === 'table_priority_ranking')
+  const entropyTable = tables.find(table => table.id === 'table_entropy_weights')
   assert(priorityTable, 'priority ranking table is missing')
+  assert(entropyTable, 'entropy weight table is missing')
   assert(
     JSON.stringify(priorityTable.columns) === JSON.stringify(['排名', '维度', 'KANO', 'Better', 'Worse', '熵权', '综合分']),
     `priority ranking table columns are not paper-ready: ${JSON.stringify(priorityTable.columns)}`
+  )
+  assert(
+    JSON.stringify(entropyTable.columns) === JSON.stringify(['指标', '熵值', '差异', '权重(%)']),
+    `entropy weight table columns are not paper-ready: ${JSON.stringify(entropyTable.columns)}`
   )
   for (const table of tables) {
     assert((table.columns ?? []).length <= 7, `${table.title} has too many displayed columns`)

@@ -518,7 +518,8 @@ function selectResearchTableColumns(columns: string[], title = '') {
             ? ['matrix', 'criterion', 'weight', 'weightPercent', 'rank']
             : []
   const selected = preferred.filter(column => columnSet.has(column))
-  return (selected.length ? selected : columns).slice(0, 7)
+  const minimumUsefulSelection = Math.min(3, preferred.length)
+  return (selected.length >= minimumUsefulSelection ? selected : columns).slice(0, 7)
 }
 
 function formatResearchTableValue(column: string, value: unknown) {

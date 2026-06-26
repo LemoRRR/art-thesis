@@ -387,7 +387,7 @@ function imageDimensionsFromDataUrl(dataUrl: string) {
   return null
 }
 
-function imageTransformFromDataUrl(dataUrl: string, maxWidth = 460, maxHeight = 310) {
+function imageTransformFromDataUrl(dataUrl: string, maxWidth = 500, maxHeight = 360) {
   const dimensions = imageDimensionsFromDataUrl(dataUrl)
   if (!dimensions) return { width: maxWidth, height: Math.round(maxWidth * 0.62) }
   const ratio = Math.min(maxWidth / dimensions.width, maxHeight / dimensions.height, 1)
