@@ -1019,6 +1019,135 @@ function mergePlanWithFallback(ai: Record<string, unknown> | null, fallback: Rec
   }
 }
 
+function arrayRecords(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+    : []
+}
+
+function compactTableForPrompt(table: Record<string, unknown>) {
+  return {
+    id: table.id,
+    title: table.title,
+    columns: Array.isArray(table.columns) ? table.columns.slice(0, 8) : [],
+    rows: arrayRecords(table.rows).slice(0, 8),
+  }
+}
+
+function firstNonEmptyTable(result: Record<string, unknown>, id: string) {
+  return arrayRecords(result.tables).find(table => table.id === id || String(table.title ?? '').includes(id))
+}
+
+function fallbackResearchInterpretation(result: Record<string, unknown>, payload: Record<string, unknown>) {
+  const sampleSize = Number(result.sampleSize) || 0
+  const method = String(result.method ?? payload.method ?? 'descriptive')
+  const descriptive = arrayRecords(result.descriptive)
+  const correlations = arrayRecords(result.correlations)
+  const anova = arrayRecords(result.anova)
+  const alpha = result.cronbachAlpha && typeof result.cronbachAlpha === 'object'
+    ? result.cronbachAlpha as Record<string, unknown>
+    : null
+  const strongest = correlations.length
+    ? correlations.reduce((best, row) => Math.abs(Number(row.r ?? 0)) > Math.abs(Number(best.r ?? 0)) ? row : best, correlations[0])
+    : null
+  const firstDesc = descriptive[0]
+  const firstAnova = anova[0]
+
+  const methodParts = [
+    sampleSize ? `本节基于回收数据中的 ${sampleSize} 份有效样本开展分析。` : '本节基于用户上传的数据文件开展分析。',
+    method.includes('cronbach') ? '首先对量表题项进行信度检验，以判断题项内部一致性是否满足后续分析需要。' : '',
+    method.includes('correlation') ? '随后采用相关分析考察变量之间的线性关系，并结合相关系数方向与强度解释研究对象之间的关联。' : '',
+    method.includes('anova') ? '对于包含分组变量的数据，进一步采用单因素方差分析比较不同群体在关键变量上的差异。' : '',
+    method.includes('efa') ? '若题项数量与样本条件允许，则通过探索性因子分析观察潜在维度结构。' : '',
+    method === 'descriptive' || method.includes('descriptive') ? '描述统计用于呈现主要变量的样本量、均值、标准差及取值范围。' : '',
+  ].filter(Boolean)
+
+  const analysisParts = [
+    alpha ? `信度结果显示，Cronbach's alpha 为 ${alpha.alpha ?? '待复核'}，可作为判断量表内部一致性的依据。` : '',
+    firstDesc ? `描述统计方面，${firstDesc.variable ?? '核心变量'} 的均值为 ${firstDesc.mean ?? '-'}，标准差为 ${firstDesc.sd ?? '-'}，说明样本在该指标上呈现出一定的集中趋势与离散程度。` : '',
+    strongest ? `相关分析中，${strongest.x ?? '变量X'} 与 ${strongest.y ?? '变量Y'} 的相关系数为 r=${strongest.r ?? '-'}，p=${strongest.p ?? '未计算'}，可在论文中结合研究假设进一步判断其方向、强度与显著性。` : '',
+    firstAnova ? `方差分析结果显示，分组变量 ${firstAnova.group ?? 'group'} 在 ${firstAnova.variable ?? '目标变量'} 上的检验结果为 F=${firstAnova.f ?? '-'}，p=${firstAnova.p ?? '未计算'}，可用于讨论不同群体之间是否存在差异。` : '',
+    !firstDesc && !strongest && !firstAnova && !alpha ? '系统已完成基础计算。论文写作时应以统计表中的实际系数、均值、p 值或分类结果为依据，避免加入数据中不存在的结论。' : '',
+  ].filter(Boolean)
+
+  return {
+    methodText: methodParts.join(''),
+    analysisText: analysisParts.join('\n'),
+  }
+}
+
+async function interpretAnalysisResult(result: Record<string, unknown>, payload: Record<string, unknown>) {
+  const fallback = fallbackResearchInterpretation(result, payload)
+  const tables = arrayRecords(result.tables).map(compactTableForPrompt)
+  const figures = arrayRecords(result.figures).map(figure => ({
+    id: figure.id,
+    title: figure.title,
+    caption: figure.caption,
+  }))
+
+  const messages: Message[] = [
+    {
+      role: 'system',
+      content: `你是论文研究结果写作助手。请只返回 JSON，不要 Markdown。
+任务：把统计/编码工具结果统一改写成正式论文正文，可直接插入“研究结果/数据分析/实证分析”章节。
+规则：
+1. 只能依据输入结果写，不得编造不存在的显著性、系数、样本量、结论。
+2. methodText 写研究方法和计算口径，1段，正式论文语气。
+3. analysisText 写结果解释，2-4段，使用“由表/图可知”“结果显示”等论文表述。
+4. 如果 p 值为空或工具提示需复核，必须保守表达。
+5. 对定性材料，使用“编码、主题归纳、证据摘录、范畴关系”的语言；对定量材料，使用“样本、均值、相关、差异、信度”的语言。
+返回字段：
+{"methodText":"...","analysisText":"...","warnings":["..."]}`,
+    },
+    {
+      role: 'user',
+      content: JSON.stringify({
+        paperTitle: payload.paperTitle,
+        chapterTitle: payload.chapterTitle,
+        userRequest: payload.userRequest,
+        confirmedPlan: payload.confirmedPlan,
+        method: result.method,
+        sampleSize: result.sampleSize,
+        numericColumns: result.numericColumns,
+        categoricalColumns: result.categoricalColumns,
+        cronbachAlpha: result.cronbachAlpha,
+        tables,
+        figures,
+        cautions: result.cautions,
+        plainText: String(result.plainText ?? '').slice(0, 6000),
+      }, null, 2),
+    },
+  ]
+
+  try {
+    const aiText = await callAIOnce(messages, 'gpt')
+    const ai = safeJsonFromText(aiText)
+    const methodText = typeof ai?.methodText === 'string' && ai.methodText.trim()
+      ? ai.methodText.trim()
+      : fallback.methodText
+    const analysisText = typeof ai?.analysisText === 'string' && ai.analysisText.trim()
+      ? ai.analysisText.trim()
+      : fallback.analysisText
+    const aiWarnings = Array.isArray(ai?.warnings)
+      ? ai.warnings.filter((item): item is string => typeof item === 'string' && item.trim())
+      : []
+    return {
+      ...result,
+      methodText,
+      analysisText,
+      cautions: Array.from(new Set([...(Array.isArray(result.cautions) ? result.cautions : []), ...aiWarnings])),
+      interpretationProvider: 'ai',
+    }
+  } catch (error) {
+    console.warn('[research:interpret] AI interpretation unavailable, using deterministic fallback:', error instanceof Error ? error.message : String(error))
+    return {
+      ...result,
+      ...fallback,
+      interpretationProvider: 'fallback',
+    }
+  }
+}
+
 router.post('/intent', async (req, res) => {
   const body = req.body ?? {}
   const fallback = fallbackIntent(body)
@@ -1158,16 +1287,29 @@ router.post('/analyze', async (req, res) => {
       res.status(400).json({ error: result.error ?? 'Research analysis failed' })
       return
     }
-    res.json(result)
+    res.json(await interpretAnalysisResult(result, req.body ?? {}))
   } catch (error) {
     console.warn('[research:analyze] Python analysis unavailable, using Node fallback:', error instanceof Error ? error.message : String(error))
     try {
       const result = await analyzeDatasetInNode(req.body ?? {})
-      res.json(result)
+      res.json(await interpretAnalysisResult(result, req.body ?? {}))
     } catch (fallbackError) {
       res.status(500).json({ error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError) })
     }
   }
+})
+
+router.post('/interpret', async (req, res) => {
+  const body = req.body ?? {}
+  const result = body.result && typeof body.result === 'object' ? body.result as Record<string, unknown> : null
+  if (!result) {
+    res.status(400).json({ error: 'Missing analysis result' })
+    return
+  }
+  res.json({
+    ok: true,
+    result: await interpretAnalysisResult(result, body),
+  })
 })
 
 export default router
