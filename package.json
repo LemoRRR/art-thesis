@@ -14,6 +14,7 @@
     "smoke:prod-research-kano": "tsx scripts/prod-research-smoke.mjs https://paper-ai-tool.vercel.app ../outputs/ich_kano_entropy/prod-kano-research-smoke.docx kano",
     "smoke:word-render": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/word-render-smoke.ps1",
     "smoke:citation-docx": "tsx scripts/citation-docx-smoke.mjs",
+    "smoke:citation-enhance": "tsx scripts/citation-enhance-smoke.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"

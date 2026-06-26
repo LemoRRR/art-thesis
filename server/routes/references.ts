@@ -135,6 +135,17 @@ function scoreCitationCandidate(text: string) {
   rules.forEach(([pattern, weight]) => {
     if (pattern.test(text)) score += weight
   })
+  const readableRules: Array<[RegExp, number]> = [
+    [/(理论|模型|框架|机制|路径|定义|概念|内涵|特征|method|model|framework|definition)/i, 5],
+    [/(KANO|卡诺|熵权|权重|耦合|评价指标|优先级|满意度|需求|entropy|weight|indicator|satisfaction)/i, 5],
+    [/(非遗|纹样|文创|视觉|创新|文化符号|用户|问卷|实证|intangible|heritage|visual|symbol|questionnaire|empirical)/i, 4],
+    [/(已有研究|相关研究|学界|研究表明|研究认为|指出|发现|literature|research|study|shows|suggests)/i, 4],
+    [/(方法|数据|样本|量表|信度|效度|统计|分析|测度|analysis|sample|scale|reliability|validity|statistics)/i, 4],
+    [/(因此|说明|表明|可见|进一步|相较|相比|趋势|影响|关系|therefore|indicates|relationship|effect|trend)/i, 2],
+  ]
+  readableRules.forEach(([pattern, weight]) => {
+    if (pattern.test(text)) score += weight
+  })
   if (text.length >= 35 && text.length <= 180) score += 2
   if (text.length > 240) score -= 3
   return score
@@ -349,6 +360,123 @@ function mergePatches<T extends { candidateId?: string; originalText?: string; s
   return merged
 }
 
+function citationMatchTokens(text: unknown) {
+  const normalized = String(text ?? '').toLowerCase()
+  const latin = normalized.match(/[a-z][a-z0-9-]{2,}/g) ?? []
+  const cjk = Array.from(normalized.matchAll(/[\u4e00-\u9fff]{2,}/g))
+    .flatMap(match => {
+      const word = match[0]
+      const grams: string[] = []
+      for (let index = 0; index < word.length - 1; index += 1) grams.push(word.slice(index, index + 2))
+      return grams
+    })
+  const tokens = new Set([...latin, ...cjk].filter(token => token.length >= 2))
+  const aliases: Array<[RegExp, string[]]> = [
+    [/kano|卡诺/i, ['kano', 'model', '需求', '满意']],
+    [/熵权|entropy/i, ['entropy', 'weight', '权重', '指标']],
+    [/非遗|intangible|heritage/i, ['intangible', 'heritage', '非遗', '文化']],
+    [/视觉|visual/i, ['visual', '视觉', '符号']],
+    [/文创|cultural|creative/i, ['cultural', 'creative', '文创', '文化']],
+    [/用户|user|customer/i, ['user', 'customer', '用户']],
+    [/满意|satisfaction/i, ['satisfaction', '满意']],
+    [/问卷|questionnaire|survey/i, ['questionnaire', 'survey', '问卷']],
+  ]
+  aliases.forEach(([pattern, additions]) => {
+    if (pattern.test(normalized)) additions.forEach(token => tokens.add(token))
+  })
+  return tokens
+}
+
+function citationOverlapScore(left: unknown, right: unknown) {
+  const leftTokens = citationMatchTokens(left)
+  const rightTokens = citationMatchTokens(right)
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0
+  let overlap = 0
+  leftTokens.forEach(token => {
+    if (rightTokens.has(token)) overlap += 1
+  })
+  return overlap / Math.sqrt(leftTokens.size * rightTokens.size)
+}
+
+function citationSupportScore(candidateText: string, sourceEvidence: string) {
+  const left = candidateText.toLowerCase()
+  const right = sourceEvidence.toLowerCase()
+  let score = citationOverlapScore(left, right)
+  if (/kano|卡诺/i.test(left) && /kano|卡诺/i.test(right)) score += 0.5
+  if (/熵权|entropy/i.test(left) && /熵权|entropy/i.test(right)) score += 0.5
+  if (/(非遗|intangible|heritage)/i.test(left) && /(非遗|intangible|heritage)/i.test(right)) score += 0.08
+  if (/(视觉|visual|符号|symbol)/i.test(left) && /(视觉|visual|符号|symbol)/i.test(right)) score += 0.08
+  if (/(用户|user|customer)/i.test(left) && /(用户|user|customer)/i.test(right)) score += 0.05
+  return score
+}
+
+function fallbackCitationPatches(
+  sections: SectionInput[],
+  sources: SourceInput[],
+  candidates: CitationCandidate[],
+  existing: NormalizedPatch[] = [],
+  limit = 8
+): NormalizedPatch[] {
+  const usedCandidates = new Set(existing.map(patch => patch.candidateId).filter(Boolean))
+  const usedPairs = new Set(existing.map(patch => `${patch.candidateId}:${patch.source.id}`))
+  const patches: NormalizedPatch[] = []
+
+  for (const candidate of candidates) {
+    if (patches.length >= limit) break
+    if (usedCandidates.has(candidate.id)) continue
+    const section = sections.find(item => item.id === candidate.sectionId)
+    if (!section) continue
+    const best = sources
+      .map(source => {
+        const sourceEvidence = [
+          source.title,
+          source.abstract,
+          source.relevanceReason,
+          source.noteText,
+          source.journal,
+          source.source,
+        ].filter(Boolean).join(' ')
+        return {
+          source,
+          score: citationSupportScore(candidate.text, sourceEvidence),
+        }
+      })
+      .filter(item => item.score >= 0.02)
+      .sort((a, b) => b.score - a.score)[0]
+    if (!best) continue
+    const pairKey = `${candidate.id}:${best.source.id}`
+    if (usedPairs.has(pairKey)) continue
+    usedCandidates.add(candidate.id)
+    usedPairs.add(pairKey)
+    patches.push({
+      id: `fallback_citation_${Date.now()}_${patches.length}`,
+      candidateId: candidate.id,
+      sectionId: section.id,
+      sectionTitle: section.title,
+      claimType: 'assertion',
+      originalText: candidate.text,
+      revisedText: candidate.text,
+      problem: '该论述适合补充可核验文献来源。',
+      reason: `本地校准根据正文关键词与来源题名、摘要或证据说明的重合度匹配；未改写原观点，仅补充脚注来源。`,
+      enhancementType: 'claim',
+      applyMode: 'citation_only',
+      confidence: Math.max(0.55, Math.min(0.78, best.score)),
+      source: {
+        id: best.source.id,
+        title: best.source.title,
+        authors: best.source.authors ?? [],
+        year: best.source.year,
+        journal: best.source.journal || best.source.source,
+        doi: best.source.doi,
+        url: best.source.url,
+        noteText: sourceNote(best.source),
+      },
+    })
+  }
+
+  return patches
+}
+
 router.get('/project/:projectId/:stage', async (req: AuthRequest, res) => {
   const db = createUserClient(req.accessToken!)
   const { data, error } = await db
@@ -461,6 +589,17 @@ router.post('/enhance', async (req: AuthRequest, res) => {
     return
   }
 
+  if (req.body?.fallbackOnly === true && process.env.NODE_ENV !== 'production') {
+    const fallbackPatches = fallbackCitationPatches(sections, sources, candidates, [], minPatchCount)
+    res.json({
+      ok: true,
+      patches: fallbackPatches,
+      auditNote: `本地引用校准生成 ${fallbackPatches.length} 条可审核建议；未改写观点，仅绑定真实来源。`,
+      skipped: fallbackPatches.length < minPatchCount ? ['可匹配的正文观点或来源证据不足。'] : [],
+    })
+    return
+  }
+
   try {
     const baseInput = {
       projectTitle: String(req.body?.projectTitle ?? ''),
@@ -508,6 +647,13 @@ router.post('/enhance', async (req: AuthRequest, res) => {
       }
     }
 
+    if (patches.length < minPatchCount) {
+      patches = mergePatches([
+        ...patches,
+        ...fallbackCitationPatches(sections, sources, candidates, patches, minPatchCount - patches.length),
+      ])
+    }
+
     const finalPatches = patches.slice(0, 32)
     const shortfallNote = finalPatches.length < minPatchCount
       ? `本轮仅形成 ${finalPatches.length} 条可安全落点的建议，低于目标 ${minPatchCount} 条；主要原因通常是正文候选句或可匹配来源不足。`
@@ -520,7 +666,22 @@ router.post('/enhance', async (req: AuthRequest, res) => {
       skipped: finalPatches.length < minPatchCount ? [...skipped, shortfallNote].slice(0, 12) : skipped,
     })
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : String(error) })
+    const fallbackPatches = fallbackCitationPatches(sections, sources, candidates, [], minPatchCount)
+    if (fallbackPatches.length > 0) {
+      res.json({
+        ok: true,
+        patches: fallbackPatches,
+        auditNote: `AI 引用校准暂时失败，已生成 ${fallbackPatches.length} 条保守引用建议；未改写观点，仅绑定真实来源。`,
+        skipped: [error instanceof Error ? error.message : String(error)].slice(0, 1),
+      })
+      return
+    }
+    res.json({
+      ok: true,
+      patches: [],
+      auditNote: 'AI 引用校准暂时失败，且没有找到可安全匹配的来源；未自动插入引用。',
+      skipped: [error instanceof Error ? error.message : String(error)].slice(0, 1),
+    })
   }
 })
 
