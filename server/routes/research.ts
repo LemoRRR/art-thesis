@@ -2124,38 +2124,7 @@ function guardedWritePlanFromIds(
 function fallbackWritePlan(body: Record<string, unknown>) {
   const sections = arrayRecords(body.sections)
   const components = arrayRecords(body.components).map(compactComponentForWritePlan).filter(component => component.id)
-  const roleFor = (component: { type: string; title?: string; content?: string }): WritePlanRole => {
-    const title = `${component.title ?? ''}`
-    const text = `${title}\n${component.content ?? ''}`
-    if (component.type === 'method') return 'method'
-    if (component.type === 'analysis' && (/[:：]\s*(before|after)$/i.test(title) || /^[图表]\s*\d|^表\s*\d/.test(title))) return 'result'
-    if (/建议|策略|优化|讨论|启示|对策/.test(text)) return 'discussion'
-    return 'result'
-  }
-  const grouped = new Map<WritePlanRole, string[]>()
-  components.forEach(component => {
-    const role = roleFor(component)
-    grouped.set(role, [...(grouped.get(role) ?? []), component.id])
-  })
-  const fallbackTitle = (role: WritePlanRole) => role === 'method'
-    ? '研究方法与数据来源'
-    : role === 'discussion'
-      ? '讨论与优化建议'
-      : '数据分析与研究结果'
-  const placements = Array.from(grouped.entries()).map(([role, componentIds]) => {
-    const target = sections
-      .map(section => ({ section, score: sectionScore(section, role) }))
-      .sort((a, b) => b.score - a.score)[0]
-    const matched = target && target.score > 0 ? target.section : null
-    return {
-      targetSectionId: typeof matched?.id === 'string' ? matched.id : undefined,
-      targetSectionTitle: typeof matched?.title === 'string' ? matched.title : fallbackTitle(role),
-      role,
-      insertPosition: 'append',
-      reason: matched ? '根据章节标题和正文关键词匹配。' : '当前大纲未发现明确章节，创建论文常用章节承接该内容。',
-      componentIds,
-    }
-  })
+  const placements = guardedWritePlanFromIds(components.map(component => component.id), components, sections)
   return { placements, summary: '已根据章节语义自动规划研究结果写入位置。' }
 }
 
