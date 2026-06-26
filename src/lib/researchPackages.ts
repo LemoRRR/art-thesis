@@ -272,7 +272,7 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
   if (components.length === 0) {
     components.push(component('research_component', {
       type: asset.type === 'quant_analysis_result' ? 'analysis' : 'method',
-      title: asset.type === 'quant_analysis_result' ? '分析结果' : '研究支撑',
+      title: asset.type === 'quant_analysis_result' ? '分析结果' : '研究结果',
       content: text,
     }))
   }

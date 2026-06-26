@@ -1660,7 +1660,7 @@ export default function ResearchCenter() {
 
   const runAnalysis = async () => {
     if (!latestDataset) {
-      setNotice('请先上传 CSV/Excel/TXT 数据文件，系统识别到最新数据后才能生成分析结果。研究计算是全文初稿后的补强步骤，也可以先回到文章生成继续完善正文。')
+      setNotice('请先上传 CSV/Excel/TXT 数据文件。研究计算是全文初稿后的补强步骤，也可以先回到文章生成继续完善正文。')
       return
     }
     const task = latestDataset.taskId ? researchTaskStore.get(latestDataset.taskId) : tasks[0]
@@ -2144,7 +2144,7 @@ export default function ResearchCenter() {
 
         <main style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
           <div style={{ maxWidth: 1280, margin: '0 auto 14px', border: '1px solid rgba(45, 90, 61, 0.18)', borderRadius: 8, padding: '10px 12px', background: 'var(--color-accent-light)', color: 'var(--color-accent)', fontSize: 12, lineHeight: 1.7 }}>
-            独立研究页现在定位为早期规划入口。若论文已经开始写作，建议回到 Stage3 对应章节点击「插入研究支撑」，系统会带入当前章节上下文，变量映射和结果文字会更贴合正文。
+            独立研究页现在定位为早期规划入口。若论文已经开始写作，建议回到 Stage3 对应章节点击「插入研究结果」，系统会带入当前章节上下文，变量映射和结果文字会更贴合正文。
           </div>
           <section style={{ ...panelStyle, maxWidth: 1280, margin: '0 auto 14px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>

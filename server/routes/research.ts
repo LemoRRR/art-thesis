@@ -612,36 +612,48 @@ function tableContent(rows: Record<string, unknown>[], columns: string[]) {
 }
 
 async function makePriorityChart(rows: Record<string, unknown>[]) {
-  const width = 1160
-  const rowHeight = 42
-  const height = 120 + Math.max(1, rows.length) * rowHeight
+  const displayRows = rows.slice(0, 12)
+  const width = 1320
+  const rowHeight = 46
+  const height = 136 + Math.max(1, displayRows.length) * rowHeight
+  const barX = 390
+  const barMaxWidth = 540
+  const metaX = 970
+  const total = Math.max(displayRows.length, 1)
   return canvasDataUrl(width, height, ctx => {
     ctx.fillStyle = '#234234'
     ctx.font = chartFont(28, '700')
     ctx.fillText('KANO-熵权耦合优先级排序', 34, 46)
     ctx.fillStyle = '#6d756f'
     ctx.font = chartFont(16)
-    ctx.fillText('耦合优先级得分越低，表示越应优先纳入设计优化。', 34, 76)
-    const maxScore = Math.max(...rows.map(row => maybeNumber(row['耦合优先级总得分']) ?? 0), 1)
-    rows.slice(0, 12).forEach((row, index) => {
-      const y = 112 + index * rowHeight
+    ctx.fillText('条形表示按排序归一化后的优先级强度；综合分越低，表示越应优先纳入设计优化。', 34, 76)
+    ctx.fillStyle = '#8a928c'
+    ctx.font = chartFont(13)
+    ctx.fillText('优先级强度', barX, 104)
+    ctx.fillText('KANO类型 / 综合分', metaX, 104)
+    displayRows.forEach((row, index) => {
+      const y = 132 + index * rowHeight
       const rank = rowValue(row, '最终耦合优先级排名') || String(index + 1)
-      const name = `D${String(index + 1).padStart(2, '0')}`
+      const rawName = rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`
+      const name = shortLabel(rawName, 14)
       const type = rowValue(row, '主导KANO类型')
       const score = maybeNumber(row['耦合优先级总得分']) ?? 0
-      const barWidth = Math.max(10, Math.round((score / maxScore) * 560))
+      const priorityStrength = (total - index) / total
+      const barWidth = Math.max(18, Math.round(priorityStrength * barMaxWidth))
       ctx.fillStyle = index % 2 === 0 ? '#f5faf2' : '#ffffff'
       ctx.fillRect(24, y - 26, width - 48, rowHeight - 6)
       ctx.fillStyle = '#284d34'
       ctx.font = chartFont(17, '700')
-      ctx.fillText(`排序 ${rank}  ${name}`, 42, y)
+      ctx.fillText(`排序 ${rank}`, 42, y)
+      ctx.font = chartFont(16)
+      ctx.fillText(name, 126, y)
       ctx.fillStyle = '#dfeadc'
-      ctx.fillRect(245, y - 17, 570, 18)
-      ctx.fillStyle = index < 3 ? '#2f7d4b' : '#6ba46f'
-      ctx.fillRect(245, y - 17, barWidth, 18)
+      ctx.fillRect(barX, y - 17, barMaxWidth, 18)
+      ctx.fillStyle = index < 3 ? '#1f7a4c' : '#6ba46f'
+      ctx.fillRect(barX, y - 17, barWidth, 18)
       ctx.fillStyle = '#1f3328'
       ctx.font = chartFont(15)
-      ctx.fillText(`KANO：${type || '-'}   得分：${score.toFixed(4)}`, 835, y)
+      ctx.fillText(`KANO：${type || '-'}   综合分：${score.toFixed(4)}`, metaX, y)
     })
   })
 }
@@ -852,14 +864,15 @@ async function makeKanoStackedChart(rows: Record<string, unknown>[]) {
       ctx.fillText(type.label, x + 24, 63)
     })
     const startY = 118
-    const barX = 210
-    const barWidth = 760
+    const barX = 250
+    const barWidth = 700
     const barHeight = 24
     rows.slice(0, 12).forEach((row, index) => {
       const y = startY + index * 44
+      const name = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 12)
       ctx.fillStyle = '#284d34'
       ctx.font = chartFont(15, '700')
-      ctx.fillText(`D${String(index + 1).padStart(2, '0')}`, 42, y + 17)
+      ctx.fillText(name, 42, y + 17)
       let x = barX
       types.forEach(type => {
         const value = type.label === 'Q/R'
@@ -880,7 +893,7 @@ async function makeKanoStackedChart(rows: Record<string, unknown>[]) {
 }
 
 async function makeBetterWorseChart(rows: Record<string, unknown>[]) {
-  return canvasDataUrl(980, 760, ctx => {
+  return canvasDataUrl(1120, 760, ctx => {
     const left = 92
     const top = 112
     const size = 560
@@ -889,7 +902,7 @@ async function makeBetterWorseChart(rows: Record<string, unknown>[]) {
     ctx.fillText('Better-Worse系数矩阵', 34, 46)
     ctx.fillStyle = '#6d756f'
     ctx.font = chartFont(16)
-    ctx.fillText('X: Better满意提升系数; Y: absolute Worse coefficient.', 34, 76)
+    ctx.fillText('横轴为Better满意提升系数，纵轴为Worse不满降低系数绝对值。', 34, 76)
     ctx.strokeStyle = '#c9d6c7'
     ctx.lineWidth = 1
     ctx.strokeRect(left, top, size, size)
@@ -906,16 +919,19 @@ async function makeBetterWorseChart(rows: Record<string, unknown>[]) {
     rows.slice(0, 12).forEach((row, index) => {
       const better = rowMetric(row, ['Better'])
       const worse = rowMetric(row, ['Worse'])
+      const label = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 5)
       const x = left + Math.min(1, Math.max(0, better)) * size
       const y = top + size - Math.min(1, Math.max(0, worse)) * size
       ctx.fillStyle = index < 3 ? '#1f6b45' : '#6ba46f'
       ctx.beginPath()
       ctx.arc(x, y, index < 3 ? 8 : 6, 0, Math.PI * 2)
       ctx.fill()
-      ctx.fillStyle = '#1f3328'
-      ctx.font = chartFont(13, '700')
-      const labelDy = y > top + size - 34 ? -18 - (index % 4) * 12 : -8
-      ctx.fillText(`D${String(index + 1).padStart(2, '0')}`, x + 9, y + labelDy)
+      if (index < 6 || worse > 0.1) {
+        ctx.fillStyle = '#1f3328'
+        ctx.font = chartFont(13, '700')
+        const labelDy = y > top + size - 34 ? -18 : -8
+        ctx.fillText(label, x + 9, y + labelDy)
+      }
     })
     ctx.fillStyle = '#24382d'
     ctx.font = chartFont(16)
@@ -927,15 +943,16 @@ async function makeBetterWorseChart(rows: Record<string, unknown>[]) {
     ctx.restore()
     ctx.fillStyle = '#6d756f'
     ctx.font = chartFont(14)
-    ctx.fillText('图中D01-D12对应各设计维度编码。', 700, 180)
-    ctx.fillText('维度全称见KANO维度汇总表。', 700, 208)
-    ctx.fillText('右上区域表示满意提升与不满风险均较高，', 700, 252)
-    ctx.fillText('可作为优先优化对象。', 700, 280)
+    ctx.fillText('图中点标签为评价维度简称。', 700, 180)
+    ctx.fillText('完整数值见KANO维度汇总表。', 700, 208)
+    ctx.fillText('低不满风险的未标注点可结合表4-1读取。', 700, 236)
+    ctx.fillText('右上区域表示满意提升与不满风险均较高，', 700, 270)
+    ctx.fillText('可作为优先优化对象。', 700, 298)
   })
 }
 
 async function makeEntropyWeightChart(rows: Record<string, unknown>[]) {
-  return canvasDataUrl(920, 430, ctx => {
+  return canvasDataUrl(1180, 430, ctx => {
     ctx.fillStyle = '#234234'
     ctx.font = chartFont(28, '700')
     ctx.fillText('熵权指标权重分布', 34, 46)
@@ -947,17 +964,18 @@ async function makeEntropyWeightChart(rows: Record<string, unknown>[]) {
     chartRows.forEach((row, index) => {
       const y = 128 + index * 76
       const weight = rowMetric(row, ['权重'])
-      const width = Math.round((weight / maxWeight) * 560)
+      const label = shortLabel(rowValue(row, '指标') || rowValue(row, '指标名称') || rowValue(row, '评价指标') || `指标${index + 1}`, 18)
+      const width = Math.round((weight / maxWeight) * 640)
       ctx.fillStyle = '#284d34'
       ctx.font = chartFont(16, '700')
-      ctx.fillText(`指标${index + 1}`, 46, y + 18)
+      ctx.fillText(label, 46, y + 18)
       ctx.fillStyle = '#dfeadc'
-      ctx.fillRect(190, y, 580, 24)
+      ctx.fillRect(360, y, 660, 24)
       ctx.fillStyle = '#2f7d4b'
-      ctx.fillRect(190, y, width, 24)
+      ctx.fillRect(360, y, width, 24)
       ctx.fillStyle = '#1f3328'
       ctx.font = chartFont(15)
-      ctx.fillText(`${weight.toFixed(2)}%`, 790, y + 18)
+      ctx.fillText(`${weight.toFixed(2)}%`, 1040, y + 18)
     })
   })
 }
@@ -1000,18 +1018,19 @@ async function makeKanoStackedChartSvg(rows: Record<string, unknown>[]) {
   }).join('')
   const bars = rows.slice(0, 12).map((row, index) => {
     const y = 118 + index * 44
-    let x = 210
+    let x = 250
+    const label = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 12)
     const segments = types.map(type => {
       const value = type.label === 'Q/R'
         ? rowMetric(row, ['Q_', '占比']) + rowMetric(row, ['R_', '占比'])
         : rowMetric(row, type.parts)
-      const width = Math.max(0, Math.round((value / 100) * 760))
+      const width = Math.max(0, Math.round((value / 100) * 700))
       const rect = `<rect x="${x}" y="${y}" width="${width}" height="24" fill="${type.color}"/>`
       x += width
       return rect
     }).join('')
-    return `<text x="42" y="${y + 17}" font-size="15" font-weight="700">D${String(index + 1).padStart(2, '0')}</text>
-${segments}<rect x="210" y="${y}" width="760" height="24" fill="none" stroke="#d9e2d6"/>
+    return `<text x="42" y="${y + 17}" font-size="15" font-weight="700">${escapeXml(label)}</text>
+${segments}<rect x="250" y="${y}" width="700" height="24" fill="none" stroke="#d9e2d6"/>
 <text x="988" y="${y + 17}" class="small">主导类型：${escapeXml(rowTextByParts(row, ['主导', 'KANO'], '-'))}</text>`
   }).join('')
   return svgDataUrl(1180, 680, `<text x="34" y="46" class="title">KANO需求类型分布</text>
@@ -1030,11 +1049,12 @@ async function makeBetterWorseChartSvg(rows: Record<string, unknown>[]) {
     const x = left + Math.min(1, Math.max(0, better)) * size
     const y = top + size - Math.min(1, Math.max(0, worse)) * size
     const labelDy = y > top + size - 34 ? -18 - (index % 4) * 12 : -8
+    const label = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 5)
     return `<circle cx="${x}" cy="${y}" r="${index < 3 ? 8 : 6}" fill="${index < 3 ? '#1f6b45' : '#6ba46f'}"/>
-<text x="${x + 9}" y="${y + labelDy}" font-size="13" font-weight="700">D${String(index + 1).padStart(2, '0')}</text>`
+${index < 6 || worse > 0.1 ? `<text x="${x + 9}" y="${y + labelDy}" font-size="13" font-weight="700">${escapeXml(label)}</text>` : ''}`
   }).join('')
-  return svgDataUrl(980, 760, `<text x="34" y="46" class="title">Better-Worse系数矩阵</text>
-<text x="34" y="76" class="sub">X: Better满意提升系数; Y: absolute Worse coefficient.</text>
+  return svgDataUrl(1120, 760, `<text x="34" y="46" class="title">Better-Worse系数矩阵</text>
+<text x="34" y="76" class="sub">横轴为Better满意提升系数，纵轴为Worse不满降低系数绝对值。</text>
 <rect x="${left + size / 2}" y="${top}" width="${size / 2}" height="${size / 2}" fill="#eef6ed"/>
 <rect x="${left}" y="${top + size / 2}" width="${size / 2}" height="${size / 2}" fill="#f7fbf5"/>
 <rect x="${left}" y="${top}" width="${size}" height="${size}" fill="none" stroke="#c9d6c7"/>
@@ -1043,10 +1063,11 @@ async function makeBetterWorseChartSvg(rows: Record<string, unknown>[]) {
 ${points}
 <text x="${left + 190}" y="${top + size + 44}" class="axis">Better满意提升系数</text>
 <text transform="translate(28 ${top + 360}) rotate(-90)" class="axis">Worse不满降低系数绝对值</text>
-<text x="700" y="180" class="small">图中D01-D12对应各设计维度编码。</text>
-<text x="700" y="208" class="small">维度全称见KANO维度汇总表。</text>
-<text x="700" y="252" class="small">右上区域表示满意提升与不满风险均较高，</text>
-<text x="700" y="280" class="small">可作为优先优化对象。</text>`)
+<text x="700" y="180" class="small">图中点标签为评价维度简称。</text>
+<text x="700" y="208" class="small">完整数值见KANO维度汇总表。</text>
+<text x="700" y="236" class="small">低不满风险的未标注点可结合表4-1读取。</text>
+<text x="700" y="270" class="small">右上区域表示满意提升与不满风险均较高，</text>
+<text x="700" y="298" class="small">可作为优先优化对象。</text>`)
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1056,37 +1077,48 @@ async function makeEntropyWeightChartSvg(rows: Record<string, unknown>[]) {
   const items = chartRows.map((row, index) => {
     const y = 128 + index * 76
     const weight = rowMetric(row, ['权重'])
-    const width = Math.round((weight / maxWeight) * 560)
-    return `<text x="46" y="${y + 18}" font-size="16" font-weight="700">指标${index + 1}</text>
-<rect x="190" y="${y}" width="580" height="24" fill="#dfeadc"/>
-<rect x="190" y="${y}" width="${width}" height="24" fill="#2f7d4b"/>
-<text x="790" y="${y + 18}" font-size="15">${weight.toFixed(2)}%</text>`
+    const width = Math.round((weight / maxWeight) * 640)
+    const label = shortLabel(rowValue(row, '指标') || rowValue(row, '指标名称') || rowValue(row, '评价指标') || `指标${index + 1}`, 18)
+    return `<text x="46" y="${y + 18}" font-size="16" font-weight="700">${escapeXml(label)}</text>
+<rect x="360" y="${y}" width="660" height="24" fill="#dfeadc"/>
+<rect x="360" y="${y}" width="${width}" height="24" fill="#2f7d4b"/>
+<text x="1040" y="${y + 18}" font-size="15">${weight.toFixed(2)}%</text>`
   }).join('')
-  return svgDataUrl(920, 430, `<text x="34" y="46" class="title">熵权指标权重分布</text>
+  return svgDataUrl(1180, 430, `<text x="34" y="46" class="title">熵权指标权重分布</text>
 <text x="34" y="76" class="sub">用于耦合优先级得分计算的客观权重。</text>
 ${items}`)
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function makePriorityChartSvg(rows: Record<string, unknown>[]) {
-  const width = 1160
-  const rowHeight = 42
-  const height = 120 + Math.max(1, rows.length) * rowHeight
-  const maxScore = Math.max(...rows.map(row => maybeNumber(row['耦合优先级总得分']) ?? 0), 1)
-  const items = rows.slice(0, 12).map((row, index) => {
-    const y = 112 + index * rowHeight
+  const displayRows = rows.slice(0, 12)
+  const width = 1320
+  const rowHeight = 46
+  const height = 136 + Math.max(1, displayRows.length) * rowHeight
+  const barX = 390
+  const barMaxWidth = 540
+  const metaX = 970
+  const total = Math.max(displayRows.length, 1)
+  const items = displayRows.map((row, index) => {
+    const y = 132 + index * rowHeight
     const rank = rowValue(row, '最终耦合优先级排名') || String(index + 1)
+    const rawName = rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`
+    const name = shortLabel(rawName, 14)
     const type = rowValue(row, '主导KANO类型')
     const score = maybeNumber(row['耦合优先级总得分']) ?? 0
-    const barWidth = Math.max(10, Math.round((score / maxScore) * 560))
+    const priorityStrength = (total - index) / total
+    const barWidth = Math.max(18, Math.round(priorityStrength * barMaxWidth))
     return `<rect x="24" y="${y - 26}" width="${width - 48}" height="${rowHeight - 6}" fill="${index % 2 === 0 ? '#f5faf2' : '#ffffff'}"/>
-<text x="42" y="${y}" font-size="17" font-weight="700">排序 ${escapeXml(rank)}  D${String(index + 1).padStart(2, '0')}</text>
-<rect x="245" y="${y - 17}" width="570" height="18" fill="#dfeadc"/>
-<rect x="245" y="${y - 17}" width="${barWidth}" height="18" fill="${index < 3 ? '#2f7d4b' : '#6ba46f'}"/>
-<text x="835" y="${y}" font-size="15">KANO：${escapeXml(type || '-')}   得分：${score.toFixed(4)}</text>`
+<text x="42" y="${y}" font-size="17" font-weight="700">排序 ${escapeXml(rank)}</text>
+<text x="126" y="${y}" font-size="16">${escapeXml(name)}</text>
+<rect x="${barX}" y="${y - 17}" width="${barMaxWidth}" height="18" fill="#dfeadc"/>
+<rect x="${barX}" y="${y - 17}" width="${barWidth}" height="18" fill="${index < 3 ? '#1f7a4c' : '#6ba46f'}"/>
+<text x="${metaX}" y="${y}" font-size="15">KANO：${escapeXml(type || '-')}   综合分：${score.toFixed(4)}</text>`
   }).join('')
   return svgDataUrl(width, height, `<text x="34" y="46" class="title">KANO-熵权耦合优先级排序</text>
-<text x="34" y="76" class="sub">耦合优先级得分越低，表示越应优先纳入设计优化。</text>
+<text x="34" y="76" class="sub">条形表示按排序归一化后的优先级强度；综合分越低，表示越应优先纳入设计优化。</text>
+<text x="${barX}" y="104" class="small">优先级强度</text>
+<text x="${metaX}" y="104" class="small">KANO类型 / 综合分</text>
 ${items}`)
 }
 
@@ -1643,7 +1675,7 @@ async function buildKanoEntropyPlan(payload: Record<string, unknown>) {
         purpose: '基于已收集问卷数据完成 KANO-熵权法耦合模型分析，并生成可插入论文结果章节的统计表、排序图和分析文字。',
         method: 'kano_entropy',
         methods: ['kano_entropy'],
-        reason: `上传工作簿已提供KANO维度汇总、熵权法权重和耦合优先级排序，可直接据此生成论文结果章节中的统计表、图示和分析文字。${top.length ? `当前优先级靠前维度包括：${top.join('、')}。` : ''}`,
+        reason: `当前工作簿包含KANO维度汇总、熵权法权重和耦合优先级排序，适合据此生成论文结果章节中的统计表、图示和分析文字。${top.length ? `当前优先级靠前维度包括：${top.join('、')}。` : ''}`,
         variables: priorityRows.map((row, index) => ({
           role: index === 0 ? 'dependent' : 'item',
           name: rowValue(row, '设计维度') || `维度${index + 1}`,
@@ -1692,7 +1724,7 @@ function fallbackIntent(body: Record<string, unknown>) {
     chapterId: typeof body.chapterId === 'string' ? body.chapterId : undefined,
     chapterTitle: typeof body.chapterTitle === 'string' ? body.chapterTitle : undefined,
     userRequest,
-    purpose: userRequest || '根据当前章节需要生成研究支撑内容。',
+    purpose: userRequest || '根据当前章节需要生成可写入正文的研究结果内容。',
     capabilityTier: outOfScope ? 'out_of_scope' : 'partial_loop',
     recommendedMethods: methods,
     expectedPackage: outOfScope ? ['method'] : ['figure', 'statistics', 'analysis', 'method'],
@@ -1746,7 +1778,7 @@ function planFromInference(intent: Record<string, unknown>, profile: Record<stri
   if (groupColumn) variables.push({ role: 'group', name: groupColumn, column: groupColumn, confidence: 0.7, note: '识别为分组变量' })
 
   return {
-    purpose: String(intent.purpose ?? request ?? '完成数据分析并生成可插入论文的研究支撑。'),
+    purpose: String(intent.purpose ?? request ?? '完成数据分析并生成可插入论文的研究结果。'),
     method: primary,
     methods,
     reason: primary === 'out_of_scope'
@@ -2487,7 +2519,7 @@ router.post('/analysis-plan', async (req, res) => {
         purpose: '对访谈记录、开放题回答或文本材料进行质性编码，生成可写入论文结果章节的编码表、主题归纳表、证据摘录和分析文字。',
         method: 'descriptive',
         methods: ['descriptive'],
-        reason: '系统识别到当前材料更适合进行质性文本分析，应优先采用开放编码、主轴编码和主题归纳，而不是对文本强行做数值统计。',
+        reason: '当前材料以访谈记录、开放题回答或文本片段为主，适合采用开放编码、主轴编码和主题归纳形成论文结果，而不适合直接套用数值统计。',
         variables: [
           { role: 'item', name: '文本片段', column: 'originalText', confidence: 0.9, note: '访谈/文本材料分段后的分析单位' },
           { role: 'item', name: '开放编码', column: 'openCode', confidence: 0.8, note: '由文本内容归纳形成的初始概念' },

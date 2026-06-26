@@ -96,7 +96,7 @@ function getChapterAction(sectionTitle?: string) {
   if (/方法|设计|问卷|变量|测量|研究对象|资料收集/.test(title)) return '当前章节适合插入研究方法、变量映射、问卷设计或访谈方案。'
   if (/数据|分析|结果|第四章|KANO|AHP|编码|信度|效度|回归|相关/.test(title)) return '当前章节适合插入样本统计、Python 分析结果、图表和论文结果表述。'
   if (/讨论|结论|建议|优化/.test(title)) return '当前章节适合引用已有研究发现，生成讨论、建议和研究限制。'
-  return '当前章节可以按需生成研究支撑；如果涉及数据结论，请先上传数据并确认分析方案。'
+  return '当前章节可以按需生成研究结果；如果涉及数据结论，请先上传数据并确认分析方案。'
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer) {
@@ -164,7 +164,7 @@ export default function ResearchDrawer({
     if (!open) return
     if (!requestText) {
       queueMicrotask(() => {
-        setRequestText(activeSectionTitle ? `为「${activeSectionTitle}」分析上传数据，生成可插入论文的图表、统计表和分析文字。` : '分析这组数据中核心变量之间的关系，并生成可插入论文的研究支撑。')
+        setRequestText(activeSectionTitle ? `为「${activeSectionTitle}」分析上传数据，生成可插入论文的图表、统计表和分析文字。` : '分析这组数据中核心变量之间的关系，并生成可插入论文的研究结果。')
       })
     }
     if (!selectedAssetId && insertableAssets[0]) {
@@ -181,7 +181,7 @@ export default function ResearchDrawer({
     const base64 = isExcel ? arrayBufferToBase64(await file.arrayBuffer()) : undefined
     const task = primaryTask ?? researchTaskStore.add({
       projectId,
-      title: '章节研究支撑分析',
+      title: '章节研究结果分析',
       methodType: 'quantitative',
       status: 'survey_ready',
       nextActionLabel: '确认分析方案',
@@ -210,7 +210,7 @@ export default function ResearchDrawer({
 
   const createIntentAndPlan = async () => {
     if (!requestText.trim()) {
-      setNotice('请先描述你希望这次研究支撑解决什么问题。')
+      setNotice('请先描述你希望这次研究结果解决什么问题。')
       return
     }
     if (!dataset) {
@@ -279,7 +279,7 @@ export default function ResearchDrawer({
         projectId,
         taskId: primaryTask?.id,
         type: 'quant_analysis_result',
-        title: `${dataset.fileName}-章节研究支撑`,
+        title: `${dataset.fileName}-章节研究结果`,
         summary: `按确认方案执行：${plan.methods?.join('、') || plan.method}；样本量 ${result.sampleSize}。`,
         source: 'created_in_stage3',
         structuredData: { dataset, intent, plan, run: { ...run, ...filteredResult }, result: filteredResult },
@@ -328,7 +328,7 @@ export default function ResearchDrawer({
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 800, color: 'var(--color-ink)' }}>
             <FlaskConical size={14} />
-            插入研究支撑
+            插入研究结果
           </div>
           <div style={{ marginTop: 2, fontSize: 10, color: 'var(--color-ink-3)' }}>{activeSectionTitle || project.title}</div>
         </div>

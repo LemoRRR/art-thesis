@@ -2567,7 +2567,7 @@ export default function Stage3() {
         order: 0,
         sourceRefs: [asset.id],
       }
-      setSections(persistSections([section], `插入研究支撑：${asset.title}`))
+      setSections(persistSections([section], `插入研究结果：${asset.title}`))
       setActiveSectionId(section.id)
       markResearchAssetUsed(asset, section.id)
     } else {
@@ -2586,7 +2586,7 @@ export default function Stage3() {
           lastModified: now,
           sourceRefs: Array.from(new Set([...(section.sourceRefs ?? []), asset.id])),
         }
-      }), `插入研究支撑：${asset.title}`))
+      }), `插入研究结果：${asset.title}`))
       if (targetId) setActiveSectionId(targetId)
       markResearchAssetUsed(asset, targetId)
     }

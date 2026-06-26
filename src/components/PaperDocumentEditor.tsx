@@ -438,8 +438,8 @@ const ResearchBlockNode = Node.create({
           : {},
       },
       title: {
-        default: '研究支撑',
-        parseHTML: element => element.getAttribute('data-title') || '研究支撑',
+        default: '研究结果',
+        parseHTML: element => element.getAttribute('data-title') || '研究结果',
         renderHTML: attrs => attrs.title ? { 'data-title': attrs.title } : {},
       },
       previewText: {
@@ -455,7 +455,7 @@ const ResearchBlockNode = Node.create({
   },
 
   renderHTML({ HTMLAttributes }) {
-    const title = String(HTMLAttributes['data-title'] ?? HTMLAttributes.title ?? '研究支撑')
+    const title = String(HTMLAttributes['data-title'] ?? HTMLAttributes.title ?? '研究结果')
     const previewText = String(HTMLAttributes['data-preview-text'] ?? HTMLAttributes.previewText ?? '')
     const packageId = String(HTMLAttributes['data-research-package-id'] ?? HTMLAttributes.researchPackageId ?? '')
     const componentIds = String(HTMLAttributes['data-research-component-ids'] ?? '')
@@ -476,11 +476,11 @@ const ResearchBlockNode = Node.create({
         contenteditable: 'false',
       }),
       ['div', { class: 'paper-research-node-head' },
-        ['span', { class: 'paper-research-node-badge' }, '研究支撑'],
+        ['span', { class: 'paper-research-node-badge' }, '研究结果'],
         ['strong', {}, title],
         ['button', { type: 'button', 'data-research-action': 'expand' }, '展开'],
         ['button', { type: 'button', 'data-research-action': 'regenerate' }, '重新生成'],
-        ['button', { type: 'button', 'data-research-action': 'solidify' }, '转正文'],
+        ['button', { type: 'button', 'data-research-action': 'solidify' }, '写入正文'],
         ['button', { type: 'button', 'data-research-action': 'delete' }, '删除'],
       ],
       ['div', { class: 'paper-research-node-body' },
@@ -998,7 +998,7 @@ function renderPreviewBlock(
   }
 
   if (block.type === 'research') {
-    const title = typeof block.node?.attrs?.title === 'string' ? block.node.attrs.title : '研究支撑'
+    const title = typeof block.node?.attrs?.title === 'string' ? block.node.attrs.title : '研究结果'
     const packageId = typeof block.node?.attrs?.researchPackageId === 'string' ? block.node.attrs.researchPackageId : ''
     const componentIds = Array.isArray(block.node?.attrs?.researchComponentIds)
       ? block.node.attrs.researchComponentIds.filter((item): item is string => typeof item === 'string')
@@ -1018,7 +1018,7 @@ function renderPreviewBlock(
         onClick={event => onClick(block, event)}
       >
         <div className="paper-research-preview-head">
-          <span>研究支撑</span>
+          <span>研究结果</span>
           <strong>{title}</strong>
         </div>
         {summary && <div className="paper-research-preview-text">{summary}</div>}
@@ -2286,7 +2286,7 @@ function PaperDocumentEditorCore({
             )
             view.dispatch(view.state.tr.replaceWith(nodePos, nodePos + nodeSize, paragraphs))
             const nextDoc = view.state.doc.toJSON() as PaperEditorDoc
-            onSectionsChange(paperDocToSections(nextDoc, previousSections.current), `固化研究支撑：${pkg.title}`)
+            onSectionsChange(paperDocToSections(nextDoc, previousSections.current), `写入研究结果正文：${pkg.title}`)
             setLayoutDoc(nextDoc)
             return true
           }
@@ -2295,7 +2295,7 @@ function PaperDocumentEditorCore({
             view.dispatch(view.state.tr.delete(nodePos, nodePos + nodeSize))
             if (deleteAsset) researchPackageStore.remove(packageId)
             const nextDoc = view.state.doc.toJSON() as PaperEditorDoc
-            onSectionsChange(paperDocToSections(nextDoc, previousSections.current), `删除研究支撑：${pkg.title}`)
+            onSectionsChange(paperDocToSections(nextDoc, previousSections.current), `删除研究结果：${pkg.title}`)
             setLayoutDoc(nextDoc)
             return true
           }
@@ -2821,7 +2821,7 @@ function PaperDocumentEditorCore({
                 onClick={() => onInsertResearchSupport(findSectionTitleById(sections, activeSectionId))}
               >
                 <FlaskConical size={12} />
-                插入研究支撑
+                插入研究结果
               </button>
             )}
           </div>
@@ -2841,7 +2841,7 @@ function PaperDocumentEditorCore({
                   onClick={() => onInsertResearchSupport(findSectionTitleById(sections, activeSectionId))}
                 >
                   <FlaskConical size={12} />
-                  插入研究支撑
+                    插入研究结果
                 </button>
               )}
             </div>
@@ -2893,7 +2893,7 @@ function PaperDocumentEditorCore({
                     onClick={() => onInsertResearchSupport(findSectionTitleById(sections, activeSectionId))}
                   >
                     <FlaskConical size={12} />
-                    插入研究支撑
+                  插入研究结果
                   </button>
                 )}
                 <button type="button" onClick={showPagedPreview}>

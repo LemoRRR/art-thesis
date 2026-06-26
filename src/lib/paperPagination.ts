@@ -261,7 +261,7 @@ export function paginatePaperBlocks(
     }
 
     if (wouldOverflow && page.blocks.length === 0) {
-      overflowWarnings.push(`${block.type === 'heading' ? '标题' : block.type === 'research' ? '研究支撑块' : '段落'}内容超过单页可用高度，已临时整块放置。`)
+      overflowWarnings.push(`${block.type === 'heading' ? '标题' : block.type === 'research' ? '研究结果块' : '段落'}内容超过单页可用高度，已临时整块放置。`)
     }
 
     page.blocks.push(block)
