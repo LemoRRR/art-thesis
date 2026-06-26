@@ -86,6 +86,7 @@ export default function DocumentToolbar({ onCopy, onExportWord, disabled }: Docu
 
       <div style={{ flex: 1 }} />
       <button
+        data-testid="document-copy-all"
         type="button"
         onClick={onCopy}
         disabled={disabled}
@@ -95,6 +96,7 @@ export default function DocumentToolbar({ onCopy, onExportWord, disabled }: Docu
         复制全文
       </button>
       <button
+        data-testid="document-export-word"
         type="button"
         onClick={onExportWord}
         disabled={disabled}

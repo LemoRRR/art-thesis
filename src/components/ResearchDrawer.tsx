@@ -323,7 +323,7 @@ export default function ResearchDrawer({
   if (!open) return null
 
   return (
-    <aside style={drawerStyle}>
+    <aside style={drawerStyle} data-testid="stage3-research-drawer">
       <div style={headerStyle}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 800, color: 'var(--color-ink)' }}>
@@ -338,7 +338,11 @@ export default function ResearchDrawer({
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
-        {notice && <WaitNotice text={notice} tone={notice.includes('失败') || notice.includes('超出') ? 'error' : 'info'} />}
+        {notice && (
+          <div data-testid="research-drawer-notice">
+            <WaitNotice text={notice} tone={notice.includes('失败') || notice.includes('超出') ? 'error' : 'info'} />
+          </div>
+        )}
 
         <section style={panelStyle}>
           <SectionTitle icon={<FileText size={13} />} label="当前章节" />
@@ -355,23 +359,24 @@ export default function ResearchDrawer({
         <section style={panelStyle}>
           <SectionTitle icon={<FlaskConical size={13} />} label="AI 编排 Python 分析" />
           <textarea
+            data-testid="research-analysis-request"
             value={requestText}
             onChange={event => setRequestText(event.target.value)}
             rows={4}
             placeholder="例如：分析 X 与 Y 是否相关；检验量表信度；比较不同组在满意度上的差异；做单一中介模型。"
             style={textareaStyle}
           />
-          <label style={uploadStyle}>
+          <label style={uploadStyle} data-testid="research-upload-label">
             <Upload size={13} />
             {dataset ? dataset.fileName : '上传 CSV / Excel'}
-            <input type="file" accept=".csv,.txt,.xlsx,.xls" onChange={uploadDataset} style={{ display: 'none' }} />
+            <input data-testid="research-upload-input" type="file" accept=".csv,.txt,.xlsx,.xls" onChange={uploadDataset} style={{ display: 'none' }} />
           </label>
           {dataset && (
             <div style={{ fontSize: 11, color: 'var(--color-ink-3)', marginTop: 6 }}>
               {dataset.rowCount ? `已读取约 ${dataset.rowCount} 行；` : 'Excel 将由 Python 读取；'}运行前会先确认变量映射。
             </div>
           )}
-          <button onClick={createIntentAndPlan} disabled={Boolean(loadingStep)} style={primaryActionStyle(Boolean(loadingStep))}>
+          <button data-testid="research-generate-plan" onClick={createIntentAndPlan} disabled={Boolean(loadingStep)} style={primaryActionStyle(Boolean(loadingStep))}>
             <ClipboardList size={13} />
             {loadingStep === 'intent' || loadingStep === 'plan' ? '生成方案中…' : '生成分析方案'}
           </button>
@@ -416,7 +421,7 @@ export default function ResearchDrawer({
                 </label>
               ))}
             </div>
-            <button onClick={runConfirmedPlan} disabled={Boolean(loadingStep)} style={primaryActionStyle(Boolean(loadingStep))}>
+            <button data-testid="research-run-plan" onClick={runConfirmedPlan} disabled={Boolean(loadingStep)} style={primaryActionStyle(Boolean(loadingStep))}>
               <Play size={13} />
               {loadingStep === 'run' ? 'Python 计算中…' : '确认方案并运行 Python'}
             </button>
@@ -430,7 +435,7 @@ export default function ResearchDrawer({
               <div style={{ fontSize: 12, fontWeight: 850 }}>{latestAnalysisAsset.title}</div>
               <div style={{ marginTop: 5, fontSize: 11, color: 'var(--color-ink-3)', lineHeight: 1.6 }}>{latestAnalysisAsset.summary}</div>
             </div>
-            <button onClick={() => onInsertAsset(latestAnalysisAsset)} style={primaryActionStyle(false)}>
+            <button data-testid="research-insert-latest" onClick={() => onInsertAsset(latestAnalysisAsset)} style={primaryActionStyle(false)}>
               <ArrowRight size={13} />
               插入当前章节
             </button>
@@ -490,23 +495,23 @@ export default function ResearchDrawer({
       </div>
 
       <div style={footerStyle}>
-        <button onClick={() => selectedAsset && onUseAsReference(selectedAsset)} disabled={!selectedAsset} style={secondaryButtonStyle}>
+        <button data-testid="research-use-reference" onClick={() => selectedAsset && onUseAsReference(selectedAsset)} disabled={!selectedAsset} style={secondaryButtonStyle}>
           <ClipboardList size={13} />
           作为参考
         </button>
-        <button onClick={() => selectedAsset && onInsertAndPolish(selectedAsset)} disabled={!selectedAsset} style={primaryButtonStyle(Boolean(selectedAsset))}>
+        <button data-testid="research-insert-polish" onClick={() => selectedAsset && onInsertAndPolish(selectedAsset)} disabled={!selectedAsset} style={primaryButtonStyle(Boolean(selectedAsset))}>
           <ArrowRight size={13} />
           插入并润色
         </button>
-        <button onClick={() => selectedAsset && onInsertAsset(selectedAsset)} disabled={!selectedAsset} style={secondaryButtonStyle}>
+        <button data-testid="research-insert-package" onClick={() => selectedAsset && onInsertAsset(selectedAsset)} disabled={!selectedAsset} style={secondaryButtonStyle}>
           <ArrowRight size={13} />
           插入内容包
         </button>
-        <button onClick={() => selectedAsset && onGenerateChapter(selectedAsset)} disabled={!selectedAsset} style={secondaryButtonStyle}>
+        <button data-testid="research-generate-chapter" onClick={() => selectedAsset && onGenerateChapter(selectedAsset)} disabled={!selectedAsset} style={secondaryButtonStyle}>
           <FileText size={13} />
           生成章节
         </button>
-        <button onClick={onOpenDetails} style={secondaryButtonStyle}>
+        <button data-testid="research-open-details" onClick={onOpenDetails} style={secondaryButtonStyle}>
           <BarChart3 size={13} />
           独立研究页
         </button>

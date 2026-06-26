@@ -2828,6 +2828,7 @@ export default function Stage3() {
                 来源/引用增强
               </button>
               <button
+                data-testid="stage3-open-research"
                 onClick={() => {
                   setShowResearchDrawer(value => !value)
                   setShowReferences(false)
