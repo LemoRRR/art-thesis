@@ -13,7 +13,7 @@ import {
   versionsAPI,
 } from './api'
 import { auth } from './auth'
-import type { PaperEditorDoc } from './editorDocument'
+import { editorDocToPlainText, isPaperEditorDoc, type PaperEditorDoc } from './editorDocument'
 
 function stableStringify(value: unknown): string {
   try {
@@ -625,12 +625,17 @@ function toApiProjectPatch(patch: Partial<Project>) {
 }
 
 function fromApiSection(row: any): DocSection {
+  const editorDoc = row.content_doc ?? undefined
+  const rawContent = row.content ?? ''
+  const content = String(rawContent).trim() || !isPaperEditorDoc(editorDoc)
+    ? rawContent
+    : editorDocToPlainText(editorDoc)
   return {
     id: row.id,
     projectId: row.project_id,
     title: row.title ?? '未命名章节',
-    content: row.content ?? '',
-    editorDoc: row.content_doc ?? undefined,
+    content,
+    editorDoc,
     status: row.status ?? 'pending',
     order: row.sort_order ?? 0,
     lastModified: toTime(row.updated_at ?? row.created_at),
