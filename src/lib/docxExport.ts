@@ -296,6 +296,40 @@ function dataUrlToBytes(dataUrl: string): Uint8Array {
   return bytes
 }
 
+function imageDimensionsFromDataUrl(dataUrl: string) {
+  try {
+    if (dataUrl.startsWith('data:image/png')) {
+      const bytes = dataUrlToBytes(dataUrl)
+      if (bytes.length >= 24) {
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+        return { width: view.getUint32(16), height: view.getUint32(20) }
+      }
+    }
+
+    if (dataUrl.startsWith('data:image/svg+xml')) {
+      const svg = new TextDecoder().decode(dataUrlToBytes(dataUrl))
+      const width = Number(svg.match(/\bwidth=["']?([\d.]+)/)?.[1])
+      const height = Number(svg.match(/\bheight=["']?([\d.]+)/)?.[1])
+      const viewBox = svg.match(/\bviewBox=["']?([\d.\s-]+)/)?.[1]?.trim().split(/\s+/).map(Number)
+      if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) return { width, height }
+      if (viewBox?.length === 4 && viewBox[2] > 0 && viewBox[3] > 0) return { width: viewBox[2], height: viewBox[3] }
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+function imageTransformFromDataUrl(dataUrl: string, maxWidth = 460, maxHeight = 310) {
+  const dimensions = imageDimensionsFromDataUrl(dataUrl)
+  if (!dimensions) return { width: maxWidth, height: Math.round(maxWidth * 0.62) }
+  const ratio = Math.min(maxWidth / dimensions.width, maxHeight / dimensions.height, 1)
+  return {
+    width: Math.round(dimensions.width * ratio),
+    height: Math.round(dimensions.height * ratio),
+  }
+}
+
 const TRANSPARENT_PNG = new Uint8Array([
   137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
   8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 255,
@@ -303,19 +337,20 @@ const TRANSPARENT_PNG = new Uint8Array([
   96, 130,
 ])
 
-function imageRunFromDataUrl(dataUrl: string, width = 460, height = 280) {
+function imageRunFromDataUrl(dataUrl: string) {
+  const transformation = imageTransformFromDataUrl(dataUrl)
   if (dataUrl.startsWith('data:image/svg+xml')) {
     return new ImageRun({
       type: 'svg',
       data: dataUrlToBytes(dataUrl),
       fallback: { type: 'png', data: TRANSPARENT_PNG },
-      transformation: { width, height },
+      transformation,
     })
   }
   return new ImageRun({
     type: 'png',
     data: dataUrlToBytes(dataUrl),
-    transformation: { width, height },
+    transformation,
   })
 }
 
@@ -605,7 +640,7 @@ function buildDocChildren(title: string, sections: DocSection[]) {
   return children
 }
 
-export async function exportSectionsToDocx(title: string, sections: DocSection[]) {
+export async function buildSectionsDocxBlob(title: string, sections: DocSection[]) {
   const footnotes = buildFootnotesMap(sections)
   const doc = new Document({
     footnotes: Object.keys(footnotes).length > 0 ? footnotes : undefined,
@@ -681,7 +716,11 @@ export async function exportSectionsToDocx(title: string, sections: DocSection[]
     ],
   })
 
-  const blob = await Packer.toBlob(doc)
+  return Packer.toBlob(doc)
+}
+
+export async function exportSectionsToDocx(title: string, sections: DocSection[]) {
+  const blob = await buildSectionsDocxBlob(title, sections)
   const safeTitle = cleanTitle(title).replace(FILE_SAFE_PATTERN, '_') || '论文'
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')

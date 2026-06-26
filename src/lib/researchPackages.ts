@@ -36,6 +36,36 @@ function narrativeFor(result: StructuredResearchResult, id?: string, title?: str
   }) ?? null
 }
 
+function cleanResearchTitle(value?: string) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim()
+}
+
+function fallbackFigureNarrative(figure: { caption?: string; title?: string }, title: string) {
+  const caption = cleanResearchTitle(figure.caption) || cleanResearchTitle(title)
+  return {
+    beforeText: `为更直观地呈现${caption.replace(/[。.]$/, '')}，本文将相关统计结果整理为${title}。`,
+    afterText: `${title}用于辅助说明数据中的主要分布特征和比较关系，后续分析可结合表格中的具体数值进一步解释其对研究问题的回应。`,
+  }
+}
+
+function fallbackTableNarrative(table: { rows?: unknown[]; columns?: string[] }, title: string) {
+  const rows = Array.isArray(table.rows) ? table.rows.filter(row => row && typeof row === 'object') as Record<string, unknown>[] : []
+  const columns = Array.isArray(table.columns) ? table.columns : []
+  const rank = '\u6700\u7ec8\u8026\u5408\u4f18\u5148\u7ea7\u6392\u540d'
+  const dimension = '\u8bbe\u8ba1\u7ef4\u5ea6'
+  const score = '\u8026\u5408\u4f18\u5148\u7ea7\u603b\u5f97\u5206'
+  const first = rows[0]
+  const topDimension = first && typeof first[dimension] === 'string' ? String(first[dimension]) : ''
+  const topScore = first && first[score] != null ? String(first[score]) : ''
+  const hasRank = columns.includes(rank) && Boolean(topDimension)
+  return {
+    beforeText: `为保证研究结果具有可核验性，本文将核心计算结果汇总为${title}，用于呈现样本、指标或模型输出的关键数值。`,
+    afterText: hasRank
+      ? `由${title}可见，排序靠前的维度为“${topDimension}”${topScore ? `，其综合得分为 ${topScore}` : ''}。该结果说明该维度在后续讨论和优化建议中应被优先关注。`
+      : `${title}展示了本次分析的主要统计结果，可为后续结果解释、研究讨论和策略建议提供数据依据。`,
+  }
+}
+
 export function splitResearchAssetIntoComponents(asset: ResearchAsset): ResearchPackageComponent[] {
   const structured = asset.structuredData as { run?: ResearchAnalysisRun & StructuredResearchResult; result?: StructuredResearchResult } | null
   const result: StructuredResearchResult | undefined = structured?.result ?? structured?.run
@@ -51,7 +81,7 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
     ;(result.figures ?? []).forEach((figure, index) => {
       if (!figure?.dataUrl) return
       const title = figure.title ?? `Figure ${index + 1}`
-      const narrative = narrativeFor(result, figure.id, title)
+      const narrative = narrativeFor(result, figure.id, title) ?? fallbackFigureNarrative(figure, title)
       if (narrative?.beforeText) {
         components.push(component('research_component', {
           type: 'analysis',
@@ -90,7 +120,7 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
           ].join('\n')
         : 'No available statistical table.'
       const title = table.title ?? `Table ${index + 1}`
-      const narrative = narrativeFor(result, table.id, title)
+      const narrative = narrativeFor(result, table.id, title) ?? fallbackTableNarrative(table, title)
       if (narrative?.beforeText) {
         components.push(component('research_component', {
           type: 'analysis',
@@ -352,6 +382,15 @@ function researchTableNote(component: ResearchPackageComponent) {
   }
   if (id.includes('quality') || title.includes('质量')) {
     return '注：数据质量判断用于提示后续统计分析的适用性，正式论文中可结合无效样本剔除规则进一步说明。'
+  }
+  if (id.includes('priority') || title.includes('优先级') || title.includes('耦合')) {
+    return '注：综合分由KANO属性、Better/Worse系数与熵权结果耦合得到，排名越靠前表示越应优先纳入设计优化与策略建议。'
+  }
+  if (id.includes('kano') || title.includes('kano')) {
+    return '注：M表示必备型，O表示期望型，A表示魅力型，I表示无差异型；Better系数表示满意度提升作用，Worse系数绝对值表示缺失时导致不满意的程度。'
+  }
+  if (id.includes('entropy') || title.includes('熵权')) {
+    return '注：熵值越低、差异系数越高，表示该指标对综合评价的区分作用越强；权重用于后续耦合优先级计算。'
   }
   return ''
 }
