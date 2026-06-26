@@ -173,7 +173,7 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
     const tableById = new Map(tables.map((table, index) => [normalizedResearchId(table.id), { table, index }]))
     const consumedFigures = new Set<string>()
     const consumedTables = new Set<string>()
-    const orderedKanoEntropyItems = [
+    const orderedResearchItems = [
       { type: 'table', id: 'table_kano_summary' },
       { type: 'figure', id: 'figure_kano_distribution' },
       { type: 'figure', id: 'figure_better_worse_matrix' },
@@ -181,9 +181,25 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
       { type: 'figure', id: 'figure_entropy_weights' },
       { type: 'table', id: 'table_priority_ranking' },
       { type: 'figure', id: 'figure_kano_entropy_priority' },
+      { type: 'table', id: 'table_data_quality' },
+      { type: 'table', id: 'table_descriptive' },
+      { type: 'figure', id: 'figure_descriptive_means' },
+      { type: 'table', id: 'table_reliability' },
+      { type: 'figure', id: 'figure_reliability_alpha' },
+      { type: 'table', id: 'table_correlation' },
+      { type: 'figure', id: 'figure_correlation_heatmap' },
+      { type: 'table', id: 'table_anova' },
+      { type: 'figure', id: 'figure_anova_f' },
+      { type: 'table', id: 'table_efa' },
+      { type: 'figure', id: 'figure_efa_loadings' },
+      { type: 'table', id: 'table_open_coding' },
+      { type: 'table', id: 'table_axial_coding' },
+      { type: 'table', id: 'table_theme_summary' },
+      { type: 'figure', id: 'figure_theme_frequency' },
+      { type: 'table', id: 'table_evidence_excerpt' },
     ] as const
 
-    orderedKanoEntropyItems.forEach(item => {
+    orderedResearchItems.forEach(item => {
       if (item.type === 'table') {
         const found = tableById.get(item.id)
         if (!found) return
