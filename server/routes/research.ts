@@ -1293,12 +1293,16 @@ function enrichQuantResultTables<T extends Record<string, unknown>>(result: T): 
 
 async function enrichQuantResult<T extends Record<string, unknown>>(result: T, payload: Record<string, unknown>): Promise<T> {
   let enriched = enrichQuantResultTables(await enrichQuantResultFigures(result))
-  if (result.qualityReport) return enriched
+  let qualityReport = result.qualityReport && typeof result.qualityReport === 'object'
+    ? result.qualityReport as Record<string, unknown>
+    : null
   try {
-    const profile = await profileDatasetInNode(payload)
-    const qualityReport = profile.qualityReport && typeof profile.qualityReport === 'object'
-      ? profile.qualityReport as Record<string, unknown>
-      : null
+    if (!qualityReport) {
+      const profile = await profileDatasetInNode(payload)
+      qualityReport = profile.qualityReport && typeof profile.qualityReport === 'object'
+        ? profile.qualityReport as Record<string, unknown>
+        : null
+    }
     if (!qualityReport) return enriched
     const qualityWarnings = Array.isArray(qualityReport.warnings)
       ? qualityReport.warnings.filter((item): item is string => typeof item === 'string')

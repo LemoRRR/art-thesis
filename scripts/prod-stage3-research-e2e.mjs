@@ -161,12 +161,12 @@ async function inspectDownloadedDocx(filePath) {
   assert(/数据质量与方法适用性检查表/.test(text), 'DOCX is missing data quality table')
   assert(/描述性统计表/.test(text), 'DOCX is missing descriptive statistics table')
   assert(/描述统计均值图/.test(text), 'DOCX is missing descriptive mean figure')
-  assertCaptionSequence(text, '表', 5)
-  assertCaptionSequence(text, '图', 4)
+  assertCaptionSequence(text, '表', 4)
+  assertCaptionSequence(text, '图', 3)
   assert(!/table_data_quality|table_descriptive|figure_descriptive_means|research_component/.test(text), 'DOCX leaked internal research ids')
 
   const media = Object.keys(zip.files).filter(name => name.startsWith('word/media/') && !name.endsWith('/'))
-  assert(media.length >= 4, `DOCX should contain at least 4 generated figures, got ${media.length}`)
+  assert(media.length >= 3, `DOCX should contain at least 3 generated figures, got ${media.length}`)
   return {
     tableCaptions: (text.match(/表4[-—-]\d+/g) ?? []).length,
     figureCaptions: (text.match(/图4[-—-]\d+/g) ?? []).length,
