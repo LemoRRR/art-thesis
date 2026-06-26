@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useState } from 'react'
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AlertCircle, ArrowRight, BarChart3, CheckCircle2, ClipboardList, FileText, FlaskConical, History, Play, Upload, X } from 'lucide-react'
 import { researchAPI } from '../lib/api'
@@ -148,7 +148,9 @@ export default function ResearchDrawer({
   const [latestAnalysisAssetId, setLatestAnalysisAssetId] = useState('')
   const [notice, setNotice] = useState('')
   const [loadingStep, setLoadingStep] = useState<'intent' | 'plan' | 'run' | ''>('')
+  const [isUploadingDataset, setIsUploadingDataset] = useState(false)
   const [historyTick, setHistoryTick] = useState(0)
+  const datasetUploadInFlightRef = useRef(false)
 
   const project = projectStore.ensure(projectId)
   const tasks = researchTaskStore.getByProject(projectId)
@@ -176,41 +178,55 @@ export default function ResearchDrawer({
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    const isExcel = /\.(xlsx|xls)$/i.test(file.name)
-    const text = isExcel ? undefined : await file.text()
-    const base64 = isExcel ? arrayBufferToBase64(await file.arrayBuffer()) : undefined
-    const task = primaryTask ?? researchTaskStore.add({
-      projectId,
-      title: '章节研究结果分析',
-      methodType: 'quantitative',
-      status: 'survey_ready',
-      nextActionLabel: '确认分析方案',
-    })
-    const asset = researchAssetStore.add({
-      projectId,
-      taskId: task.id,
-      type: 'quant_dataset',
-      title: file.name,
-      summary: isExcel ? '已上传 Excel 数据文件，等待 Python 读取。' : `已上传 CSV/TXT 数据，约 ${text?.split(/\r?\n/).filter(Boolean).length ?? 0} 行。`,
-      source: 'uploaded_by_user',
-      structuredData: { fileName: file.name, base64, preview: text?.slice(0, 3000) },
-      plainText: text?.slice(0, 20000) ?? '',
-      status: 'confirmed',
-    })
-    researchTaskStore.update(task.id, {
-      status: 'data_uploaded',
-      datasetAssetId: asset.id,
-      nextActionLabel: 'AI 生成分析方案',
-    })
-    setDataset({ fileName: file.name, text, base64, rowCount: text?.split(/\r?\n/).filter(Boolean).length, assetId: asset.id })
-    setPlan(null)
-    setIntent(null)
-    setNotice('数据已上传。下一步先让 AI 生成分析方案，确认后再运行 Python。')
+    datasetUploadInFlightRef.current = true
+    setIsUploadingDataset(true)
+    setNotice('正在读取数据文件，请稍等。')
+    try {
+      const isExcel = /\.(xlsx|xls)$/i.test(file.name)
+      const text = isExcel ? undefined : await file.text()
+      const base64 = isExcel ? arrayBufferToBase64(await file.arrayBuffer()) : undefined
+      const task = primaryTask ?? researchTaskStore.add({
+        projectId,
+        title: '章节研究结果分析',
+        methodType: 'quantitative',
+        status: 'survey_ready',
+        nextActionLabel: '确认分析方案',
+      })
+      const asset = researchAssetStore.add({
+        projectId,
+        taskId: task.id,
+        type: 'quant_dataset',
+        title: file.name,
+        summary: isExcel ? '已上传 Excel 数据文件，等待 Python 读取。' : `已上传 CSV/TXT 数据，约 ${text?.split(/\r?\n/).filter(Boolean).length ?? 0} 行。`,
+        source: 'uploaded_by_user',
+        structuredData: { fileName: file.name, base64, preview: text?.slice(0, 3000) },
+        plainText: text?.slice(0, 20000) ?? '',
+        status: 'confirmed',
+      })
+      researchTaskStore.update(task.id, {
+        status: 'data_uploaded',
+        datasetAssetId: asset.id,
+        nextActionLabel: 'AI 生成分析方案',
+      })
+      setDataset({ fileName: file.name, text, base64, rowCount: text?.split(/\r?\n/).filter(Boolean).length, assetId: asset.id })
+      setPlan(null)
+      setIntent(null)
+      setNotice('数据已上传。下一步先让 AI 生成分析方案，确认后再运行 Python。')
+    } catch (error) {
+      setNotice(`读取数据失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      datasetUploadInFlightRef.current = false
+      setIsUploadingDataset(false)
+    }
   }
 
   const createIntentAndPlan = async () => {
     if (!requestText.trim()) {
       setNotice('请先描述你希望这次研究结果解决什么问题。')
+      return
+    }
+    if (datasetUploadInFlightRef.current) {
+      setNotice('数据文件还在读取中，请稍后再生成分析方案。')
       return
     }
     if (!dataset) {
@@ -368,17 +384,17 @@ export default function ResearchDrawer({
           />
           <label style={uploadStyle} data-testid="research-upload-label">
             <Upload size={13} />
-            {dataset ? dataset.fileName : '上传 CSV / Excel'}
-            <input data-testid="research-upload-input" type="file" accept=".csv,.txt,.xlsx,.xls" onChange={uploadDataset} style={{ display: 'none' }} />
+            {isUploadingDataset ? '正在读取文件…' : dataset ? dataset.fileName : '上传 CSV / Excel'}
+            <input data-testid="research-upload-input" type="file" accept=".csv,.txt,.xlsx,.xls" onChange={uploadDataset} disabled={isUploadingDataset || Boolean(loadingStep)} style={{ display: 'none' }} />
           </label>
           {dataset && (
             <div style={{ fontSize: 11, color: 'var(--color-ink-3)', marginTop: 6 }}>
               {dataset.rowCount ? `已读取约 ${dataset.rowCount} 行；` : 'Excel 将由 Python 读取；'}运行前会先确认变量映射。
             </div>
           )}
-          <button data-testid="research-generate-plan" onClick={createIntentAndPlan} disabled={Boolean(loadingStep)} style={primaryActionStyle(Boolean(loadingStep))}>
+          <button data-testid="research-generate-plan" onClick={createIntentAndPlan} disabled={Boolean(loadingStep) || isUploadingDataset || !dataset} style={primaryActionStyle(Boolean(loadingStep) || isUploadingDataset || !dataset)}>
             <ClipboardList size={13} />
-            {loadingStep === 'intent' || loadingStep === 'plan' ? '生成方案中…' : '生成分析方案'}
+            {isUploadingDataset ? '读取文件中…' : loadingStep === 'intent' || loadingStep === 'plan' ? '生成方案中…' : '生成分析方案'}
           </button>
         </section>
 

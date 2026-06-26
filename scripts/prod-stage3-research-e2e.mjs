@@ -187,6 +187,10 @@ async function main() {
     })
     await clickByTestId(page, 'stage3-open-research')
     await page.getByTestId('research-upload-input').setInputFiles(workbookPath)
+    await page.waitForFunction(() => {
+      const button = document.querySelector('[data-testid="research-generate-plan"]')
+      return button instanceof HTMLButtonElement && !button.disabled
+    }, { timeout: 30000 })
     await clickByTestId(page, 'research-generate-plan')
     await page.getByTestId('research-run-plan').waitFor({ state: 'visible', timeout: 180000 })
     await clickByTestId(page, 'research-run-plan')
