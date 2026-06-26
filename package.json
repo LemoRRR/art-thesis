@@ -10,6 +10,7 @@
     "smoke:research-ahp": "tsx scripts/ahp-research-smoke.mjs",
     "smoke:research-quant": "tsx scripts/quant-research-smoke.mjs",
     "smoke:research-qual": "tsx scripts/qualitative-research-smoke.mjs",
+    "smoke:prod-research": "tsx scripts/prod-research-smoke.mjs",
     "smoke:citation-docx": "tsx scripts/citation-docx-smoke.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
