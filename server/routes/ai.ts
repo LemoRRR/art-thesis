@@ -43,7 +43,7 @@ router.post('/stream', async (req, res) => {
   let clientClosed = false
   const timeout = setTimeout(() => controller.abort(), AI_STREAM_TIMEOUT_MS)
 
-  req.on('close', () => {
+  res.on('close', () => {
     if (!res.writableEnded) {
       clientClosed = true
       controller.abort()

@@ -14,8 +14,9 @@ import {
 } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
-import { researchAPI } from '../lib/api'
+import { researchAPI, type ResearchWritePlanPlacement } from '../lib/api'
 import { callGPT, type Message } from '../lib/ai'
+import { editorDocToPlainText, ensurePaperEditorDoc } from '../lib/editorDocument'
 import { createPackageFromAsset, researchPackageToPaperNodes } from '../lib/researchPackages'
 import {
   buildResearchDesignBrief,
@@ -34,6 +35,7 @@ import {
   type ResearchAsset,
   type ResearchAssetType,
   type ResearchMethodType,
+  type ResearchPackageComponent,
   type ResearchPlan,
   type ResearchTask,
   type ScaleAssetData,
@@ -43,6 +45,7 @@ import {
 type ToolMode = 'survey' | 'interview' | 'kano' | 'ahp' | 'coding'
 type WorkspacePurpose = 'generate' | 'analyze' | 'optimize'
 type SourceKind = 'outline' | 'full_text' | 'stage1'
+type AnalysisPhase = 'idle' | 'uploaded' | 'planning' | 'running' | 'interpreting' | 'ready' | 'error'
 
 interface ToolOption {
   value: ToolMode
@@ -1429,12 +1432,16 @@ export default function ResearchCenter() {
   const [isEditingMethod, setIsEditingMethod] = useState(false)
   const [methodDraft, setMethodDraft] = useState<MethodDraft>(() => createMethodDraft(route, stage1ResearchPlan))
   const [isGeneratingTool, setIsGeneratingTool] = useState(false)
+  const [isReinterpreting, setIsReinterpreting] = useState(false)
+  const [isWritingToPaper, setIsWritingToPaper] = useState(false)
   const [tasks, setTasks] = useState<ResearchTask[]>(() => researchTaskStore.getByProject(project.id))
   const [assets, setAssets] = useState<ResearchAsset[]>(() => researchAssetStore.getByProject(project.id))
   const [activeAssetId, setActiveAssetId] = useState(() => assets[0]?.id ?? '')
   const [draftText, setDraftText] = useState('')
   const [uploadedName, setUploadedName] = useState('')
   const [notice, setNotice] = useState('')
+  const [analysisPhase, setAnalysisPhase] = useState<AnalysisPhase>('idle')
+  const [analysisError, setAnalysisError] = useState('')
   const [resultView, setResultView] = useState<ResultView>('questionnaire')
 
   useEffect(() => {
@@ -1454,7 +1461,14 @@ export default function ResearchCenter() {
   const activeOption = toolOptions.find(option => option.value === mode) ?? toolOptions[0]
   const activePurpose = purposeOptions.find(option => option.value === purpose) ?? purposeOptions[0]
   const latestDataset = assets.find(asset => asset.type === 'quant_dataset')
-  const latestAnalysis = assets.find(asset => asset.type === 'quant_analysis_result')
+  const latestAnalysis = assets.find(asset => asset.type === 'quant_analysis_result' || asset.type === 'qualitative_coding')
+  const isAnalyzing = analysisPhase === 'planning' || analysisPhase === 'running' || analysisPhase === 'interpreting'
+  const canReinterpretActiveAsset = Boolean(
+    activeAsset?.structuredData
+    && typeof activeAsset.structuredData === 'object'
+    && 'result' in activeAsset.structuredData
+    && activeAsset.type !== 'quant_dataset'
+  )
   const dataTemplate = buildDataTemplate(activeAsset)
   const wjxPasteText = buildWjxPasteText(activeAsset)
 
@@ -1504,42 +1518,47 @@ export default function ResearchCenter() {
     })
     const brief = buildResearchDesignBrief(mode, project.title, source, route)
     const generated = buildResearchTool(mode, project.title, source, route)
-    let generatedText = generated.text
-    let usedAI = false
-    let quality = validateResearchTool(mode, generatedText)
+    let generatedText = ''
+    let quality = validateResearchTool(mode, generated.text)
     try {
       setNotice(`正在调用 AI 生成专业版${activeOption.label}…`)
       const aiText = await streamResearchText(buildResearchToolPrompt(mode, project.title, source, route, generated.text, brief))
-      if (aiText.length > 700) {
-        generatedText = aiText
-        usedAI = true
-        quality = validateResearchTool(mode, generatedText)
+      if (aiText.length <= 700) {
+        throw new Error('AI 返回内容过短，未达到正式研究工具要求。')
       }
+      generatedText = aiText
+      quality = validateResearchTool(mode, generatedText)
       if (!quality.ok) {
         setNotice(`正在质检并补全${activeOption.label}：${quality.issues.slice(0, 2).join('；')}`)
         const repairedText = await streamResearchText(
           buildResearchToolRepairPrompt(mode, project.title, source, route, brief, generatedText, quality.issues)
         )
-        if (repairedText.length > generatedText.length * 0.8) {
-          generatedText = repairedText
-          usedAI = true
-          quality = validateResearchTool(mode, generatedText)
+        if (repairedText.length <= generatedText.length * 0.8) {
+          throw new Error('AI 质检补全文本不足，未保存模板兜底结果。')
         }
+        generatedText = repairedText
+        quality = validateResearchTool(mode, generatedText)
       }
     } catch (error) {
-      console.warn('[ResearchCenter] AI research tool generation failed, fallback to template', error)
-      setNotice(`AI 研究工具生成失败，已使用标准模板兜底：${error instanceof Error ? error.message : String(error)}`)
+      console.warn('[ResearchCenter] AI research tool generation failed', error)
+      researchTaskStore.update(task.id, {
+        nextActionLabel: 'AI生成失败，请重试',
+      })
+      setNotice(`AI 研究工具生成失败，未保存模板结果。请稍后重试或补充更多论文材料：${error instanceof Error ? error.message : String(error)}`)
+      refresh()
+      setIsGeneratingTool(false)
+      return
     }
     const asset = researchAssetStore.add({
       projectId: project.id,
       taskId: task.id,
       type: activeOption.assetType,
       title: `${project.title}-${activeOption.label}`,
-      summary: `${usedAI ? 'AI依据' : '依据'}${source.label}生成；${activeOption.outcome}`,
+      summary: `AI依据${source.label}专用生成；${activeOption.outcome}`,
       source: 'generated_from_project',
       structuredData: {
         ...(typeof generated.data === 'object' && generated.data ? generated.data as Record<string, unknown> : { value: generated.data }),
-        generatedByAI: usedAI,
+        generatedByAI: true,
         researchDesignBrief: brief,
         qualityCheck: quality,
       },
@@ -1549,7 +1568,7 @@ export default function ResearchCenter() {
     setDraftText('')
     setResultView(mode === 'kano' ? 'questionnaire' : 'full')
     refresh(asset.id)
-    setNotice(`已${usedAI ? '调用 AI ' : ''}根据${source.label}生成${activeOption.label}，质检得分 ${quality.score}/100${quality.ok ? '' : `，仍建议人工复核：${quality.issues.slice(0, 2).join('；')}`}。`)
+    setNotice(`已调用 AI 根据${source.label}专用生成${activeOption.label}，质检得分 ${quality.score}/100${quality.ok ? '' : `，仍建议人工复核：${quality.issues.slice(0, 2).join('；')}`}。`)
     setIsGeneratingTool(false)
   }
 
@@ -1602,6 +1621,8 @@ export default function ResearchCenter() {
       nextActionLabel: '运行统计分析',
     })
     setUploadedName(file.name)
+    setAnalysisPhase('uploaded')
+    setAnalysisError('')
     refresh(dataset.id)
     setNotice('数据已上传。现在可以先生成初步分析结果，再把结果插入 Stage3。')
   }
@@ -1638,39 +1659,84 @@ export default function ResearchCenter() {
 
   const runAnalysis = async () => {
     if (!latestDataset) {
-      setNotice('请先上传 CSV/Excel/TXT 数据文件，系统识别到最新数据后才能生成分析结果。研究计算是可选步骤，也可以直接进入文章生成。')
+      setNotice('请先上传 CSV/Excel/TXT 数据文件，系统识别到最新数据后才能生成分析结果。研究计算是全文初稿后的补强步骤，也可以先回到文章生成继续完善正文。')
       return
     }
     const task = latestDataset.taskId ? researchTaskStore.get(latestDataset.taskId) : tasks[0]
-    setNotice('Python 后端正在运行统计分析…')
+    const isQualitative = mode === 'interview' || mode === 'coding' || /\.txt$/i.test(latestDataset.title)
+    setAnalysisPhase('planning')
+    setAnalysisError('')
+    setNotice('AI 正在识别数据结构和适合的研究方法…')
     let analysisText = ''
     let structuredResult: unknown = null
+    let confirmedPlan: Awaited<ReturnType<typeof researchAPI.analysisPlan>>['plan'] | null = null
+    let usedBrowserFallback = false
+    let usedInterpretFallback = false
     try {
       const data = latestDataset.structuredData as { base64?: string } | null
+      const intent = {
+        projectId: project.id,
+        userRequest: isQualitative
+          ? '对上传的访谈、开放题或文本材料进行开放编码、主轴编码、主题归纳和证据摘录。'
+          : '对上传的问卷或统计数据生成论文可用的数据分析方案、图表和结果解释。',
+        purpose: isQualitative ? '质性编码分析' : '论文数据分析',
+        capabilityTier: 'partial_loop',
+        recommendedMethods: isQualitative ? ['descriptive'] : ['descriptive', 'cronbach_alpha', 'correlation', 'anova', 'efa'],
+        expectedPackage: ['method', 'statistics', 'figure', 'analysis'],
+        notes: [],
+      } satisfies Parameters<typeof researchAPI.analysisPlan>[0]['intent']
+      const planResult = await researchAPI.analysisPlan({
+        intent,
+        fileName: latestDataset.title,
+        text: latestDataset.plainText,
+        base64: data?.base64,
+        method: isQualitative ? 'qualitative_coding' : undefined,
+        userRequest: intent.userRequest,
+      })
+      confirmedPlan = planResult.plan
+      setAnalysisPhase('running')
+      setNotice(isQualitative ? '正在执行质性编码并生成主题图表…' : '正在执行统计计算并生成论文图表…')
       const result = await researchAPI.analyze({
         fileName: latestDataset.title,
         text: latestDataset.plainText,
         base64: data?.base64,
+        method: isQualitative ? 'qualitative_coding' : undefined,
+        confirmedPlan,
       })
+      setAnalysisPhase('interpreting')
       structuredResult = result
+      usedInterpretFallback = result.interpretationProvider === 'fallback'
       analysisText = [
+        result.methodText ? `【研究方法说明】\n${result.methodText}` : '',
         '【数据分析结果】',
         result.plainText,
+        result.analysisText ? `\n【论文结果表述】\n${result.analysisText}` : '',
+        usedInterpretFallback ? '\n【写作提示】\n统计计算已完成，但 AI 论文解释暂时不可用，系统已使用规则兜底生成保守表述。可稍后重新生成分析结果或直接插入正文后再润色。' : '',
         result.cautions.length ? `\n【环境提示】\n${result.cautions.join('\n')}` : '',
       ].filter(Boolean).join('\n')
+      setAnalysisPhase('ready')
     } catch (error) {
       console.warn('[ResearchCenter] Python analysis failed, fallback to browser analysis', error)
-      analysisText = analyzeDataset(latestDataset.title, latestDataset.plainText)
+      usedBrowserFallback = true
+      analysisText = [
+        '【数据分析结果】',
+        analyzeDataset(latestDataset.title, latestDataset.plainText),
+        '',
+        '【错误恢复提示】',
+        '后端统计/AI 分析暂时失败，系统已生成浏览器端兜底结果。请检查数据格式、列名和缺失值；也可以稍后点击“生成分析结果”重新运行，或先插入正文后人工调整。',
+      ].join('\n')
       structuredResult = { fallback: true, error: error instanceof Error ? error.message : String(error) }
+      setAnalysisPhase('error')
+      setAnalysisError(error instanceof Error ? error.message : String(error))
     }
     const asset = researchAssetStore.add({
       projectId: project.id,
       taskId: latestDataset.taskId,
-      type: 'quant_analysis_result',
+      type: isQualitative ? 'qualitative_coding' : 'quant_analysis_result',
       title: `${latestDataset.title}-分析结果`,
-      summary: '基于上传数据由 Python 后端生成的统计分析结果，可插入论文第四章。',
+      summary: isQualitative ? '基于上传文本生成的质性编码结果，可插入论文研究结果章节。' : '基于上传数据生成的统计分析结果，可插入论文第四章。',
       source: 'generated_from_project',
-      structuredData: { datasetAssetId: latestDataset.id, result: structuredResult },
+      structuredData: { datasetAssetId: latestDataset.id, confirmedPlan, result: structuredResult },
       plainText: analysisText,
       status: 'confirmed',
     })
@@ -1682,56 +1748,234 @@ export default function ResearchCenter() {
       })
     }
     refresh(asset.id)
-    setNotice('已生成统计分析结果，并保存为研究资产。')
+    setNotice(usedBrowserFallback
+      ? '后端分析失败，已保存浏览器兜底结果；可检查数据后重新生成。'
+      : usedInterpretFallback
+        ? '计算已完成，AI 解释使用兜底表述；可稍后重新生成或直接插入正文。'
+        : '已生成统计分析结果，并保存为研究资产。')
   }
 
-  const insertIntoPaper = () => {
-    if (!activeAsset || !activeText.trim()) return
-    const isAnalysis = activeAsset.type === 'quant_analysis_result'
-    const title = researchAssetSectionTitle(activeAsset)
-    const content = [
-      isAnalysis
-        ? '本节由研究计算中心根据回收数据生成，后续可在 Stage3 中结合全文语境继续润色。'
-        : '本节由研究计算中心根据论文大纲/正文生成，作为后续数据收集与论文写作依据。',
-      '',
-      activeText,
-    ].join('\n')
-    const sectionId = `research-${activeAsset.id}-${Date.now()}`
-    const pkg = createPackageFromAsset({
-      projectId: project.id,
-      chapterId: sectionId,
-      asset: { ...activeAsset, plainText: activeText },
-      intentSummary: `从独立研究计算页面插入 Stage3：${activeAsset.title}`,
-    })
-    const componentIds = pkg.components.map(component => component.id)
-    researchPackageStore.markInserted(pkg.id, componentIds)
-    sectionStore.add({
-      id: sectionId,
-      projectId: project.id,
-      title,
-      content,
-      editorDoc: {
-        type: 'doc',
-        content: researchPackageToPaperNodes(pkg, componentIds),
-      },
-      status: 'done',
-      order: researchAssetOrder(activeAsset),
-      sourceRefs: [activeAsset.id, pkg.id],
-      generationPlan: `由研究计算资产「${activeAsset.title}」插入`,
-    })
-    researchAssetStore.update(activeAsset.id, {
-      status: 'used_in_paper',
-      linkedSectionIds: [...(activeAsset.linkedSectionIds ?? []), sectionId],
-    })
-    if (activeAsset.taskId) {
-      researchTaskStore.update(activeAsset.taskId, {
-        status: 'inserted_into_paper',
-        nextActionLabel: '在 Stage3 润色并整合',
-      })
+  const reinterpretActiveAnalysis = async () => {
+    if (!activeAsset || isReinterpreting) return
+    const structured = activeAsset.structuredData && typeof activeAsset.structuredData === 'object'
+      ? activeAsset.structuredData as { result?: unknown; confirmedPlan?: unknown; datasetAssetId?: string }
+      : null
+    const result = structured?.result && typeof structured.result === 'object'
+      ? structured.result as Record<string, unknown>
+      : null
+    if (!result || result.fallback) {
+      setNotice('当前资产没有可重新解释的结构化计算结果，请重新运行数据分析。')
+      return
     }
-    refresh(activeAsset.id)
-    setNotice('已插入 Stage3。文章生成时可以继续围绕这份量表/结果写作和润色。')
-    navigate(`/projects/${project.id}/stage3`, { state: { insertedSectionId: sectionId } })
+    setIsReinterpreting(true)
+    setAnalysisPhase('interpreting')
+    setAnalysisError('')
+    setNotice('正在保留计算结果，并重新生成论文表述…')
+    try {
+      const interpreted = await researchAPI.interpret({
+        result,
+        fileName: activeAsset.title,
+        paperTitle: project.title,
+        userRequest: '请基于已有统计/编码结果，重新生成可直接写入论文的研究方法说明和结果分析文字。',
+        confirmedPlan: structured?.confirmedPlan as never,
+      })
+      const nextResult = interpreted.result
+      const nextText = [
+        nextResult.methodText ? `【研究方法说明】\n${nextResult.methodText}` : '',
+        '【数据分析结果】',
+        nextResult.plainText,
+        nextResult.analysisText ? `\n【论文结果表述】\n${nextResult.analysisText}` : '',
+        nextResult.interpretationProvider === 'fallback' ? '\n【写作提示】\nAI 论文解释暂时不可用，系统已使用规则兜底生成保守表述。' : '',
+        nextResult.cautions?.length ? `\n【环境提示】\n${nextResult.cautions.join('\n')}` : '',
+      ].filter(Boolean).join('\n')
+      researchAssetStore.update(activeAsset.id, {
+        structuredData: { ...(structured ?? {}), result: nextResult },
+        plainText: nextText,
+        summary: nextResult.interpretationProvider === 'fallback'
+          ? `${activeAsset.summary}（论文表述已用规则兜底重生成）`
+          : `${activeAsset.summary}（论文表述已重新生成）`,
+      })
+      refresh(activeAsset.id)
+      setAnalysisPhase('ready')
+      setNotice(nextResult.interpretationProvider === 'fallback'
+        ? '计算结果未变，论文表述已用规则兜底重新生成。'
+        : '计算结果未变，论文表述已重新生成。')
+    } catch (error) {
+      setAnalysisPhase('error')
+      setAnalysisError(error instanceof Error ? error.message : String(error))
+      setNotice('重新解释失败：计算结果仍保留，可稍后重试或直接插入正文。')
+    } finally {
+      setIsReinterpreting(false)
+    }
+  }
+
+  type ResearchInsertRole = 'method' | 'result' | 'discussion'
+
+  const componentInsertRole = (component: ResearchPackageComponent): ResearchInsertRole => {
+    if (component.type === 'method') return 'method'
+    if (component.type === 'analysis' && /策略|建议|优化|讨论/.test(`${component.title ?? ''}\n${component.content}`)) return 'discussion'
+    return 'result'
+  }
+
+  const researchInsertTitle = (role: ResearchInsertRole, asset: ResearchAsset) => {
+    if (role === 'method') return '研究方法与数据来源'
+    if (role === 'discussion') return '讨论与优化策略'
+    return researchAssetSectionTitle(asset)
+  }
+
+  const researchInsertOrder = (role: ResearchInsertRole, asset: ResearchAsset) => {
+    if (role === 'method') return 30
+    if (role === 'discussion') return 50
+    return researchAssetOrder(asset)
+  }
+
+  const findResearchTargetSection = (asset: ResearchAsset, role: ResearchInsertRole) => {
+    const sections = sectionStore.getByProject(project.id)
+    const keywords = role === 'method'
+      ? ['研究方法', '研究设计', '数据来源', '研究对象', '第三章']
+      : role === 'discussion'
+        ? ['设计策略', '优化策略', '讨论', '建议', '启示', '第五章']
+        : asset.type === 'quant_analysis_result' || asset.type === 'qualitative_coding'
+          ? ['数据分析', '结果分析', '研究结果', '实证分析', '第四章']
+          : ['研究结果', '数据分析', '第四章']
+    return sections
+      .map(section => ({
+        section,
+        score: keywords.reduce((sum, keyword) => sum + (section.title.includes(keyword) ? 3 : 0) + (section.content.includes(keyword) ? 1 : 0), 0),
+      }))
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score)[0]?.section ?? null
+  }
+
+  const insertIntoPaper = async () => {
+    if (!activeAsset || !activeText.trim() || isWritingToPaper) return
+    setIsWritingToPaper(true)
+    setNotice('AI 正在判断研究结果最适合写入哪些论文章节...')
+    try {
+      const pkg = createPackageFromAsset({
+        projectId: project.id,
+        asset: { ...activeAsset, plainText: activeText },
+        intentSummary: `从研究计算页面写入 Stage3：${activeAsset.title}`,
+      })
+      const fallbackGrouped = pkg.components.reduce((map, component) => {
+        const role = componentInsertRole(component)
+        map.set(role, [...(map.get(role) ?? []), component.id])
+        return map
+      }, new Map<ResearchInsertRole, string[]>())
+      const fallbackPlacements: ResearchWritePlanPlacement[] = (['method', 'result', 'discussion'] as ResearchInsertRole[])
+        .map(role => {
+          const componentIds = fallbackGrouped.get(role) ?? []
+          const targetSection = findResearchTargetSection(activeAsset, role)
+          return {
+            targetSectionId: targetSection?.id,
+            targetSectionTitle: targetSection?.title ?? researchInsertTitle(role, activeAsset),
+            role,
+            insertPosition: 'append' as const,
+            reason: targetSection ? '根据章节语义自动匹配' : '未找到明确章节，创建论文常用章节承接',
+            componentIds,
+          }
+        })
+        .filter(placement => placement.componentIds.length > 0)
+
+      let placements = fallbackPlacements
+      try {
+        const currentSections = sectionStore.getByProject(project.id)
+        const planResult = await researchAPI.writePlan({
+          paperTitle: project.title,
+          assetTitle: activeAsset.title,
+          assetSummary: activeAsset.summary,
+          sections: currentSections.map(section => ({
+            id: section.id,
+            title: section.title,
+            content: section.content.slice(0, 1200),
+          })),
+          components: pkg.components.map(component => ({
+            id: component.id,
+            type: component.type,
+            title: component.title,
+            content: component.content.slice(0, 1200),
+          })),
+        })
+        if (planResult.plan.placements.length > 0) {
+          placements = planResult.plan.placements
+        }
+      } catch (error) {
+        console.warn('[ResearchCenter] write plan unavailable, using local fallback', error)
+        setNotice('AI 写入规划暂时不可用，已改用本地章节语义匹配继续写入。')
+      }
+
+      const insertedSectionIds: string[] = []
+      const insertedSectionTitles: string[] = []
+      const insertedComponentIds: string[] = []
+      const validComponentIds = new Set(pkg.components.map(component => component.id))
+
+      placements.forEach((placement, index) => {
+        const componentIds = placement.componentIds.filter(id => validComponentIds.has(id))
+        if (!componentIds.length) return
+        const currentSections = sectionStore.getByProject(project.id)
+        const targetSection = currentSections.find(section => section.id === placement.targetSectionId)
+          ?? currentSections.find(section => section.title === placement.targetSectionTitle)
+          ?? currentSections.find(section => section.title.includes(placement.targetSectionTitle) || placement.targetSectionTitle.includes(section.title))
+          ?? null
+        const role = placement.role === 'method' || placement.role === 'discussion' || placement.role === 'result'
+          ? placement.role
+          : 'result'
+        const sectionId = targetSection?.id ?? `research-${role}-${activeAsset.id}-${Date.now()}-${index}`
+        const researchNodes = researchPackageToPaperNodes(pkg, componentIds)
+
+        if (targetSection) {
+          const sourceDoc = ensurePaperEditorDoc(targetSection.content, targetSection.editorDoc)
+          const editorDoc = {
+            ...sourceDoc,
+            content: [...(sourceDoc.content ?? []), ...researchNodes],
+          }
+          sectionStore.update(targetSection.id, {
+            content: editorDocToPlainText(editorDoc),
+            editorDoc,
+            status: 'done',
+            sourceRefs: Array.from(new Set([...(targetSection.sourceRefs ?? []), activeAsset.id, pkg.id])),
+            generationPlan: `研究计算结果已由 AI 规划并写入：${activeAsset.title}`,
+          })
+          insertedSectionTitles.push(targetSection.title)
+        } else {
+          const title = placement.targetSectionTitle || researchInsertTitle(role, activeAsset)
+          sectionStore.add({
+            id: sectionId,
+            projectId: project.id,
+            title,
+            content: editorDocToPlainText({ type: 'doc', content: researchNodes }),
+            editorDoc: {
+              type: 'doc',
+              content: researchNodes,
+            },
+            status: 'done',
+            order: researchInsertOrder(role, activeAsset),
+            sourceRefs: [activeAsset.id, pkg.id],
+            generationPlan: `由研究计算资产《${activeAsset.title}》经 AI 规划写入`,
+          })
+          insertedSectionTitles.push(title)
+        }
+        insertedComponentIds.push(...componentIds)
+        insertedSectionIds.push(sectionId)
+      })
+
+      researchPackageStore.markInserted(pkg.id, insertedComponentIds)
+      researchAssetStore.update(activeAsset.id, {
+        status: 'used_in_paper',
+        linkedSectionIds: Array.from(new Set([...(activeAsset.linkedSectionIds ?? []), ...insertedSectionIds])),
+      })
+      if (activeAsset.taskId) {
+        researchTaskStore.update(activeAsset.taskId, {
+          status: 'inserted_into_paper',
+          nextActionLabel: '在 Stage3 润色并整合',
+        })
+      }
+      refresh(activeAsset.id)
+      setNotice(`已按论文结构写入 Stage3：${Array.from(new Set(insertedSectionTitles)).join('、')}。`)
+      navigate(`/projects/${project.id}/stage3`, { state: { insertedSectionId: insertedSectionIds[0] } })
+    } finally {
+      setIsWritingToPaper(false)
+    }
   }
 
   if (isAssetPage) {
@@ -1740,7 +1984,7 @@ export default function ResearchCenter() {
         <Sidebar />
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <TopBar
-            currentStep={2}
+            currentStep={3}
             right={
               <button onClick={() => navigate(`/projects/${project.id}/research`)} style={secondaryButtonStyle}>
                 返回研究流程
@@ -1828,9 +2072,9 @@ export default function ResearchCenter() {
                           <Save size={13} />
                           保存新版本
                         </button>
-                        <button onClick={insertIntoPaper} style={primaryButtonStyle}>
+                        <button onClick={() => void insertIntoPaper()} disabled={isWritingToPaper} style={{ ...primaryButtonStyle, opacity: isWritingToPaper ? 0.65 : 1, cursor: isWritingToPaper ? 'not-allowed' : 'pointer' }}>
                           <CheckCircle2 size={13} />
-                          插入 Stage3
+                          {isWritingToPaper ? '正在规划写入...' : 'AI 写入论文'}
                         </button>
                       </div>
                     </>
@@ -1849,10 +2093,10 @@ export default function ResearchCenter() {
       <Sidebar />
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <TopBar
-          currentStep={2}
+          currentStep={3}
           right={
             <button onClick={() => navigate(`/projects/${project.id}/stage3`)} style={secondaryButtonStyle}>
-              继续到文章生成
+              回到文章生成
               <ArrowRight size={13} />
             </button>
           }
@@ -2100,15 +2344,29 @@ export default function ResearchCenter() {
                       </label>
                       <button
                         onClick={runAnalysis}
+                        disabled={!latestDataset || isAnalyzing}
                         title={latestDataset ? '基于最新上传数据生成分析结果' : '请先上传 CSV/TXT 数据文件'}
                         style={{
                           ...secondaryButtonStyle,
-                          opacity: latestDataset ? 1 : 0.62,
-                          cursor: latestDataset ? 'pointer' : 'not-allowed',
+                          opacity: latestDataset && !isAnalyzing ? 1 : 0.62,
+                          cursor: latestDataset && !isAnalyzing ? 'pointer' : 'not-allowed',
                         }}
                       >
                         <BarChart3 size={13} />
-                        基于最新数据生成分析结果
+                        {isAnalyzing ? '正在生成分析结果…' : '基于最新数据生成分析结果'}
+                      </button>
+                      <button
+                        onClick={() => void reinterpretActiveAnalysis()}
+                        disabled={!canReinterpretActiveAsset || isReinterpreting}
+                        title={canReinterpretActiveAsset ? '保留计算结果，只重新生成论文方法和结果表述' : '需要先生成结构化分析结果'}
+                        style={{
+                          ...secondaryButtonStyle,
+                          opacity: canReinterpretActiveAsset && !isReinterpreting ? 1 : 0.62,
+                          cursor: canReinterpretActiveAsset && !isReinterpreting ? 'pointer' : 'not-allowed',
+                        }}
+                      >
+                        <Pencil size={13} />
+                        {isReinterpreting ? '正在重新解释…' : '重新解释结果'}
                       </button>
                     </div>
                   )}
@@ -2120,6 +2378,7 @@ export default function ResearchCenter() {
                     </label>
                   )}
                   {notice && <div style={{ fontSize: 12, color: 'var(--color-accent)' }}>{notice}</div>}
+                  {purpose === 'analyze' && <AnalysisProgress phase={analysisPhase} error={analysisError} />}
                 </div>
 
                 <div style={resultPreviewStyle}>
@@ -2169,10 +2428,10 @@ export default function ResearchCenter() {
                 {!activeAsset ? (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, border: '1px dashed var(--color-border)', borderRadius: 8, padding: 12, background: 'var(--color-bg)' }}>
                     <div style={{ fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.7 }}>
-                      研究计算是可选步骤。如果暂时不需要量表、问卷、KANO、AHP 或编码结果，可以直接进入文章生成。
+                      研究计算建议放在全文初稿之后使用。如果暂时不需要量表、问卷、KANO、AHP 或编码结果，可以回到文章生成继续完善正文。
                     </div>
                     <button onClick={() => navigate(`/projects/${project.id}/stage3`)} style={{ ...primaryButtonStyle, flexShrink: 0 }}>
-                      直接进入文章生成
+                      回到文章生成
                       <ArrowRight size={13} />
                     </button>
                   </div>
@@ -2209,24 +2468,38 @@ export default function ResearchCenter() {
                         </label>
                         <button
                           onClick={runAnalysis}
+                          disabled={!latestDataset || isAnalyzing}
                           title={latestDataset ? '基于最新上传数据生成分析结果' : '请先上传 CSV/TXT 数据文件'}
                           style={{
                             ...secondaryButtonStyle,
-                            opacity: latestDataset ? 1 : 0.62,
-                            cursor: latestDataset ? 'pointer' : 'not-allowed',
+                            opacity: latestDataset && !isAnalyzing ? 1 : 0.62,
+                            cursor: latestDataset && !isAnalyzing ? 'pointer' : 'not-allowed',
                           }}
                         >
                           <BarChart3 size={13} />
-                          生成分析结果
+                          {isAnalyzing ? '正在生成…' : '生成分析结果'}
+                        </button>
+                        <button
+                          onClick={() => void reinterpretActiveAnalysis()}
+                          disabled={!canReinterpretActiveAsset || isReinterpreting}
+                          title={canReinterpretActiveAsset ? '保留计算结果，只重新生成论文方法和结果表述' : '需要先生成结构化分析结果'}
+                          style={{
+                            ...secondaryButtonStyle,
+                            opacity: canReinterpretActiveAsset && !isReinterpreting ? 1 : 0.62,
+                            cursor: canReinterpretActiveAsset && !isReinterpreting ? 'pointer' : 'not-allowed',
+                          }}
+                        >
+                          <Pencil size={13} />
+                          {isReinterpreting ? '正在重新解释…' : '重新解释结果'}
                         </button>
                       </ActionGroup>
                       <ActionGroup title="写入论文">
-                        <button onClick={insertIntoPaper} style={primaryButtonStyle}>
+                        <button onClick={() => void insertIntoPaper()} disabled={isWritingToPaper} style={{ ...primaryButtonStyle, opacity: isWritingToPaper ? 0.65 : 1, cursor: isWritingToPaper ? 'not-allowed' : 'pointer' }}>
                           <CheckCircle2 size={13} />
-                          插入 Stage3
+                          {isWritingToPaper ? '正在规划写入...' : 'AI 写入论文'}
                         </button>
                         <button onClick={() => navigate(`/projects/${project.id}/stage3`)} style={secondaryButtonStyle}>
-                          继续到文章生成
+                          回到文章生成
                           <ArrowRight size={13} />
                         </button>
                       </ActionGroup>
@@ -2261,6 +2534,33 @@ function MiniInfo({ label, value }: { label: string; value: string }) {
     <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: 10, background: 'var(--color-bg)' }}>
       <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>{label}</div>
       <div style={{ marginTop: 4, fontSize: 13, lineHeight: 1.45, color: 'var(--color-ink)', fontWeight: 750 }}>{value}</div>
+    </div>
+  )
+}
+
+function AnalysisProgress({ phase, error }: { phase: AnalysisPhase; error: string }) {
+  const steps: Array<{ key: AnalysisPhase; label: string }> = [
+    { key: 'uploaded', label: '已上传数据' },
+    { key: 'planning', label: 'AI 已识别方法' },
+    { key: 'running', label: '正在运行计算' },
+    { key: 'interpreting', label: '正在生成论文表述' },
+    { key: 'ready', label: '已生成论文结果' },
+  ]
+  const currentIndex = steps.findIndex(step => step.key === phase)
+  if (phase === 'idle' && !error) return null
+  return (
+    <div style={analysisProgressStyle}>
+      {steps.map((step, index) => {
+        const done = currentIndex >= index || phase === 'ready'
+        const active = step.key === phase
+        return (
+          <div key={step.key} style={{ ...analysisStepStyle, opacity: done || active ? 1 : 0.46 }}>
+            <span style={{ ...analysisDotStyle, background: done ? 'var(--color-accent)' : '#D8D2C8' }} />
+            {step.label}
+          </div>
+        )
+      })}
+      {phase === 'error' && <div style={{ fontSize: 12, color: '#A8443F' }}>分析失败：{error || '请检查数据格式后重试。'}</div>}
     </div>
   )
 }
@@ -2458,6 +2758,32 @@ const resultMetaRowStyle = {
   margin: '0 0 10px',
   fontSize: 12,
   color: 'var(--color-accent)',
+}
+
+const analysisProgressStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+  gap: 8,
+  padding: 10,
+  border: '1px solid var(--color-border)',
+  borderRadius: 8,
+  background: 'rgba(255,255,255,0.62)',
+}
+
+const analysisStepStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  fontSize: 12,
+  color: 'var(--color-ink-2)',
+  minWidth: 0,
+}
+
+const analysisDotStyle = {
+  width: 7,
+  height: 7,
+  borderRadius: 999,
+  flexShrink: 0,
 }
 
 const assetListStyle = {

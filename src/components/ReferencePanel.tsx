@@ -100,6 +100,21 @@ interface EvidenceCard {
   confidence: number
 }
 
+function normalizeDoi(value: string | undefined) {
+  return String(value ?? '').trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+}
+
+function sourceExternalUrl(source: { doi?: string; url?: string }) {
+  const doi = normalizeDoi(source.doi)
+  if (doi) return `https://doi.org/${doi}`
+  const url = String(source.url ?? '').trim()
+  return /^https?:\/\//i.test(url) ? url : ''
+}
+
+function hasVerifiableCitationSource(source: { title?: string; authors?: string[]; doi?: string; url?: string }) {
+  return Boolean(source.title?.trim() && source.authors?.length && sourceExternalUrl(source))
+}
+
 const claimTypeLabels: Record<ClaimType, string> = {
   definition: '概念定义',
   literature: '研究现状',
@@ -164,12 +179,12 @@ function noteTextFromLibraryItem(item: LibraryItem) {
 }
 
 function noteTextFromSource(source: CitationEvidenceSource) {
-  const authors = source.authors?.length ? source.authors.slice(0, 3).join('、') : '作者未详'
+  const authors = source.authors?.length ? `${source.authors.slice(0, 3).join('、')}. ` : ''
   const year = source.year ? `${source.year}` : '年份未详'
   const publication = source.source ? ` ${source.source}` : ''
   const doi = source.doi ? ` DOI：${source.doi}` : ''
-  const reason = source.relevanceReason?.trim() ? ` 可用依据：${source.relevanceReason.trim().slice(0, 160)}` : ''
-  return `${authors}. ${source.title}. ${year}.${publication}${doi}.${reason}`.replace(/\s+/g, ' ').trim()
+  const url = source.url && !source.doi ? ` ${source.url}` : ''
+  return `${authors}${source.title}. ${year}.${publication}${doi || url}`.replace(/\s+/g, ' ').trim()
 }
 
 function formatAuthorList(authors: string[], fallback = '作者未详') {
@@ -200,14 +215,45 @@ function formatCitationNote(source: CitationPatchDraft['source'], format: Citati
   return source.noteText
 }
 
+void formatCitationNote
+
 function withCitationFormat(patches: CitationPatchDraft[], format: CitationFormat): CitationPatchDraft[] {
   return patches.map(patch => ({
     ...patch,
     source: {
       ...patch.source,
-      noteText: formatCitationNote(patch.source, format),
+      noteText: formatCitationNoteStrict(patch.source, format),
     },
   }))
+}
+
+function formatCitationNoteStrict(source: CitationPatchDraft['source'], format: CitationFormat) {
+  const authors = formatAuthorsStrict(source.authors)
+  const year = source.year ? `${source.year}` : '年份未详'
+  const journal = source.journal ? ` ${source.journal}` : ''
+  const link = sourceExternalUrl(source)
+  const suffix = link ? ` ${link}` : ''
+
+  if (format === 'gbt7714') {
+    return `${authors}. ${source.title}[J].${journal ? journal.trim() : '出版物未详'}, ${year}.${suffix}`.replace(/\s+/g, ' ').trim()
+  }
+  if (format === 'apa') {
+    return `${authors}. (${year}). ${source.title}.${journal ? journal : ' Publication unavailable.'}${suffix}`.replace(/\s+/g, ' ').trim()
+  }
+  if (format === 'mla') {
+    return `${authors}. "${source.title}."${journal ? journal : ' Publication unavailable'}, ${year}.${suffix}`.replace(/\s+/g, ' ').trim()
+  }
+  if (format === 'chicago') {
+    return `${authors}. "${source.title}."${journal ? journal : ' Publication unavailable'} (${year}).${suffix}`.replace(/\s+/g, ' ').trim()
+  }
+  return `${authors}. ${source.title}. ${year}.${journal}${suffix}`.replace(/\s+/g, ' ').trim()
+}
+
+function formatAuthorsStrict(authors: string[]) {
+  const cleanAuthors = authors.map(author => author.trim()).filter(Boolean)
+  if (cleanAuthors.length === 0) return ''
+  if (cleanAuthors.length <= 3) return cleanAuthors.join('、')
+  return `${cleanAuthors.slice(0, 3).join('、')}等`
 }
 
 function isClaimType(value: unknown): value is ClaimType {
@@ -232,6 +278,18 @@ function normalizeAICitationPatch(
   if (!sectionId || !originalText || !revisedText || !sourceId || !title) return null
 
   const section = sections.find(item => item.id === sectionId)
+  const sourcePayload = {
+    id: sourceId,
+    title,
+    authors: Array.isArray(source?.authors) ? source.authors.map(String).map(author => author.trim()).filter(Boolean) : [],
+    year: Number.isFinite(Number(source?.year)) ? Number(source?.year) : undefined,
+    journal: String(source?.journal ?? '').trim() || undefined,
+    doi: String(source?.doi ?? '').trim() || undefined,
+    url: String(source?.url ?? '').trim() || undefined,
+    noteText: String(source?.noteText ?? '').trim() || title,
+  }
+  if (!hasVerifiableCitationSource(sourcePayload)) return null
+
   return {
     id: String(row.id ?? `ai_citation_patch_${Date.now()}_${index}`),
     sectionId,
@@ -242,16 +300,7 @@ function normalizeAICitationPatch(
     problem: String(row.problem ?? '').trim() || undefined,
     enhancementType: String(row.enhancementType ?? '').trim() || undefined,
     applyMode: String(row.applyMode ?? 'rewrite_with_citation'),
-    source: {
-      id: sourceId,
-      title,
-      authors: Array.isArray(source?.authors) ? source.authors.map(String).filter(Boolean) : [],
-      year: Number.isFinite(Number(source?.year)) ? Number(source?.year) : undefined,
-      journal: String(source?.journal ?? '').trim() || undefined,
-      doi: String(source?.doi ?? '').trim() || undefined,
-      url: String(source?.url ?? '').trim() || undefined,
-      noteText: String(source?.noteText ?? '').trim() || title,
-    },
+    source: sourcePayload,
     reason: String(row.reason ?? '').trim(),
     confidence: Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : 0.82,
   }
@@ -260,6 +309,7 @@ function normalizeAICitationPatch(
 function sourceCardsFromSelection(selection: ReferenceSelection): SourceCard[] {
   const autoCards: SourceCard[] = (selection.autoCitationEnabled === false ? [] : selection.autoSources ?? [])
     .filter(source => source.title?.trim())
+    .filter(hasVerifiableCitationSource)
     .map(source => ({
       id: source.id,
       title: source.title,
@@ -293,11 +343,28 @@ function sourceCardsFromSelection(selection: ReferenceSelection): SourceCard[] {
 
   const seen = new Set<string>()
   return [...autoCards, ...manualCards].filter(source => {
+    if (!hasVerifiableCitationSource(source)) return false
     const key = `${source.id}:${source.title}`.toLowerCase()
     if (seen.has(key)) return false
     seen.add(key)
     return true
   })
+}
+
+function scholarPaperToEvidenceSource(paper: ScholarPaper, provider?: string): CitationEvidenceSource {
+  return {
+    id: paper.id || paper.doi || paper.url || `${paper.title}-${paper.year ?? ''}`,
+    title: paper.title,
+    authors: paper.authors ?? [],
+    year: paper.year,
+    source: paper.source,
+    doi: paper.doi,
+    url: paper.url,
+    abstract: paper.abstract,
+    provider,
+    citedByCount: paper.citedByCount,
+    relevanceReason: paper.relevanceReason,
+  }
 }
 
 function normalizeSourceKey(value: unknown) {
@@ -658,7 +725,7 @@ export default function ReferencePanel({
     setEnhancementStatus('running')
     setEnhancementStep(0)
 
-    if (sourceCards.length === 0) {
+    if (false && sourceCards.length === 0) {
       setEnhancementStatus('done')
       setEnhancementStep(4)
       setScanNotice('暂时没有可引用来源，系统无法安全补引用。建议先生成或补充文献来源。')
@@ -676,17 +743,55 @@ export default function ReferencePanel({
     )
 
     try {
+      let workingSelection = selection
+      let workingSourceCards = sourceCards
+      let workingEvidencePack = evidencePack
+      if (workingSourceCards.length < 25) {
+        setEnhancementStep(1)
+        setScanNotice('正在为引用增强补充检索文献，目标形成 30 篇左右的可用引用池。')
+        const prepared = await scholarAPI.prepare({
+          title: project.title,
+          outline: targetSections.map(section => `${section.title}\n${section.content.slice(0, 500)}`).join('\n\n'),
+          researchObject: project.context?.researchObject,
+          academicLevel: project.context?.academicLevel,
+          limit: 40,
+          targetFinalCitationCount: 30,
+          firstDraftCitationCount: 16,
+        })
+        const autoSources = prepared.autoSources.map(source => scholarPaperToEvidenceSource(source, prepared.provider))
+        workingSelection = {
+          ...selection,
+          autoCitationEnabled: true,
+          autoSources,
+          evidencePack: prepared.evidencePack,
+          lastAutoRunAt: Date.now(),
+        }
+        saveSelection(workingSelection)
+        workingSourceCards = sourceCardsFromSelection(workingSelection)
+        workingEvidencePack = prepared.evidencePack
+      }
+
+      if (workingSourceCards.length === 0) {
+        setEnhancementStatus('done')
+        setEnhancementStep(4)
+        setScanNotice('暂时没有可引用来源，系统无法安全补引用。请稍后重试文献检索，或先补充文献来源。')
+        return
+      }
+
       const response = await referencesAPI.enhance({
         projectId,
         projectTitle: project.title,
         researchObject: project.context?.researchObject,
         citationFormat,
+        targetFinalCitationCount: 30,
+        minPatchCount: 8,
+        idealPatchCount: 12,
         sections: targetSections.map(section => ({
           id: section.id,
           title: section.title,
           content: section.content,
         })),
-        sources: sourceCards.map(source => ({
+        sources: workingSourceCards.map(source => ({
           id: source.id,
           title: source.title,
           authors: source.authors,
@@ -699,7 +804,7 @@ export default function ReferencePanel({
           relevanceReason: source.relevanceReason,
           noteText: source.noteText,
         })),
-        evidencePack,
+        evidencePack: workingEvidencePack,
       })
       const nextPatches = response.patches
         .map((patch, index) => normalizeAICitationPatch(patch, targetSections, index))
@@ -1009,6 +1114,7 @@ function SuggestionsTab({
           {suggestions.map(item => {
             const accepted = acceptedIds.has(item.id)
             const rewritesText = item.revisedText.trim() !== item.originalText.trim()
+            const sourceUrl = sourceExternalUrl(item.source)
             return (
               <div key={item.id} style={suggestionCardStyle(accepted)}>
                 <div style={cardMetaStyle}>
@@ -1027,7 +1133,13 @@ function SuggestionsTab({
                 )}
                 <div style={sourceLineStyle}>
                   推荐来源：{item.source.title}
-                  {[formatAuthorList(item.source.authors), item.source.year, item.source.journal].filter(Boolean).join(' · ') ? ` · ${[formatAuthorList(item.source.authors), item.source.year, item.source.journal].filter(Boolean).join(' · ')}` : ''}
+                  {[formatAuthorsStrict(item.source.authors), item.source.year, item.source.journal].filter(Boolean).join(' · ') ? ` · ${[formatAuthorsStrict(item.source.authors), item.source.year, item.source.journal].filter(Boolean).join(' · ')}` : ''}
+                  {sourceUrl && (
+                    <>
+                      {' · '}
+                      <a href={sourceUrl} target="_blank" rel="noreferrer" style={sourceLinkStyle}>查看出处</a>
+                    </>
+                  )}
                 </div>
                 <div style={reasonStyle}>增强方式：{rewritesText ? '局部改写并插入脚注' : '保留原句并插入脚注'} · {item.enhancementType || claimTypeLabels[item.claimType]}</div>
                 <div style={reasonStyle}>来源依据：{item.reason || '该来源与句子主题和章节语境相近，可作为候选支撑。'}</div>
@@ -1037,7 +1149,7 @@ function SuggestionsTab({
                     <div style={{ fontSize: 10, fontWeight: 850, color: 'var(--color-accent)', marginBottom: 4 }}>
                       {citationFormatLabels[citationFormat]} 预览
                     </div>
-                    {formatCitationNote(item.source, citationFormat)}
+                    {formatCitationNoteStrict(item.source, citationFormat)}
                   </div>
                 </details>
                 <div style={{ display: 'flex', gap: 8, marginTop: 9 }}>
@@ -1757,6 +1869,12 @@ const sourceLineStyle = {
   fontSize: 10,
   color: 'var(--color-ink-3)',
   lineHeight: 1.45,
+}
+
+const sourceLinkStyle = {
+  color: 'var(--color-accent)',
+  fontWeight: 800,
+  textDecoration: 'none',
 }
 
 const reasonStyle = {

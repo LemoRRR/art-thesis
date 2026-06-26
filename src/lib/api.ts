@@ -1,9 +1,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Message, StreamCallbacks } from './ai'
 
-const BASE_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_BASE_URL || '')
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
+const META_ENV = import.meta.env ?? {}
+const BASE_URL = META_ENV.PROD ? '' : (META_ENV.VITE_API_BASE_URL || '')
+const SUPABASE_URL = META_ENV.VITE_SUPABASE_URL
+const SUPABASE_ANON_KEY = META_ENV.VITE_SUPABASE_ANON_KEY
 let browserSupabase: SupabaseClient | null = null
 let browserSupabaseConfigKey = ''
 const AUTH_EXPIRED_EVENT = 'paper-ai-auth-expired'
@@ -12,7 +13,7 @@ const LOCAL_TOKEN_PREFIX = 'dev-local-demo-token-'
 export function getToken(): string | null {
   const token = localStorage.getItem('access_token')
   if (token) return token
-  if (!import.meta.env.PROD && import.meta.env.VITE_AUTH_REQUIRED !== 'true') {
+  if (!META_ENV.PROD && META_ENV.VITE_AUTH_REQUIRED !== 'true') {
     const localToken = `${LOCAL_TOKEN_PREFIX}browser`
     localStorage.setItem('access_token', localToken)
     localStorage.setItem('auth_user', JSON.stringify({
@@ -204,10 +205,13 @@ export interface ResearchAnalysisResult {
   anova: unknown[]
   mediation?: unknown
   efa?: unknown
+  qualityReport?: unknown
   tables?: Array<{ id: string; title: string; rows: unknown[]; columns?: string[] }>
   figures?: Array<{ id: string; title: string; dataUrl: string; caption?: string }>
+  componentNarratives?: Array<{ componentId?: string; title?: string; beforeText?: string; afterText?: string }>
   methodText?: string
   analysisText?: string
+  interpretationProvider?: 'ai' | 'fallback' | string
   cautions: string[]
   plainText: string
 }
@@ -223,6 +227,23 @@ export interface ResearchAnalysisPlanResult {
   columns: string[]
   numericColumns: string[]
   categoricalColumns: string[]
+}
+
+export interface ResearchWritePlanPlacement {
+  targetSectionId?: string
+  targetSectionTitle: string
+  role: 'method' | 'sample' | 'result' | 'discussion' | 'conclusion'
+  insertPosition?: 'append' | 'after_heading' | 'replace_placeholder'
+  reason?: string
+  componentIds: string[]
+}
+
+export interface ResearchWritePlanResult {
+  ok: true
+  plan: {
+    placements: ResearchWritePlanPlacement[]
+    summary?: string
+  }
 }
 
 export const researchAPI = {
@@ -245,6 +266,8 @@ export const researchAPI = {
     fileName: string
     text?: string
     base64?: string
+    method?: string
+    userRequest?: string
   }) =>
     request<ResearchAnalysisPlanResult>('/api/research/analysis-plan', {
       method: 'POST',
@@ -263,6 +286,41 @@ export const researchAPI = {
       method: 'POST',
       body: JSON.stringify(data),
     }, 140_000),
+  interpret: (data: {
+    result: Record<string, unknown>
+    fileName?: string
+    paperTitle?: string
+    chapterTitle?: string
+    userRequest?: string
+    confirmedPlan?: import('./storage').ResearchAnalysisPlan | null
+  }) =>
+    request<{ ok: true; result: ResearchAnalysisResult }>('/api/research/interpret', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }, 80_000),
+  writePlan: (data: {
+    paperTitle: string
+    sections: Array<{ id: string; title: string; content?: string }>
+    assetTitle: string
+    assetSummary?: string
+    components: Array<{ id: string; type: string; title?: string; content?: string }>
+  }) =>
+    request<ResearchWritePlanResult>('/api/research/write-plan', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }, 60_000),
+}
+
+export const researchPackagesAPI = {
+  listByProject: (projectId: string) =>
+    request(`/api/research-packages/project/${projectId}`),
+  save: (pkg: unknown & { id?: string }) =>
+    request(`/api/research-packages/${encodeURIComponent(String(pkg.id ?? ''))}`, {
+      method: 'PUT',
+      body: JSON.stringify({ package: pkg }),
+    }),
+  delete: (id: string) =>
+    request(`/api/research-packages/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 }
 
 export interface ScholarPaper {
@@ -291,12 +349,35 @@ export interface CitationChapterEvidence {
   keyPoints: CitationEvidencePoint[]
 }
 
+export interface CitationGoal {
+  targetFinalCitationCount: number
+  minAcceptableCitationCount: number
+  maxCitationCount: number
+  firstDraftCitationCount: number
+  usableSourceCount: number
+}
+
+export interface CitationChapterPlan {
+  sectionTitle: string
+  targetCitationCount: number
+  firstDraftCitationCount: number
+  theorySourceIds: string[]
+  literatureSourceIds: string[]
+  methodSourceIds: string[]
+  caseSourceIds: string[]
+  mustUseSourceIds: string[]
+  avoidSourceIds: string[]
+  writingGuidance: string
+}
+
 export interface CitationEvidencePack {
+  citationGoal?: CitationGoal
   theoryConcepts: CitationEvidencePoint[]
   literatureReview: CitationEvidencePoint[]
   methodSupport: CitationEvidencePoint[]
   caseEvidence: CitationEvidencePoint[]
   chapterEvidence: CitationChapterEvidence[]
+  chapterCitationPlans?: CitationChapterPlan[]
   rejectedSourceIds: string[]
   cautions: string[]
   summary: string
@@ -315,6 +396,8 @@ export const scholarAPI = {
     researchObject?: string
     academicLevel?: string
     limit?: number
+    targetFinalCitationCount?: number
+    firstDraftCitationCount?: number
   }) =>
     request<{
       provider: string

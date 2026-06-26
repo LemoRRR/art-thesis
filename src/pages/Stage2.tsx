@@ -21,6 +21,7 @@ import {
   type Outline,
   type OutlineSection,
   type Project,
+  type ResearchPlan,
 } from '../lib/storage'
 
 const uid = () => Math.random().toString(36).slice(2, 9)
@@ -192,6 +193,68 @@ function ensureAbstractOutlineSection(sections: OutlineSection[]): OutlineSectio
   ]
 }
 
+function shouldReserveResearchSections(plan?: ResearchPlan): boolean {
+  if (!plan) return false
+  if (plan.methodType && plan.methodType !== 'theoretical') return true
+  return (plan.suggestedTools ?? []).some(tool =>
+    tool !== 'case_summary' && tool !== 'theme_extraction'
+  )
+}
+
+function outlineHasTitle(sections: OutlineSection[], pattern: RegExp): boolean {
+  return sections.some(section =>
+    pattern.test(section.title) || outlineHasTitle(section.children ?? [], pattern)
+  )
+}
+
+function createResearchOutlineSection(title: string, children: string[]): OutlineSection {
+  return {
+    id: uid(),
+    order: '',
+    level: 1,
+    title,
+    children: children.map(childTitle => ({
+      id: uid(),
+      order: '',
+      level: 2,
+      title: childTitle,
+    })),
+  }
+}
+
+function ensureResearchCarrierOutlineSections(sections: OutlineSection[], plan?: ResearchPlan): OutlineSection[] {
+  if (!shouldReserveResearchSections(plan)) return sections
+
+  const bodySections = sections.filter(section => !isAbstractOutlineSection(section))
+  const additions: OutlineSection[] = []
+
+  if (!outlineHasTitle(bodySections, /研究设计|研究方法|数据来源|样本|变量|指标体系/)) {
+    additions.push(createResearchOutlineSection('研究设计与数据来源', [
+      '研究对象与数据来源',
+      '指标体系与变量说明',
+      '研究方法与分析流程',
+    ]))
+  }
+
+  if (!outlineHasTitle(bodySections, /数据分析|结果分析|研究结果|实证分析|计算结果|优先级/)) {
+    additions.push(createResearchOutlineSection('数据分析与研究结果', [
+      '样本特征与描述性统计',
+      '模型计算结果展示',
+      '关键发现与结果解释',
+    ]))
+  }
+
+  if (!outlineHasTitle(bodySections, /结果讨论|讨论|策略|建议|优化|启示/)) {
+    additions.push(createResearchOutlineSection('结果讨论与优化建议', [
+      '研究结果讨论',
+      '设计优化路径',
+      '研究局限与后续展望',
+    ]))
+  }
+
+  return additions.length ? [...sections, ...additions] : sections
+}
+
 function renumberOutline(sections: OutlineSection[], parentOrder = ''): OutlineSection[] {
   if (!parentOrder && sections.some(isAbstractOutlineSection)) {
     return ensureAbstractOutlineSection(sections)
@@ -333,7 +396,10 @@ function compactStage2Messages(messages: ChatMessage[]): ChatMessage[] {
   let hasNetworkOutlineError = false
 
   return messages.filter(message => {
-    const isStaleThinking = message.role === 'ai' && message.content.includes('正在根据你的论文背景生成大纲')
+    const isStaleThinking = message.role === 'ai' && (
+      message.content.includes('正在根据你的论文背景生成大纲') ||
+      message.content.includes('正在调整大纲')
+    )
     if (isStaleThinking) return false
 
     const isNetworkOutlineError = message.role === 'ai' &&
@@ -753,7 +819,9 @@ export default function Stage2() {
             const parsed = JSON.parse(cleanJSON(jsonContent))
             const newOutline: Outline = {
               projectId: project.id,
-              sections: ensureAbstractOutlineSection(addIds(parsed.sections ?? [])),
+              sections: ensureAbstractOutlineSection(
+                ensureResearchCarrierOutlineSections(addIds(parsed.sections ?? []), projectStore.ensure(project.id).context.researchPlan)
+              ),
               updatedAt: Date.now(),
             }
             setOutline(newOutline)
@@ -925,7 +993,9 @@ export default function Stage2() {
         onChunk: (chunk) => {
           jsonContent += chunk
           setMessages(prev => prev.map(message =>
-            message.id === aiMsgId ? { ...message, content: '正在调整大纲…' } : message
+            message.id === aiMsgId && message.content !== '正在调整大纲…'
+              ? { ...message, content: '正在调整大纲…' }
+              : message
           ))
         },
         onDone: () => {
@@ -1044,11 +1114,13 @@ export default function Stage2() {
     outlineStore.save({
       ...outline,
       projectId: project.id,
-      sections: ensureAbstractOutlineSection(outline.sections),
+      sections: ensureAbstractOutlineSection(
+        ensureResearchCarrierOutlineSections(outline.sections, projectStore.ensure(project.id).context.researchPlan)
+      ),
       confirmedAt: Date.now(),
       updatedAt: Date.now(),
     })
-    navigate(`/projects/${project.id}/research`)
+    navigate(`/projects/${project.id}/stage3`)
   }
 
   const handleRegenerate = () => {
@@ -1224,14 +1296,14 @@ export default function Stage2() {
 
             <div style={{ padding: '12px 20px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <span style={{ fontSize: 12, color: 'var(--color-ink-3)', whiteSpace: 'pre-wrap' }}>
-                {hasOutlineContent(outline) ? `确认大纲后，先进入研究计算中心；如不需要量表或数据分析，可直接继续到文章生成。\n${outlinePreview}` : '等待大纲生成'}
+                {hasOutlineContent(outline) ? `确认大纲后进入文章生成；研究计算放在全文初稿之后，用于把数据、图表和研究结果写入预留章节。\n${outlinePreview}` : '等待大纲生成'}
               </span>
               <button
                 onClick={confirmOutline}
                 disabled={!hasOutlineContent(outline) || isGenerating}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', border: 'none', borderRadius: 'var(--radius-md)', background: !hasOutlineContent(outline) || isGenerating ? 'var(--color-border)' : 'var(--color-accent)', color: '#fff', fontSize: 13, fontWeight: 500, cursor: !hasOutlineContent(outline) || isGenerating ? 'not-allowed' : 'pointer', fontFamily: 'var(--font-sans)' }}
               >
-                进入研究计算
+                进入文章生成
                 <ArrowRight size={14} />
               </button>
             </div>

@@ -9,8 +9,8 @@ interface StepBarProps {
 const STEPS = [
   { label: '材料理解', route: 'stage1' },
   { label: '大纲撰写', route: 'stage2' },
-  { label: '研究计算', route: 'research' },
   { label: '文章生成', route: 'stage3' },
+  { label: '研究计算', route: 'research' },
 ]
 
 const STEP_COLORS = [
@@ -32,7 +32,7 @@ export default function StepBar({ current }: StepBarProps) {
   const canAccess = [
     true,
     Boolean(current >= 1 || project.context.rawSummary || outline?.sections?.length || stage1Messages.length > 1),
-    Boolean(current >= 2 || project.context.rawSummary || outline?.sections?.length || outline?.confirmedAt),
+    Boolean(current >= 2 || sections.length > 0 || outline?.confirmedAt || outline?.sections?.length),
     Boolean(current >= 3 || sections.length > 0 || outline?.confirmedAt || outline?.sections?.length),
   ]
 

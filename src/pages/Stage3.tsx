@@ -21,6 +21,7 @@ import {
   formatEvidenceWritingRules,
   formatEvidencePackForPrompt,
   formatCitableSourcesForPrompt,
+  formatCitationPlanForPrompt,
   getCitationPromptRules,
   getStageCitableSources,
   selectCitableSourcesForTopic,
@@ -62,7 +63,7 @@ import {
   type ResearchAsset,
   type StyleProfile,
 } from '../lib/storage'
-import { createPackageFromAsset, researchPackageToPaperNodes } from '../lib/researchPackages'
+import { createPackageFromAsset, repairResearchTablesInDoc, researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../lib/researchPackages'
 
 type Mode = 'revise' | 'finish'
 type GenerationStepStatus = 'active' | 'done' | 'error'
@@ -927,8 +928,30 @@ function BibliographyCard({
 }
 
 function extractFinishPart(result: string, heading: string) {
-  const match = result.match(new RegExp(`【${heading}】([\\s\\S]*?)(?=\\n?【|$)`))
-  return match?.[1]?.trim() ?? ''
+  const aliases: Record<string, string[]> = {
+    摘要: ['摘要', '中文摘要'],
+    关键词: ['关键词', '关键字'],
+    Keywords: ['Keywords', 'Keyword'],
+  }
+  const normalizeLabel = (value: string) => value.toLowerCase().replace(/\s+/g, '')
+  const wanted = new Set((aliases[heading] ?? [heading]).map(normalizeLabel))
+  let current = ''
+  let captured = ''
+
+  result.split(/\n+/).forEach(raw => {
+    const text = raw.trim()
+    if (!text) return
+    const match = text.match(/^【?\s*(摘要|中文摘要|关键词|关键字|Abstract|Keywords?|引言|结语)\s*】?\s*[:：]?\s*(.*)$/i)
+    if (match) {
+      current = normalizeLabel(match[1])
+      const rest = match[2]?.trim()
+      if (rest && wanted.has(current)) captured = [captured, rest].filter(Boolean).join('\n')
+      return
+    }
+    if (wanted.has(current)) captured = [captured, text].filter(Boolean).join('\n')
+  })
+
+  return captured.trim()
 }
 
 function buildFinishSections(result: string, projectId: string): DocSection[] {
@@ -1091,6 +1114,52 @@ export default function Stage3() {
     return next
   }, [project.id])
 
+  const repairMissingResearchTables = useCallback((inputSections: DocSection[]) => {
+    let changed = false
+    const repairedSections = inputSections.map(section => {
+      const sourceRefs = section.sourceRefs ?? []
+      if (sourceRefs.length === 0) return section
+
+      const packages = sourceRefs
+        .map(ref => researchPackageStore.get(ref))
+        .filter((pkg): pkg is NonNullable<ReturnType<typeof researchPackageStore.get>> => Boolean(pkg))
+
+      const assetPackages = sourceRefs
+        .map(ref => researchAssetStore.get(ref))
+        .filter((asset): asset is NonNullable<ReturnType<typeof researchAssetStore.get>> => Boolean(asset))
+        .map(asset => ({
+          id: `repair-${asset.id}`,
+          projectId: project.id,
+          title: asset.title,
+          method: asset.type,
+          methodLabel: asset.summary,
+          capabilityTier: 'partial_loop' as const,
+          components: splitResearchAssetIntoComponents(asset),
+          insertedComponentIds: [],
+          versions: [],
+          createdAt: asset.createdAt,
+          updatedAt: asset.updatedAt,
+        }))
+
+      const repairSources = [...packages, ...assetPackages].filter(pkg => pkg.components.length > 0)
+      if (repairSources.length === 0) return section
+
+      const sourceDoc = ensurePaperEditorDoc(section.content, section.editorDoc)
+      const repaired = repairResearchTablesInDoc(sourceDoc, repairSources)
+      if (!repaired.changed) return section
+
+      changed = true
+      return {
+        ...section,
+        content: editorDocToPlainText(repaired.doc),
+        editorDoc: repaired.doc,
+        lastModified: Date.now(),
+      }
+    })
+
+    return { sections: repairedSections, changed }
+  }, [project.id])
+
   const saveStageMessages = useCallback((nextMessages: ChatMessage[]) => {
     const normalizedMessages = normalizeStage3Messages(nextMessages)
     chatStore.saveForProject(project.id, 'stage3', normalizedMessages)
@@ -1103,6 +1172,7 @@ export default function Stage3() {
     const citationContext = [
       baseContext,
       formatCitableSourcesForPrompt(citableSources),
+      formatCitationPlanForPrompt(evidencePack, citableSources),
       formatEvidencePackForPrompt(evidencePack, citableSources),
       formatEvidenceWritingRules(citableSources.length > 0),
       `【引用脚注规则】\n${getCitationPromptRules(citableSources.length > 0)}`,
@@ -1129,6 +1199,7 @@ export default function Stage3() {
         ? '【本章优先证据包】\n以下来源是系统根据当前章节标题和小节结构自动匹配的优先来源。生成正文时先利用这些来源建立论证，再决定是否插入引用。'
         : '',
       formatCitableSourcesForPrompt(chapterSources),
+      formatCitationPlanForPrompt(evidencePack, sources),
       formatChapterEvidenceForPrompt(evidencePack, sources, chapterTitle),
       formatEvidenceWritingRules(chapterSources.length > 0),
       `【引用脚注规则】\n${getCitationPromptRules(chapterSources.length > 0)}`,
@@ -1152,7 +1223,9 @@ export default function Stage3() {
           outline: outlineToText(outlineSections),
           researchObject: project.context.researchObject,
           academicLevel,
-          limit: 12,
+          limit: 40,
+          targetFinalCitationCount: 30,
+          firstDraftCitationCount: 16,
         })
         const autoSources = response.autoSources.map(source => scholarPaperToEvidenceSource(source, response.provider))
         referenceStore.save({
@@ -1292,8 +1365,8 @@ export default function Stage3() {
           [],
           { force: true }
         ),
-        45_000,
-        '文献检索超过 45 秒，已先进入普通全文生成；可稍后重新校准引用。'
+        90_000,
+        '文献准备超过 90 秒，已先进入普通全文生成；可稍后使用引用增强补齐引用。'
       )
       if (!isActiveGenerationRun()) return
       citationContext = preparedCitationContext.citationContext
@@ -1733,10 +1806,13 @@ export default function Stage3() {
 
     if (savedSections.length > 0) {
       let formattedSections = formatSectionsForPaper(savedSections)
+      const tableRepair = repairMissingResearchTables(formattedSections)
+      formattedSections = tableRepair.sections
+      const tableRepairSnapshotDescription = tableRepair.changed ? '修复研究表格显示' : ''
 
       if (outline?.sections?.length) {
         const outlineSections = ensureFrontMatterOutlineSection(outline.sections)
-        let syncSnapshotDescription = ''
+        let syncSnapshotDescription = tableRepairSnapshotDescription
         const {
           nextSections,
           addedOutlineSections,
@@ -1801,6 +1877,10 @@ export default function Stage3() {
           queueMicrotask(() => setPendingAddedOutlineSections([]))
         }
       } else {
+        if (tableRepair.changed) {
+          sectionStore.saveForProject(project.id, formattedSections, { syncRemote: false })
+          versionStore.snapshot(tableRepairSnapshotDescription, project.id)
+        }
         queueMicrotask(() => {
           setIsPreparingDraft(false)
           setSections(formattedSections)
@@ -1812,6 +1892,30 @@ export default function Stage3() {
           setAllGenerated(formattedSections.every(section => section.status === 'done'))
         })
       }
+      hasStartedGenerationRef.current = true
+    } else if (savedMessages.some(message => {
+      const key = stage3LifecycleKey(message)
+      return key !== 'ready' && key !== 'wait-outline'
+    })) {
+      const now = Date.now()
+      const blankSection: DocSection = {
+        id: `blank-section-${project.id}`,
+        projectId: project.id,
+        title: '正文',
+        content: '',
+        editorDoc: paperTextToEditorDoc(''),
+        status: 'done',
+        lastModified: now,
+        order: 0,
+      }
+      queueMicrotask(() => {
+        setIsPreparingDraft(false)
+        setAwaitingDraftStart(false)
+        setSections([blankSection])
+        setActiveSectionId(blankSection.id)
+        setAllGenerated(true)
+      })
+      sectionStore.saveForProject(project.id, [blankSection], { syncRemote: false })
       hasStartedGenerationRef.current = true
     } else if (outline?.sections?.length && !preserveExistingDraft && !hasStartedGenerationRef.current) {
       const readyMsg: ChatMessage = {
@@ -1862,7 +1966,7 @@ export default function Stage3() {
     if (project.currentStage !== 'stage3') {
       projectStore.update(project.id, { currentStage: 'stage3' })
     }
-  }, [location.key, project.currentStage, project.id, reconcileSectionsWithOutline, saveStageMessages])
+  }, [location.key, project.currentStage, project.id, reconcileSectionsWithOutline, repairMissingResearchTables, saveStageMessages])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -2049,9 +2153,10 @@ export default function Stage3() {
     const finishSections = finishResult ? buildFinishSections(finishResult, project.id) : []
     const frontSections = finishSections.filter(section => section.title !== '结语')
     const backSections = finishSections.filter(section => section.title === '结语')
-    const baseSections = [...frontSections, ...sections, ...backSections]
+    const bodySections = sections.filter(section => !/^参考文献$/i.test(section.title.trim()))
+    const baseSections = [...frontSections, ...bodySections, ...backSections]
 
-    const bibliographySection = buildBibliographySection(sections, project.id)
+    const bibliographySection = buildBibliographySection(bodySections, project.id)
     if (bibliographySection) baseSections.push(bibliographySection)
 
     return baseSections
@@ -2655,7 +2760,7 @@ export default function Stage3() {
       <Sidebar />
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
         <TopBar
-          currentStep={3}
+          currentStep={2}
           right={
             <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
               {styleProfiles.length > 0 && (

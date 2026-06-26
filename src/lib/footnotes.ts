@@ -136,15 +136,45 @@ export interface BibliographyEntry {
   noteText: string
 }
 
+function normalizeDoi(value: string): string {
+  const match = value.match(/(?:doi[:：]\s*)?(?:https?:\/\/(?:dx\.)?doi\.org\/)?(10\.\d{4,9}\/[^\s，。；;,]+)/i)
+  return match?.[1]?.replace(/[.。]$/, '').toLowerCase() ?? ''
+}
+
+function normalizeUrl(value: string): string {
+  const match = value.match(/https?:\/\/[^\s，。；;,]+/i)
+  return match?.[0]?.replace(/[.。]$/, '').toLowerCase() ?? ''
+}
+
+export function cleanBibliographyNote(noteText: string): string {
+  const text = noteText
+    .replace(/\s*(?:可用依据|摘要依据|使用依据|筛选理由|Usable evidence|Abstract|Footnote text)[:：][\s\S]*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return text.replace(/\s+([,.;，。；])/g, '$1')
+}
+
+function bibliographyKey(noteText: string): string {
+  const doi = normalizeDoi(noteText)
+  if (doi) return `doi:${doi}`
+  const url = normalizeUrl(noteText)
+  if (url) return `url:${url}`
+  return `text:${cleanBibliographyNote(noteText)
+    .replace(/\[[A-Z]\]/g, '')
+    .replace(/[^\p{L}\p{N}\u4e00-\u9fff]+/gu, '')
+    .toLowerCase()}`
+}
+
 export function collectBibliographyEntries(sections: DocSection[]): BibliographyEntry[] {
   const seen = new Set<string>()
   const entries: BibliographyEntry[] = []
 
   getAllFootnotes(sections).forEach(footnote => {
-    const key = footnote.noteText.trim()
-    if (!key || seen.has(key)) return
+    const noteText = cleanBibliographyNote(footnote.noteText)
+    const key = bibliographyKey(noteText)
+    if (!noteText || seen.has(key)) return
     seen.add(key)
-    entries.push({ number: footnote.number, noteText: key })
+    entries.push({ number: entries.length + 1, noteText })
   })
 
   return entries.sort((a, b) => a.number - b.number)

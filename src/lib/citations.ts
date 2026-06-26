@@ -170,6 +170,28 @@ export function formatEvidencePackForPrompt(pack: CitationEvidencePack | undefin
       points,
     ].filter(Boolean).join('\n')
   })
+  const planLines = (pack.chapterCitationPlans ?? []).slice(0, 16).map(plan => {
+    const ids = [
+      ...plan.mustUseSourceIds,
+      ...plan.theorySourceIds,
+      ...plan.literatureSourceIds,
+      ...plan.methodSourceIds,
+      ...plan.caseSourceIds,
+    ]
+    const keys = Array.from(new Set(ids))
+      .map(id => sourceKeyForEvidenceId(sourceById, id))
+      .filter(Boolean)
+      .slice(0, 10)
+      .join(', ')
+    return [
+      `- ${plan.sectionTitle}：最终目标约 ${plan.targetCitationCount} 处引用，第一版先写 ${plan.firstDraftCitationCount} 处关键引用。`,
+      keys ? `  优先来源：${keys}` : '',
+      plan.writingGuidance ? `  写作指引：${plan.writingGuidance}` : '',
+    ].filter(Boolean).join('\n')
+  })
+  const goal = pack.citationGoal
+  void planLines
+  void goal
 
   return [
     '【论文证据包：先读文献再写正文】',
@@ -216,6 +238,44 @@ export function formatChapterEvidenceForPrompt(
     keys ? `优先来源：${keys}` : '',
     chapter.writingPlan ? `写作计划：${chapter.writingPlan}` : '',
     points,
+  ].filter(Boolean).join('\n')
+}
+
+export function formatCitationPlanForPrompt(pack: CitationEvidencePack | undefined, sources: CitableSource[]): string {
+  if (!pack?.citationGoal && !pack?.chapterCitationPlans?.length) return ''
+  const sourceById = new Map<string, CitableSource>()
+  sources.forEach(source => {
+    if (source.autoSourceId) sourceById.set(source.autoSourceId, source)
+    if (source.libraryItemId) sourceById.set(source.libraryItemId, source)
+  })
+  const goal = pack.citationGoal
+  const goalText = goal
+    ? `最终正文目标约 ${goal.targetFinalCitationCount} 处/篇引用，最低不少于 ${goal.minAcceptableCitationCount}，最多不超过 ${goal.maxCitationCount}；第一版正文先稳定形成 ${goal.firstDraftCitationCount} 处关键引用，后续“引用增强”再补齐。`
+    : ''
+  const chapterText = (pack.chapterCitationPlans ?? []).slice(0, 16).map(plan => {
+    const ids = [
+      ...plan.mustUseSourceIds,
+      ...plan.theorySourceIds,
+      ...plan.literatureSourceIds,
+      ...plan.methodSourceIds,
+      ...plan.caseSourceIds,
+    ]
+    const keys = Array.from(new Set(ids))
+      .map(id => sourceKeyForEvidenceId(sourceById, id))
+      .filter(Boolean)
+      .slice(0, 10)
+      .join(', ')
+    return [
+      `- ${plan.sectionTitle}: 最终约 ${plan.targetCitationCount} 处引用；第一版先写 ${plan.firstDraftCitationCount} 处关键引用。`,
+      keys ? `  优先来源: ${keys}` : '',
+      plan.writingGuidance ? `  写作指引: ${plan.writingGuidance}` : '',
+    ].filter(Boolean).join('\n')
+  }).join('\n')
+
+  return [
+    '【引用完成版目标与章节证据地图】',
+    goalText,
+    chapterText,
   ].filter(Boolean).join('\n')
 }
 

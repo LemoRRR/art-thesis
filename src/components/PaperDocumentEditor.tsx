@@ -215,6 +215,206 @@ function researchTablePreview(component: ResearchPackageComponent) {
   )
 }
 
+function safeTableRows(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value)
+    ? value.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
+    : []
+}
+
+function safeTableColumns(value: unknown): string[] {
+  if (typeof value === 'string') {
+    try {
+      return safeTableColumns(JSON.parse(value))
+    } catch {
+      return []
+    }
+  }
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+function safeTableBool(value: unknown): boolean {
+  return value === true || value === 'true'
+}
+
+function compactResearchTableColumns(columns: string[], title = '') {
+  const rank = '\u6700\u7ec8\u8026\u5408\u4f18\u5148\u7ea7\u6392\u540d'
+  const dimension = '\u8bbe\u8ba1\u7ef4\u5ea6'
+  const sampleSize = '\u6837\u672c\u603b\u91cf'
+  const kanoType = '\u4e3b\u5bfcKANO\u7c7b\u578b'
+  const better = 'Better\u7cfb\u6570(\u6ee1\u610f\u5ea6\u63d0\u5347)'
+  const worse = 'Worse\u7cfb\u6570\u7edd\u5bf9\u503c(\u4e0d\u6ee1\u964d\u4f4e)'
+  const entropyScore = '\u71b5\u6743\u7efc\u5408\u5f97\u5206'
+  const priorityScore = '\u8026\u5408\u4f18\u5148\u7ea7\u603b\u5f97\u5206'
+  const columnSet = new Set(columns)
+  const preferred = title.includes('KANO') && (title.includes('\u8026\u5408') || title.includes('\u4f18\u5148\u7ea7'))
+    ? [rank, dimension, kanoType, better, worse, entropyScore, priorityScore]
+    : title.includes('KANO')
+      ? [dimension, sampleSize, kanoType, better, worse, rank]
+      : []
+  const selected = preferred.filter(column => columnSet.has(column))
+  return (selected.length ? selected : columns).slice(0, 7)
+}
+
+function researchTableCellText(column: string, value: unknown) {
+  const text = String(value ?? '').trim()
+  const maxLength = column === '\u7ef4\u5ea6\u5168\u79f0' ? 18 : column === '\u8bbe\u8ba1\u7ef4\u5ea6' ? 8 : 28
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
+}
+
+const ResearchTableNode = Node.create({
+  name: 'researchTable',
+
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      title: {
+        default: '',
+        parseHTML: element => element.getAttribute('data-title') ?? '',
+        renderHTML: attrs => attrs.title ? { 'data-title': attrs.title } : {},
+      },
+      columns: {
+        default: [],
+        parseHTML: element => {
+          try {
+            return JSON.parse(element.getAttribute('data-columns') ?? '[]')
+          } catch {
+            return []
+          }
+        },
+        renderHTML: attrs => ({ 'data-columns': JSON.stringify(attrs.columns ?? []) }),
+      },
+      columnLabels: {
+        default: [],
+        parseHTML: element => {
+          try {
+            return JSON.parse(element.getAttribute('data-column-labels') ?? '[]')
+          } catch {
+            return []
+          }
+        },
+        renderHTML: attrs => ({ 'data-column-labels': JSON.stringify(attrs.columnLabels ?? []) }),
+      },
+      rows: {
+        default: [],
+        parseHTML: element => {
+          try {
+            return JSON.parse(element.getAttribute('data-rows') ?? '[]')
+          } catch {
+            return []
+          }
+        },
+        renderHTML: attrs => ({ 'data-rows': JSON.stringify(attrs.rows ?? []) }),
+      },
+      note: {
+        default: '',
+        parseHTML: element => element.getAttribute('data-note') ?? '',
+        renderHTML: attrs => attrs.note ? { 'data-note': attrs.note } : {},
+      },
+      truncated: {
+        default: false,
+        parseHTML: element => element.getAttribute('data-truncated') === 'true',
+        renderHTML: attrs => attrs.truncated ? { 'data-truncated': 'true' } : {},
+      },
+      totalRows: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-total-rows'),
+        renderHTML: attrs => attrs.totalRows ? { 'data-total-rows': attrs.totalRows } : {},
+      },
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'figure[data-research-table="true"]' }]
+  },
+
+  renderHTML({ node, HTMLAttributes }) {
+    const attrs = node.attrs ?? {}
+    const title = String(attrs.title ?? HTMLAttributes['data-title'] ?? HTMLAttributes.title ?? '')
+    const rawColumns = safeTableColumns(attrs.columns ?? HTMLAttributes.columns ?? HTMLAttributes['data-columns'])
+    const labels = safeTableColumns(attrs.columnLabels ?? HTMLAttributes.columnLabels ?? HTMLAttributes['data-column-labels'])
+    const rows = safeTableRows(attrs.rows ?? HTMLAttributes.rows ?? HTMLAttributes['data-rows'])
+    const note = String(attrs.note ?? HTMLAttributes['data-note'] ?? HTMLAttributes.note ?? '')
+    const truncated = safeTableBool(attrs.truncated ?? HTMLAttributes['data-truncated'] ?? HTMLAttributes.truncated)
+    const totalRows = String(attrs.totalRows ?? HTMLAttributes['data-total-rows'] ?? HTMLAttributes.totalRows ?? '')
+    const columns = compactResearchTableColumns(rawColumns, title)
+    const labelByColumn = new Map(rawColumns.map((column, index) => [column, labels[index] || column]))
+    const headerLabels = columns.map(column => labelByColumn.get(column) || column)
+    return [
+      'figure',
+      mergeAttributes(HTMLAttributes, {
+        'data-research-table': 'true',
+        class: 'paper-research-table-figure',
+        contenteditable: 'false',
+      }),
+      ...(title ? [['figcaption', { class: 'paper-research-table-title' }, title]] : []),
+      ['table', { class: 'paper-research-table' },
+        ['thead', {}, ['tr', {}, ...headerLabels.map(label => ['th', {}, label])]],
+        ['tbody', {}, ...rows.map(row => ['tr', {}, ...columns.map(column => ['td', {}, researchTableCellText(column, row[column])])])],
+      ],
+      ...(note || truncated ? [['figcaption', { class: 'paper-research-table-note' }, [
+        note,
+        truncated ? `（表内展示前 ${rows.length} 行，完整数据共 ${totalRows || rows.length} 行。）` : '',
+      ].filter(Boolean).join('')]] : []),
+    ]
+  },
+})
+
+function researchTableAttrs(node: PaperEditorNode | undefined) {
+  const attrs = node?.attrs ?? {}
+  const title = typeof attrs.title === 'string' ? attrs.title : ''
+  const rawColumns = safeTableColumns(attrs.columns)
+  const rawLabels = safeTableColumns(attrs.columnLabels)
+  const columns = compactResearchTableColumns(rawColumns, title)
+  const labelByColumn = new Map(rawColumns.map((column, index) => [column, rawLabels[index] || column]))
+  return {
+    title,
+    columns,
+    labels: columns.map(column => labelByColumn.get(column) || column),
+    rows: safeTableRows(attrs.rows).map(row => Object.fromEntries(columns.map(column => [column, researchTableCellText(column, row[column])]))),
+    note: typeof attrs.note === 'string' ? attrs.note : '',
+    truncated: safeTableBool(attrs.truncated),
+    totalRows: attrs.totalRows == null ? '' : String(attrs.totalRows),
+  }
+}
+
+function ResearchTableView({ node, measureKey, sectionId }: {
+  node?: PaperEditorNode
+  measureKey?: string
+  sectionId?: string
+}) {
+  const table = researchTableAttrs(node)
+  return (
+    <figure
+      className="paper-research-table-figure paper-preview-block"
+      data-measure-key={measureKey}
+      data-section-id={sectionId}
+    >
+      {table.title && <figcaption className="paper-research-table-title">{table.title}</figcaption>}
+      <table className="paper-research-table">
+        <thead>
+          <tr>{table.labels.map((label, index) => <th key={`${label}-${index}`}>{label}</th>)}</tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {table.columns.map(column => <td key={column}>{String(row[column] ?? '')}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {(table.note || table.truncated) && (
+        <figcaption className="paper-research-table-note">
+          {[table.note, table.truncated ? `（表内展示前 ${table.rows.length} 行，完整数据共 ${table.totalRows || table.rows.length} 行。）` : ''].filter(Boolean).join('')}
+        </figcaption>
+      )}
+    </figure>
+  )
+}
+
 const ResearchBlockNode = Node.create({
   name: 'researchBlock',
 
@@ -340,7 +540,6 @@ const ResearchImageNode = Node.create({
   renderHTML({ HTMLAttributes }) {
     const src = String(HTMLAttributes['data-src'] ?? HTMLAttributes.src ?? '')
     const alt = String(HTMLAttributes['data-alt'] ?? HTMLAttributes.alt ?? HTMLAttributes.title ?? '分析结果图')
-    const caption = String(HTMLAttributes['data-caption'] ?? HTMLAttributes.caption ?? '')
     return [
       'figure',
       mergeAttributes(HTMLAttributes, {
@@ -349,7 +548,6 @@ const ResearchImageNode = Node.create({
         contenteditable: 'false',
       }),
       ['img', { src, alt, class: 'paper-research-figure-image' }],
-      ...(caption ? [['figcaption', {}, caption]] : []),
     ]
   },
 })
@@ -616,6 +814,7 @@ function InlineProseMirrorEditor({
       SectionHeadingAttributes,
       ResearchBlockParagraphAttributes,
       ResearchBlockNode,
+      ResearchTableNode,
       ResearchImageNode,
       TextStyle,
       FontFamily.configure({ types: ['textStyle'] }),
@@ -841,7 +1040,6 @@ function renderPreviewBlock(
   if (block.type === 'image') {
     const src = typeof block.node?.attrs?.src === 'string' ? block.node.attrs.src : ''
     const alt = typeof block.node?.attrs?.alt === 'string' ? block.node.attrs.alt : '分析结果图'
-    const caption = typeof block.node?.attrs?.caption === 'string' ? block.node.attrs.caption : ''
     return (
       <figure
         key={block.key}
@@ -850,8 +1048,18 @@ function renderPreviewBlock(
         data-section-id={block.sectionId}
       >
         {src && <img className="paper-research-figure-image" src={src} alt={alt} />}
-        {caption && <figcaption>{caption}</figcaption>}
       </figure>
+    )
+  }
+
+  if (block.type === 'table') {
+    return (
+      <ResearchTableView
+        key={block.key}
+        node={block.node}
+        measureKey={block.key}
+        sectionId={block.sectionId}
+      />
     )
   }
 
@@ -1331,6 +1539,68 @@ function PaperDocumentStyles() {
         font-size: 12px;
         line-height: 1.7;
         white-space: pre-wrap;
+      }
+
+      .paper-research-table-figure {
+        margin: 18px 0 18px;
+        break-inside: avoid;
+      }
+
+      .paper-research-table-title {
+        margin: 0 0 8px;
+        color: var(--color-ink);
+        font-family: var(--font-serif);
+        font-size: 13px;
+        font-weight: 650;
+        line-height: 1.8;
+        text-align: center;
+      }
+
+      .paper-research-table {
+        width: 100%;
+        border-collapse: collapse;
+        border-top: 1.4px solid var(--color-ink);
+        border-bottom: 1.4px solid var(--color-ink);
+        font-family: var(--font-serif);
+        font-size: 11px;
+        line-height: 1.5;
+        table-layout: fixed;
+      }
+
+      .paper-research-table th {
+        border-bottom: 1px solid var(--color-ink);
+        padding: 4px 5px;
+        font-weight: 650;
+        text-align: center;
+        white-space: normal;
+        word-break: keep-all;
+      }
+
+      .paper-research-table td {
+        padding: 4px 5px;
+        text-align: center;
+        vertical-align: middle;
+        word-break: keep-all;
+        overflow-wrap: anywhere;
+      }
+
+      .paper-research-table th:first-child,
+      .paper-research-table td:first-child {
+        width: 44px;
+      }
+
+      .paper-research-table th:nth-child(2),
+      .paper-research-table td:nth-child(2) {
+        width: 82px;
+      }
+
+      .paper-research-table-note {
+        margin: 7px 0 0;
+        color: var(--color-ink-2);
+        font-family: var(--font-serif);
+        font-size: 11px;
+        line-height: 1.7;
+        text-align: left;
       }
 
       .paper-preview-paragraph.is-continuation {
@@ -1958,6 +2228,7 @@ function PaperDocumentEditorCore({
       SectionHeadingAttributes,
       ResearchBlockParagraphAttributes,
       ResearchBlockNode,
+      ResearchTableNode,
       ResearchImageNode,
       TextStyle,
       FontFamily.configure({ types: ['textStyle'] }),

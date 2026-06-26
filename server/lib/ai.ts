@@ -11,7 +11,9 @@ export interface Message {
   content: string
 }
 
-export function getAIConfig(provider: 'gpt' | 'doubao'): AIConfig {
+type Provider = 'gpt' | 'doubao'
+
+export function getAIConfig(provider: Provider): AIConfig {
   if (provider === 'doubao') {
     return {
       baseURL: process.env.DOUBAO_BASE_URL ?? '',
@@ -31,16 +33,25 @@ function isConfigReady(config: AIConfig) {
   return Boolean(config.baseURL && config.apiKey && config.model)
 }
 
-function fallbackConfig(provider: 'gpt' | 'doubao') {
+function alternateProvider(provider: Provider): Provider {
+  return provider === 'gpt' ? 'doubao' : 'gpt'
+}
+
+function resolveConfig(provider: Provider) {
   const primary = getAIConfig(provider)
   if (isConfigReady(primary)) return { provider, config: primary }
 
-  if (provider === 'doubao') {
-    const gpt = getAIConfig('gpt')
-    if (isConfigReady(gpt)) return { provider: 'gpt' as const, config: gpt }
-  }
+  const alternate = alternateProvider(provider)
+  const fallback = getAIConfig(alternate)
+  if (isConfigReady(fallback)) return { provider: alternate, config: fallback }
 
-  throw new Error(`${provider} AI 环境变量未配置完整`)
+  throw new Error(`${provider} AI environment variables are incomplete.`)
+}
+
+function getFallbackConfig(provider: Provider) {
+  const alternate = alternateProvider(provider)
+  const config = getAIConfig(alternate)
+  return isConfigReady(config) ? { provider: alternate, config } : null
 }
 
 async function requestChatCompletions(
@@ -69,31 +80,39 @@ async function requestChatCompletions(
 }
 
 export async function callAIStream(
-  provider: 'gpt' | 'doubao',
+  provider: Provider,
   messages: Message[],
   signal?: AbortSignal
 ) {
-  const resolved = fallbackConfig(provider)
+  const resolved = resolveConfig(provider)
   const response = await requestChatCompletions(resolved.config, messages, true, 4000, 0.7, signal)
-  if (response.ok || provider !== 'doubao' || resolved.provider === 'gpt') {
-    return response
-  }
+  if (response.ok) return response
 
-  const gpt = getAIConfig('gpt')
-  if (!isConfigReady(gpt)) return response
-  return requestChatCompletions(gpt, messages, true, 4000, 0.7, signal)
+  const fallback = getFallbackConfig(resolved.provider)
+  if (!fallback) return response
+  return requestChatCompletions(fallback.config, messages, true, 4000, 0.7, signal)
 }
 
 export async function callAIOnce(
   messages: Message[],
-  provider: 'gpt' | 'doubao' = 'gpt'
+  provider: Provider = 'gpt',
+  maxTokens = 2200
 ): Promise<string> {
-  const { config } = fallbackConfig(provider)
-  const response = await requestChatCompletions(config, messages, false, 2200, 0.3)
+  const resolved = resolveConfig(provider)
+  let response = await requestChatCompletions(resolved.config, messages, false, maxTokens, 0.3)
+  let primaryDetail = ''
+
+  if (!response.ok) {
+    primaryDetail = await response.text().catch(() => '')
+    const fallback = getFallbackConfig(resolved.provider)
+    if (fallback) {
+      response = await requestChatCompletions(fallback.config, messages, false, maxTokens, 0.3)
+    }
+  }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
-    throw new Error(`AI 调用失败 ${response.status}: ${detail}`)
+    throw new Error(`AI call failed ${response.status}: ${detail || primaryDetail}`)
   }
 
   const data = await response.json() as {

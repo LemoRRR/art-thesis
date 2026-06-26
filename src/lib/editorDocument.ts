@@ -70,6 +70,19 @@ function nodeText(node: PaperEditorNode): string {
   if (node.type === 'text') return node.text ?? ''
   if (node.type === 'researchBlock') return typeof node.attrs?.previewText === 'string' ? node.attrs.previewText : ''
   if (node.type === 'researchImage') return typeof node.attrs?.caption === 'string' ? node.attrs.caption : ''
+  if (node.type === 'researchTable') {
+    const title = typeof node.attrs?.title === 'string' ? node.attrs.title : ''
+    const columns = Array.isArray(node.attrs?.columnLabels) ? node.attrs.columnLabels : node.attrs?.columns
+    const rows = Array.isArray(node.attrs?.rows) ? node.attrs.rows : []
+    const note = typeof node.attrs?.note === 'string' ? node.attrs.note : ''
+    const tableText = [
+      Array.isArray(columns) ? columns.join('\t') : '',
+      ...rows.map(row => row && typeof row === 'object'
+        ? Object.values(row as Record<string, unknown>).map(value => value == null ? '' : String(value)).join('\t')
+        : ''),
+    ].filter(Boolean).join('\n')
+    return [title, tableText, note].filter(Boolean).join('\n')
+  }
   return (node.content ?? []).map(nodeText).join('')
 }
 
@@ -250,27 +263,29 @@ export function paperDocToSections(doc: PaperEditorDoc, previousSections: DocSec
   let currentHeading: PaperEditorNode | null = null
   let currentBody: PaperEditorNode[] = []
 
-  const flush = () => {
-    if (!currentHeading) return
-    const rawSectionId = currentHeading.attrs?.sectionId
-    const id = typeof rawSectionId === 'string' && rawSectionId.trim() ? rawSectionId : `section-${next.length + 1}`
-    const previous = previousById.get(id)
-    const title = nodeText(currentHeading).trim() || previous?.title || '未命名章节'
-    const editorDoc: PaperEditorDoc = {
-      type: 'doc',
-      content: [currentHeading!, ...currentBody],
-    }
+  const pushSection = (heading: PaperEditorNode | null, body: PaperEditorNode[], fallbackPrevious?: DocSection) => {
+    const rawSectionId = heading?.attrs?.sectionId
+    const id = typeof rawSectionId === 'string' && rawSectionId.trim()
+      ? rawSectionId
+      : fallbackPrevious?.id || `section-${next.length + 1}`
+    const previous = previousById.get(id) ?? fallbackPrevious
+    const title = (heading ? nodeText(heading).trim() : '') || previous?.title || '正文'
+    const sectionNodes = heading ? [heading, ...body] : body
+    const editorDoc: PaperEditorDoc = heading
+      ? { type: 'doc', content: [heading, ...body] }
+      : { type: 'doc', content: body.length ? body : [{ type: 'paragraph' }] }
+
     next.push({
       ...previous,
       id,
       title,
-      content: editorDocToPlainText({ type: 'doc', content: currentBody }),
+      content: editorDocToPlainText({ type: 'doc', content: body }),
       editorDoc,
-      footnotes: sectionFootnotesFromNodes([currentHeading!, ...currentBody], previous),
+      footnotes: sectionFootnotesFromNodes(sectionNodes, previous),
       status: previous?.status ?? 'done',
       lastModified: Date.now(),
       order: previous?.order ?? next.length,
-      outlineNodeId: typeof currentHeading!.attrs?.outlineNodeId === 'string' ? currentHeading!.attrs.outlineNodeId : previous?.outlineNodeId,
+      outlineNodeId: heading && typeof heading.attrs?.outlineNodeId === 'string' ? heading.attrs.outlineNodeId : previous?.outlineNodeId,
       outlineOrder: previous?.outlineOrder,
       outlineChildrenSignature: previous?.outlineChildrenSignature,
       generationPlan: previous?.generationPlan,
@@ -279,6 +294,11 @@ export function paperDocToSections(doc: PaperEditorDoc, previousSections: DocSec
       projectId: previous?.projectId,
       sourceRefs: previous?.sourceRefs,
     })
+  }
+
+  const flush = () => {
+    if (!currentHeading) return
+    pushSection(currentHeading, currentBody)
   }
 
   ;(doc.content ?? []).forEach(node => {
@@ -294,6 +314,11 @@ export function paperDocToSections(doc: PaperEditorDoc, previousSections: DocSec
     }
   })
   flush()
+
+  if (next.length === 0) {
+    const body = (doc.content ?? []).filter(node => !sectionTitleNode(node))
+    pushSection(null, body, previousSections[0])
+  }
 
   return next
 }

@@ -11,6 +11,7 @@ import type { PaperEditorDoc, PaperEditorNode } from './editorDocument'
 type StructuredResearchResult = {
   figures?: Array<{ id?: string; title?: string; dataUrl?: string; caption?: string }>
   tables?: Array<{ id?: string; title?: string; rows?: unknown[]; columns?: string[] }>
+  componentNarratives?: Array<{ componentId?: string; title?: string; beforeText?: string; afterText?: string }>
   methodText?: string
   analysisText?: string
   cautions?: string[]
@@ -23,6 +24,16 @@ function uid(prefix: string) {
 
 function component(idPrefix: string, item: Omit<ResearchPackageComponent, 'id'>): ResearchPackageComponent {
   return { ...item, id: uid(idPrefix) }
+}
+
+function narrativeFor(result: StructuredResearchResult, id?: string, title?: string) {
+  const key = String(id ?? '').trim()
+  const normalizedTitle = String(title ?? '').replace(/\s+/g, '')
+  return (result.componentNarratives ?? []).find(item => {
+    const itemId = String(item.componentId ?? '').trim()
+    const itemTitle = String(item.title ?? '').replace(/\s+/g, '')
+    return (key && itemId === key) || (normalizedTitle && itemTitle === normalizedTitle)
+  }) ?? null
 }
 
 export function splitResearchAssetIntoComponents(asset: ResearchAsset): ResearchPackageComponent[] {
@@ -39,13 +50,28 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
     }
     ;(result.figures ?? []).forEach((figure, index) => {
       if (!figure?.dataUrl) return
+      const title = figure.title ?? `Figure ${index + 1}`
+      const narrative = narrativeFor(result, figure.id, title)
+      if (narrative?.beforeText) {
+        components.push(component('research_component', {
+          type: 'analysis',
+          title: `${title}: before`,
+          content: String(narrative.beforeText),
+        }))
+      }
       components.push(component('research_component', {
         type: 'figure',
-        title: figure.title ?? `图${index + 1}`,
-        label: figure.title ?? `图${index + 1}`,
-        content: figure.caption ?? figure.title ?? `图${index + 1}`,
+        title,
+        content: figure.caption ?? title,
         data: figure,
       }))
+      if (narrative?.afterText) {
+        components.push(component('research_component', {
+          type: 'analysis',
+          title: `${title}: after`,
+          content: String(narrative.afterText),
+        }))
+      }
     })
     ;(result.tables ?? []).forEach((table, index) => {
       const rows = Array.isArray(table.rows) ? table.rows : []
@@ -62,27 +88,49 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
               return value == null ? '' : String(value)
             }).join('\t')),
           ].join('\n')
-        : '无可用统计表。'
+        : 'No available statistical table.'
+      const title = table.title ?? `Table ${index + 1}`
+      const narrative = narrativeFor(result, table.id, title)
+      if (narrative?.beforeText) {
+        components.push(component('research_component', {
+          type: 'analysis',
+          title: `${title}: before`,
+          content: String(narrative.beforeText),
+        }))
+      }
+      const displayColumns = selectResearchTableColumns(columns, title)
+      const displayRows = rows.slice(0, 24).map(row => Object.fromEntries(displayColumns.map(column => {
+        const value = row && typeof row === 'object' ? (row as Record<string, unknown>)[column] : ''
+        return [column, formatResearchTableValue(column, value)]
+      })))
       components.push(component('research_component', {
         type: 'statistics',
-        title: table.title ?? `统计表${index + 1}`,
-        label: `表${index + 1}`,
+        title,
         content,
-        data: table,
+        data: {
+          ...table,
+          title,
+          columns: displayColumns,
+          columnLabels: displayColumns.map(researchTableColumnLabel),
+          rows: displayRows,
+          note: researchTableNote({ type: 'statistics', title, content, data: table } as ResearchPackageComponent),
+          truncated: rows.length > displayRows.length,
+          totalRows: rows.length,
+        },
       }))
+      if (narrative?.afterText) {
+        components.push(component('research_component', {
+          type: 'analysis',
+          title: `${title}: after`,
+          content: String(narrative.afterText),
+        }))
+      }
     })
     if ('analysisText' in result && result.analysisText) {
       components.push(component('research_component', {
         type: 'analysis',
         title: '分析文字',
         content: String(result.analysisText),
-      }))
-    }
-    if ('cautions' in result && Array.isArray(result.cautions) && result.cautions.length > 0) {
-      components.push(component('research_component', {
-        type: 'raw_text',
-        title: '计算提示',
-        content: result.cautions.join('\n'),
       }))
     }
     if (components.length > 0) return components
@@ -189,6 +237,125 @@ function paragraphNode(text: string, attrs?: Record<string, unknown>): PaperEdit
   }
 }
 
+const RESEARCH_TABLE_COLUMN_LABELS: Record<string, string> = {
+  ['\u6700\u7ec8\u8026\u5408\u4f18\u5148\u7ea7\u6392\u540d']: '\u6392\u540d',
+  ['\u8bbe\u8ba1\u7ef4\u5ea6']: '\u7ef4\u5ea6',
+  ['\u7ef4\u5ea6\u5168\u79f0']: '\u7ef4\u5ea6\u8bf4\u660e',
+  ['\u6837\u672c\u603b\u91cf']: 'N',
+  ['\u4e3b\u5bfcKANO\u7c7b\u578b']: 'KANO',
+  ['Better\u7cfb\u6570(\u6ee1\u610f\u5ea6\u63d0\u5347)']: 'Better',
+  ['Worse\u7cfb\u6570\u7edd\u5bf9\u503c(\u4e0d\u6ee1\u964d\u4f4e)']: 'Worse',
+  ['\u71b5\u6743\u7efc\u5408\u5f97\u5206']: '\u71b5\u6743',
+  ['\u8026\u5408\u4f18\u5148\u7ea7\u603b\u5f97\u5206']: '\u7efc\u5408\u5206',
+  ['\u8bc4\u4ef7\u6307\u6807']: '\u6307\u6807',
+  ['\u71b5\u503c']: '\u71b5\u503c',
+  ['\u5dee\u5f02\u7cfb\u6570']: '\u5dee\u5f02',
+  ['\u6743\u91cd\u5360\u6bd4(%)']: '\u6743\u91cd(%)',
+  variable: '变量',
+  n: '样本量',
+  mean: '均值',
+  sd: '标准差',
+  min: '最小值',
+  max: '最大值',
+  alpha: 'Cronbach α',
+  items: '题项数',
+  itemColumns: '题项',
+  x: '变量X',
+  y: '变量Y',
+  r: '相关系数',
+  p: '显著性',
+  group: '分组变量',
+  f: 'F值',
+  sampleSize: '样本量',
+  missingRate: '缺失率',
+  duplicateRows: '重复样本',
+  invalidSampleCandidates: '疑似无效样本',
+  reliabilitySuitable: '信度分析',
+  efaSuitable: '因子分析',
+  correlationSuitable: '相关分析',
+  anovaSuitable: '方差分析',
+  openCode: '开放编码',
+  axialCategory: '主轴范畴',
+  evidenceExcerpt: '典型证据',
+  memo: '备忘',
+  theme: '主题',
+  count: '频次',
+  evidence: '证据摘要',
+  conceptualMeaning: '概念含义',
+  includedOpenCodes: '包含开放编码',
+  evidenceCount: '证据数',
+  writingUse: '写作用途',
+}
+
+function researchTableColumnLabel(column: string) {
+  if (RESEARCH_TABLE_COLUMN_LABELS[column]) return RESEARCH_TABLE_COLUMN_LABELS[column]
+  return column
+    .replace(/^factor_(\d+)$/i, '因子$1')
+    .replace(/_/g, ' ')
+}
+
+function selectResearchTableColumns(columns: string[], title = '') {
+  const rank = '\u6700\u7ec8\u8026\u5408\u4f18\u5148\u7ea7\u6392\u540d'
+  const dimension = '\u8bbe\u8ba1\u7ef4\u5ea6'
+  const sampleSize = '\u6837\u672c\u603b\u91cf'
+  const kanoType = '\u4e3b\u5bfcKANO\u7c7b\u578b'
+  const better = 'Better\u7cfb\u6570(\u6ee1\u610f\u5ea6\u63d0\u5347)'
+  const worse = 'Worse\u7cfb\u6570\u7edd\u5bf9\u503c(\u4e0d\u6ee1\u964d\u4f4e)'
+  const entropyScore = '\u71b5\u6743\u7efc\u5408\u5f97\u5206'
+  const priorityScore = '\u8026\u5408\u4f18\u5148\u7ea7\u603b\u5f97\u5206'
+  const indicator = '\u8bc4\u4ef7\u6307\u6807'
+  const entropy = '\u71b5\u503c'
+  const diff = '\u5dee\u5f02\u7cfb\u6570'
+  const weight = '\u6743\u91cd\u5360\u6bd4(%)'
+  const columnSet = new Set(columns)
+  const preferred = title.includes('KANO') && (title.includes('\u8026\u5408') || title.includes('\u4f18\u5148\u7ea7'))
+    ? [rank, dimension, kanoType, better, worse, entropyScore, priorityScore]
+    : title.includes('KANO')
+      ? [dimension, sampleSize, kanoType, better, worse, rank]
+      : title.includes('\u71b5\u6743')
+        ? [indicator, entropy, diff, weight]
+        : []
+  const selected = preferred.filter(column => columnSet.has(column))
+  return (selected.length ? selected : columns).slice(0, 7)
+}
+
+function formatResearchTableValue(column: string, value: unknown) {
+  if (value == null) return ''
+  if (typeof value === 'number') {
+    if (column === 'p') return value < 0.001 ? '<0.001' : value.toFixed(3)
+    if (Number.isInteger(value)) return String(value)
+    return value.toFixed(Math.abs(value) < 1 ? 3 : 2)
+  }
+  const text = String(value).trim()
+  const maxLength = column === '\u7ef4\u5ea6\u5168\u79f0' ? 18 : column === '\u8bbe\u8ba1\u7ef4\u5ea6' ? 8 : 28
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
+}
+
+function researchTableNote(component: ResearchPackageComponent) {
+  const data = component.data && typeof component.data === 'object' ? component.data as { id?: unknown } : null
+  const id = String(data?.id ?? '').toLowerCase()
+  const title = `${component.title ?? ''}`.toLowerCase()
+  if (id.includes('descriptive') || title.includes('描述')) {
+    return '注：N表示有效样本量，M表示均值，SD表示标准差。'
+  }
+  if (id.includes('reliability') || title.includes('信度')) {
+    return '注：Cronbach α用于衡量量表题项内部一致性，通常以0.70作为可接受参考值。'
+  }
+  if (id.includes('correlation') || title.includes('相关')) {
+    return '注：r表示相关系数，p表示显著性水平。'
+  }
+  if (id.includes('anova') || title.includes('方差')) {
+    return '注：F值用于判断不同组别在变量均值上的差异程度，p值用于辅助判断显著性。'
+  }
+  if (id.includes('efa') || title.includes('因子')) {
+    return '注：表中数值为探索性因子载荷，载荷越高表示题项与对应因子的关联越强。'
+  }
+  if (id.includes('quality') || title.includes('质量')) {
+    return '注：数据质量判断用于提示后续统计分析的适用性，正式论文中可结合无效样本剔除规则进一步说明。'
+  }
+  return ''
+}
+
 function splitParagraphs(text: string) {
   return text
     .split(/\n{2,}|\r?\n/)
@@ -219,15 +386,26 @@ function componentTableRows(component: ResearchPackageComponent): PaperEditorNod
     return title ? [paragraphNode(title, { textAlign: 'center', researchTableCaption: true })] : []
   }
 
-  const previewRows = rows.slice(0, 8)
-  const visibleColumns = columns.slice(0, 5)
+  const previewRows = rows.slice(0, 24)
+  const visibleColumns = selectResearchTableColumns(columns, title ?? '')
+  const normalizedRows = previewRows.map(row => Object.fromEntries(visibleColumns.map(column => {
+    const value = row && typeof row === 'object' ? (row as Record<string, unknown>)[column] : ''
+    return [column, formatResearchTableValue(column, value)]
+  })))
+
   return [
-    ...(title ? [paragraphNode(title, { textAlign: 'center', researchTableCaption: true })] : []),
-    paragraphNode(visibleColumns.join('    '), { textAlign: 'center', researchTableRow: true }),
-    ...previewRows.map(row => paragraphNode(visibleColumns.map(column => {
-      const value = row && typeof row === 'object' ? (row as Record<string, unknown>)[column] : ''
-      return value == null ? '' : String(value)
-    }).join('    '), { textAlign: 'center', researchTableRow: true })),
+    {
+      type: 'researchTable',
+      attrs: {
+        title,
+        columns: visibleColumns,
+        columnLabels: visibleColumns.map(researchTableColumnLabel),
+        rows: normalizedRows,
+        note: researchTableNote(component),
+        truncated: rows.length > previewRows.length,
+        totalRows: rows.length,
+      },
+    },
   ]
 }
 
@@ -239,17 +417,19 @@ function componentToPaperNodes(component: ResearchPackageComponent): PaperEditor
   const figure = componentFigureData(component)
   if (figure) {
     const title = component.label ? `${component.label} ${component.title ?? ''}`.trim() : component.title
+    const figureTitle = title ?? figure.title ?? '分析结果图'
     return [
       {
         type: 'researchImage',
         attrs: {
           src: figure.dataUrl,
-          alt: title ?? '分析结果图',
-          title: title ?? figure.title ?? '分析结果图',
-          caption: figure.caption,
+          alt: figureTitle,
+          title: figureTitle,
+          caption: figureTitle,
+          description: figure.caption,
         },
       },
-      paragraphNode(figure.caption || title || '分析结果图', { textAlign: 'center', researchFigureCaption: true }),
+      paragraphNode(figureTitle, { textAlign: 'center', researchFigureCaption: true }),
     ]
   }
 
@@ -264,6 +444,72 @@ export function researchPackageToPaperNodes(pkg: ResearchContentPackage, compone
   return pkg.components
     .filter(item => !allowed || allowed.has(item.id))
     .flatMap(componentToPaperNodes)
+}
+
+function paperNodeText(node: PaperEditorNode): string {
+  if (node.type === 'text') return node.text ?? ''
+  return (node.content ?? []).map(paperNodeText).join('')
+}
+
+function normalizedTableTitle(value: unknown) {
+  return String(value ?? '').replace(/\s+/g, '').trim()
+}
+
+function isResearchTableCaptionNode(node: PaperEditorNode, title: string) {
+  if (node.type !== 'paragraph') return false
+  const text = normalizedTableTitle(paperNodeText(node))
+  if (!text) return false
+  const target = normalizedTableTitle(title)
+  if (text === target) return true
+  return Boolean(node.attrs?.researchTableCaption) && text.includes(target)
+}
+
+export function researchTableNodesFromPackage(pkg: ResearchContentPackage, componentIds?: string[]): PaperEditorNode[] {
+  return researchPackageToPaperNodes(pkg, componentIds).filter(node => node.type === 'researchTable')
+}
+
+export function repairResearchTablesInDoc(
+  doc: PaperEditorDoc,
+  packages: Array<Pick<ResearchContentPackage, 'components'> & Partial<ResearchContentPackage>>
+): { doc: PaperEditorDoc; changed: boolean } {
+  const tableNodes = packages.flatMap(pkg =>
+    researchTableNodesFromPackage({
+      id: pkg.id ?? 'research-package-repair',
+      projectId: pkg.projectId ?? 'research-package-repair',
+      title: pkg.title ?? 'research package',
+      method: pkg.method ?? 'research',
+      methodLabel: pkg.methodLabel,
+      capabilityTier: pkg.capabilityTier ?? 'partial_loop',
+      intentSummary: pkg.intentSummary,
+      components: pkg.components,
+      insertedComponentIds: pkg.insertedComponentIds ?? [],
+      versions: pkg.versions ?? [],
+      createdAt: pkg.createdAt ?? Date.now(),
+      updatedAt: pkg.updatedAt ?? Date.now(),
+    })
+  )
+  if (!tableNodes.length) return { doc, changed: false }
+
+  const existingTitles = new Set(
+    (doc.content ?? [])
+      .filter(node => node.type === 'researchTable')
+      .map(node => normalizedTableTitle(node.attrs?.title))
+      .filter(Boolean)
+  )
+
+  let changed = false
+  const nextContent = (doc.content ?? []).flatMap(node => {
+    const match = tableNodes.find(tableNode => {
+      const title = normalizedTableTitle(tableNode.attrs?.title)
+      return title && !existingTitles.has(title) && isResearchTableCaptionNode(node, title)
+    })
+    if (!match) return [node]
+    existingTitles.add(normalizedTableTitle(match.attrs?.title))
+    changed = true
+    return [match]
+  })
+
+  return changed ? { doc: { ...doc, content: nextContent }, changed: true } : { doc, changed: false }
 }
 
 export function appendResearchBlockToDoc(doc: PaperEditorDoc, pkg: ResearchContentPackage, componentIds?: string[]): PaperEditorDoc {
