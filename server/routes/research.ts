@@ -2156,6 +2156,117 @@ function deterministicKanoEntropyAnalysisText(result: Record<string, unknown>, f
   ].filter(Boolean).join('\n')
 }
 
+function sortedRankRows(rows: Record<string, unknown>[], rankKey = 'rank') {
+  return [...rows].sort((a, b) => {
+    const rankA = maybeNumber(a[rankKey])
+    const rankB = maybeNumber(b[rankKey])
+    if (rankA !== null && rankB !== null) return rankA - rankB
+    if (rankA !== null) return -1
+    if (rankB !== null) return 1
+    return 0
+  })
+}
+
+function deterministicAhpAnalysisText(result: Record<string, unknown>, fallbackText = '') {
+  if (result.method !== 'ahp') return ''
+  const consistencyRows = tableRowsById(result, 'table_ahp_consistency')
+  const weightRows = sortedRankRows(tableRowsById(result, 'table_ahp_weights'))
+  if (!consistencyRows.length && !weightRows.length) return fallbackText
+
+  const passedCount = consistencyRows.filter(row => String(row.consistency ?? '').includes('通过')).length
+  const failedRows = consistencyRows.filter(row => !String(row.consistency ?? '').includes('通过'))
+  const topWeights = weightRows.slice(0, 5)
+  const topNames = topWeights.map(row => rowValue(row, 'criterion')).filter(Boolean)
+
+  return [
+    `本次 AHP 分析共识别 ${consistencyRows.length || result.sampleSize || weightRows.length} 个判断矩阵。研究过程先依据专家两两比较结果计算各指标权重，再通过 λmax、CI 与 CR 检验判断矩阵一致性，从而保证权重排序具有可解释的逻辑基础。`,
+    consistencyRows.length
+      ? failedRows.length
+        ? `一致性检验结果显示，${passedCount} 个判断矩阵通过 CR<0.10 的一致性要求，${failedRows.length} 个判断矩阵需要复核。正式论文中应说明专家评分修正或复核过程，避免直接把未通过矩阵作为稳定结论。`
+        : '一致性检验结果显示，各判断矩阵均通过 CR<0.10 的一致性要求，说明专家评分在逻辑上具有较好一致性，可继续用于指标权重解释和优先级判断。'
+      : '',
+    topWeights.length
+      ? `从权重排序看，${topWeights.map(row => `“${rowValue(row, 'criterion') || '-'}”权重为 ${rowValue(row, 'weightPercent') || rowValue(row, 'weight') || '-'}${rowValue(row, 'weightPercent') ? '%' : ''}`).join('，')}。这些指标在评价体系中具有相对更高的重要性，论文结果章节应结合研究对象解释其权重来源，并在策略建议中体现相应的优先顺序。`
+      : '',
+    topNames.length
+      ? `综合来看，${topNames.slice(0, 3).map(name => `“${name}”`).join('、')}可作为后续讨论和优化建议的重点切入点。写作时不宜只罗列权重数值，而应说明这些指标如何回应研究问题、影响用户判断或支撑设计决策。`
+      : '',
+  ].filter(Boolean).join('\n')
+}
+
+function deterministicQualitativeAnalysisText(result: Record<string, unknown>, fallbackText = '') {
+  if (result.method !== 'qualitative_coding') return ''
+  const themeRows = sortedRankRows(tableRowsById(result, 'table_theme_summary'), 'count').reverse()
+  const axialRows = sortedRankRows(tableRowsById(result, 'table_axial_coding'), 'evidenceCount').reverse()
+  const evidenceRows = tableRowsById(result, 'table_evidence_excerpt')
+  if (!themeRows.length && !axialRows.length) return fallbackText
+
+  const topThemes = themeRows.slice(0, 5)
+  const topThemeNames = topThemes.map(row => rowValue(row, 'theme')).filter(Boolean)
+  const topAxial = axialRows[0]
+
+  return [
+    `本次质性分析共纳入 ${result.sampleSize || evidenceRows.length || '若干'} 段可分析文本，采用开放编码、主轴归纳与典型证据摘录的方式识别材料中的核心主题。该过程主要用于呈现受访者或文本材料中的高频关注点，并为后续讨论提供经验性证据。`,
+    topThemes.length
+      ? `主题归纳结果显示，出现频次较高的主题包括${topThemeNames.map(name => `“${name}”`).join('、')}。其中，“${rowValue(topThemes[0], 'theme') || '-'}”出现 ${rowValue(topThemes[0], 'count') || '-'} 次，说明该主题在材料中具有较高集中度，可作为论文结果解释的重点。`
+      : '',
+    topAxial
+      ? `从主轴范畴看，“${rowValue(topAxial, 'axialCategory') || '-'}”包含的证据数量相对较多，反映材料中的相关问题并非孤立表达，而是围绕若干相近经验和评价形成了较稳定的范畴结构。`
+      : '',
+    '正式论文写作中，应将主题频次、典型证据和研究问题对应起来：先说明该主题回答了什么问题，再结合原文摘录解释其形成原因，最后转化为设计、传播、产品或管理层面的启示。质性编码属于辅助初编结果，最终结论仍建议由研究者复核同义编码合并和典型证据选择。'
+  ].filter(Boolean).join('\n')
+}
+
+function deterministicQuantAnalysisText(result: Record<string, unknown>, fallbackText = '') {
+  const method = String(result.method ?? '')
+  if (result.method === 'kano_entropy' || result.method === 'ahp' || result.method === 'qualitative_coding') return ''
+  const descriptiveRows = tableRowsById(result, 'table_descriptive')
+  const reliabilityRows = tableRowsById(result, 'table_reliability')
+  const correlationRows = tableRowsById(result, 'table_correlation')
+  const anovaRows = tableRowsById(result, 'table_anova')
+  const efaRows = tableRowsById(result, 'table_efa')
+  const qualityRows = tableRowsById(result, 'table_data_quality')
+  if (!descriptiveRows.length && !reliabilityRows.length && !correlationRows.length && !anovaRows.length && !efaRows.length && !qualityRows.length) {
+    return fallbackText
+  }
+
+  const firstDesc = descriptiveRows[0]
+  const strongestCorrelation = correlationRows.reduce<Record<string, unknown> | null>((best, row) => {
+    const value = Math.abs(Number(row.r ?? 0))
+    const bestValue = best ? Math.abs(Number(best.r ?? 0)) : -1
+    return value > bestValue ? row : best
+  }, null)
+  const alpha = reliabilityRows[0]
+  const firstAnova = anovaRows[0]
+  const factorColumns = efaRows[0] ? Object.keys(efaRows[0]).filter(key => key.startsWith('factor_')) : []
+
+  return [
+    `本次定量分析基于 ${result.sampleSize || rowValue(qualityRows[0] ?? {}, 'sampleSize') || '上传'} 份样本开展，分析方法包括${method || '描述统计及相关统计检验'}。系统根据数据列类型和用户确认方案生成统计表与图示，用于支撑论文结果章节中的变量分布、信度、相关关系、组间差异或维度结构解释。`,
+    firstDesc
+      ? `描述统计结果显示，${rowValue(firstDesc, 'variable') || '首个变量'}的均值为 ${rowValue(firstDesc, 'mean') || '-'}，标准差为 ${rowValue(firstDesc, 'sd') || '-'}，可用于判断样本在该指标上的总体水平和离散程度。正式写作时应结合研究对象解释均值高低的含义，而不是仅复述数字。`
+      : '',
+    alpha
+      ? `信度分析结果显示，Cronbach's alpha 为 ${rowValue(alpha, 'alpha') || '-'}，题项数为 ${rowValue(alpha, 'items') || '-' }。该结果可用于判断量表内部一致性；若 alpha 较低，应在论文中提示量表题项仍需复核。`
+      : '',
+    strongestCorrelation
+      ? `相关分析中，${rowValue(strongestCorrelation, 'x') || '变量X'}与${rowValue(strongestCorrelation, 'y') || '变量Y'}的相关系数为 r=${rowValue(strongestCorrelation, 'r') || '-'}，p=${rowValue(strongestCorrelation, 'p') || '未计算'}。该结果应结合研究假设判断其方向和强度，不能在缺少显著性或理论支撑时扩大解释为因果关系。`
+      : '',
+    firstAnova
+      ? `方差分析结果显示，分组变量 ${rowValue(firstAnova, 'group') || '-'} 在 ${rowValue(firstAnova, 'variable') || '-'} 上的检验结果为 F=${rowValue(firstAnova, 'f') || '-'}，p=${rowValue(firstAnova, 'p') || '未计算'}。论文中可据此讨论不同群体是否存在差异，但应保留对样本量和组别均衡性的说明。`
+      : '',
+    efaRows.length
+      ? `探索性因子分析输出了 ${factorColumns.length || '若干'} 个潜在因子载荷。写作时应结合载荷较高的题项归属解释潜在维度结构，并在正式论文中结合旋转结果、KMO/Bartlett 检验或理论维度进一步复核。`
+      : '',
+  ].filter(Boolean).join('\n')
+}
+
+function deterministicAnalysisText(result: Record<string, unknown>, fallbackText = '') {
+  return deterministicKanoEntropyAnalysisText(result, fallbackText)
+    || deterministicAhpAnalysisText(result, fallbackText)
+    || deterministicQualitativeAnalysisText(result, fallbackText)
+    || deterministicQuantAnalysisText(result, fallbackText)
+}
+
 function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
   if (result.method !== 'kano_entropy') return null
   const summaryRows = tableRowsById(result, 'table_kano_summary')
@@ -2381,11 +2492,14 @@ async function interpretAnalysisResult(result: Record<string, unknown>, payload:
   try {
     const aiText = await callAIOnce(messages, 'gpt')
     const ai = safeJsonFromText(aiText)
-    const methodText = typeof ai?.methodText === 'string' && ai.methodText.trim()
+    const deterministicMethodText = typeof result.methodText === 'string' && result.methodText.trim()
+      ? result.methodText.trim()
+      : ''
+    const methodText = deterministicMethodText || (typeof ai?.methodText === 'string' && ai.methodText.trim()
       ? ai.methodText.trim()
-      : fallback.methodText
-    const deterministicKanoAnalysisText = deterministicKanoEntropyAnalysisText(result, fallback.analysisText)
-    const analysisText = deterministicKanoAnalysisText || (typeof ai?.analysisText === 'string' && ai.analysisText.trim()
+      : fallback.methodText)
+    const safeAnalysisText = deterministicAnalysisText(result, fallback.analysisText)
+    const analysisText = safeAnalysisText || (typeof ai?.analysisText === 'string' && ai.analysisText.trim()
       ? ai.analysisText.trim()
       : fallback.analysisText)
     const aiWarnings = Array.isArray(ai?.warnings)

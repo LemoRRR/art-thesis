@@ -94,6 +94,18 @@ function rowText(row: Record<string, unknown> | undefined, keys: string[]) {
   return ''
 }
 
+function kanoTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    M: '必备型',
+    O: '期望型',
+    A: '魅力型',
+    I: '无差异型',
+    Q: '可疑结果',
+    R: '反向型',
+  }
+  return labels[type] ?? type
+}
+
 function discussionTextForStructuredResult(result: StructuredResearchResult) {
   const method = normalizedResearchId(result.method)
   const priorityRows = tableRows(tableById(result, 'table_priority_ranking'))
@@ -107,7 +119,7 @@ function discussionTextForStructuredResult(result: StructuredResearchResult) {
       .filter(Boolean)
     const first = top[0]
     const firstName = rowText(first, ['维度', '设计维度', 'criterion', '指标']) || '排名靠前的维度'
-    const firstType = rowText(first, ['KANO', '主导KANO类型'])
+    const firstType = kanoTypeLabel(rowText(first, ['KANO', '主导KANO类型']))
     const firstScore = rowText(first, ['综合分', '耦合优先级总得分'])
     return [
       `基于KANO属性与熵权耦合结果，后续讨论不宜只停留在数值排序，而应将排名靠前的维度转化为具体优化策略。${firstName}${firstType ? `属于${firstType}` : ''}${firstScore ? `，综合分为${firstScore}` : ''}，说明其既具有较强的需求识别意义，也适合作为论文策略建议部分的优先切入点。`,
