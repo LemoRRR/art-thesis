@@ -844,6 +844,8 @@ async function canvasDataUrl(
     const scale = 2
     const canvas = createCanvas(width * scale, height * scale)
     const ctx = canvas.getContext('2d') as unknown as ChartCanvasContext
+    ctx.fillStyle = CHART_THEME.background
+    ctx.fillRect(0, 0, width * scale, height * scale)
     ctx.scale(scale, scale)
     ctx.fillStyle = CHART_THEME.background
     ctx.fillRect(0, 0, width, height)
@@ -2294,6 +2296,10 @@ function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
   const topBetter = maxRowByNumber(summaryRows, 'Better')
   const topWorse = maxRowByNumber(summaryRows, 'Worse')
   const topWeight = maxRowByNumber(weightRows, '权重(%)')
+  const topPriorityNames = priorityRows
+    .slice(0, 5)
+    .map(row => rowValue(row, '维度') || rowValue(row, '设计维度'))
+    .filter(Boolean)
   const narratives: Array<{ componentId: string; title: string; beforeText: string; afterText: string }> = []
 
   if (summaryRows.length) {
@@ -2320,6 +2326,39 @@ function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
       title: 'KANO-熵权法耦合优先级排序',
       beforeText: '表4-3综合KANO属性、Better/Worse系数和熵权结果，对各评价维度进行耦合优先级排序，用于确定论文讨论和策略建议的重点顺序。',
       afterText: `由表4-3可知，排名第一的维度为“${rowValue(topPriority ?? {}, '维度') || '-'}”，其KANO类型为${kanoTypeName(rowValue(topPriority ?? {}, 'KANO'))}，综合分为${rowValue(topPriority ?? {}, '综合分') || '-'}。这表明该维度应优先进入后续设计优化和策略建议，而不是简单以单项Better系数或综合分高低替代排序结论。`,
+    })
+  }
+
+  if (summaryRows.length) {
+    narratives.push({
+      componentId: 'figure_kano_distribution',
+      title: 'KANO类型分布堆叠柱状图',
+      beforeText: '为进一步观察各评价维度在不同需求属性中的集中程度，本文绘制KANO类型分布堆叠柱状图，以补充表格中主导类型判断的可视化证据。',
+      afterText: `图4-1显示，不同维度的需求属性并非均匀分布，其中${rowValue(topWorse ?? {}, '维度') || 'Worse系数较高的维度'}更接近基础保障类需求，${rowValue(topBetter ?? {}, '维度') || 'Better系数较高的维度'}则更能体现满意度提升潜力。该图说明后续策略不能只强调审美创新，也需要区分“必须满足”和“能够加分”的不同设计任务。`,
+    })
+    narratives.push({
+      componentId: 'figure_better_worse_matrix',
+      title: 'Better-Worse系数四象限图',
+      beforeText: '为判断各维度是主要提升满意度还是主要降低不满意，本文将Better系数与Worse绝对值放入同一坐标系中比较，从而识别不同维度的风险与增益位置。',
+      afterText: `图4-2表明，${rowValue(topWorse ?? {}, '维度') || 'Worse系数较高的维度'}的缺失风险更突出，而${rowValue(topBetter ?? {}, '维度') || 'Better系数较高的维度'}对满意度提升更明显。该结果回应了研究中关于“哪些视觉或体验要素应优先优化”的问题，也为后续耦合排序提供了系数依据。`,
+    })
+  }
+
+  if (weightRows.length) {
+    narratives.push({
+      componentId: 'figure_entropy_weights',
+      title: '熵权指标权重柱状图',
+      beforeText: '为避免仅凭主观经验确定指标重要性，本文将熵权法计算得到的客观权重绘制为柱状图，用于展示不同系数在综合评价中的区分作用。',
+      afterText: `图4-3显示，${rowValue(topWeight ?? {}, '指标') || '权重较高的指标'}在本次耦合评价中的权重最高，说明样本差异主要通过该指标拉开。由此可见，后续解释综合排序时应同时考虑需求属性和权重结构，而不是直接以单个Better或Worse值替代综合判断。`,
+    })
+  }
+
+  if (priorityRows.length) {
+    narratives.push({
+      componentId: 'figure_kano_entropy_priority',
+      title: 'KANO-熵权法耦合优先级排序图',
+      beforeText: '为将KANO属性识别与熵权结果转化为更直观的优化顺序，本文绘制耦合优先级排序图，以呈现各评价维度进入后续设计策略的先后次序。',
+      afterText: `图4-4显示，${topPriorityNames.length ? `优先级靠前的维度包括${topPriorityNames.map(name => `“${name}”`).join('、')}` : `排名第一的维度为“${rowValue(topPriority ?? {}, '维度') || '-'}”`}。这说明论文后续讨论应围绕高优先级维度展开，将数据结果转化为具体的设计优化方向和策略建议。`,
     })
   }
 

@@ -101,6 +101,9 @@ function assertResearchOutputQuality(analysis, components) {
   const afterCount = narrativeComponents.filter(component => String(component.title ?? '').endsWith(': after')).length
   assert(beforeCount >= tables.length + figures.length, `not every table/figure has a before paragraph: ${beforeCount}`)
   assert(afterCount >= tables.length + figures.length, `not every table/figure has an after paragraph: ${afterCount}`)
+  const narrativeText = narrativeComponents.map(component => component.content ?? '').join('\n')
+  assert(!narrativeText.includes('用于辅助说明数据中的主要分布特征'), 'figure narrative still uses generic fallback wording')
+  assert(narrativeText.includes('回应了研究中关于') || narrativeText.includes('转化为具体的设计优化方向'), 'figure narrative is not research-question oriented enough')
 }
 
 async function inspectDocx(buffer) {
@@ -125,7 +128,7 @@ async function inspectDocx(buffer) {
     }),
     { cx: Number.POSITIVE_INFINITY, cy: Number.POSITIVE_INFINITY }
   )
-  const badTerms = ['系统识别到', '研究支撑', '上传工作簿', '当前工作簿', '该方案直接采用', '寤鸿', '鐔', '璁', '銆']
+  const badTerms = ['系统识别到', '研究支撑', '上传工作簿', '当前工作簿', '该方案直接采用', '用于辅助说明数据中的主要分布特征', '寤鸿', '鐔', '璁', '銆']
     .filter(term => text.includes(term))
   return {
     page: {
