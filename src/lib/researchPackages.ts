@@ -70,6 +70,10 @@ function fallbackTableNarrative(table: { rows?: unknown[]; columns?: string[] },
   }
 }
 
+function normalizedResearchId(value: unknown) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
 export function splitResearchAssetIntoComponents(asset: ResearchAsset): ResearchPackageComponent[] {
   const structured = asset.structuredData as { run?: ResearchAnalysisRun & StructuredResearchResult; result?: StructuredResearchResult } | null
   const result: StructuredResearchResult | undefined = structured?.result ?? structured?.run
@@ -82,7 +86,8 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
         content: String(result.methodText),
       }))
     }
-    ;(result.figures ?? []).forEach((figure, index) => {
+
+    const appendFigure = (figure: NonNullable<StructuredResearchResult['figures']>[number], index: number) => {
       if (!figure?.dataUrl) return
       const title = figure.title ?? `Figure ${index + 1}`
       const narrative = narrativeFor(result, figure.id, title) ?? fallbackFigureNarrative(figure, title)
@@ -106,8 +111,9 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
           content: String(narrative.afterText),
         }))
       }
-    })
-    ;(result.tables ?? []).forEach((table, index) => {
+    }
+
+    const appendTable = (table: NonNullable<StructuredResearchResult['tables']>[number], index: number) => {
       const rows = Array.isArray(table.rows) ? table.rows : []
       const columns = table.columns?.length
         ? table.columns
@@ -159,7 +165,49 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
           content: String(narrative.afterText),
         }))
       }
+    }
+
+    const figures = result.figures ?? []
+    const tables = result.tables ?? []
+    const figureById = new Map(figures.map((figure, index) => [normalizedResearchId(figure.id), { figure, index }]))
+    const tableById = new Map(tables.map((table, index) => [normalizedResearchId(table.id), { table, index }]))
+    const consumedFigures = new Set<string>()
+    const consumedTables = new Set<string>()
+    const orderedKanoEntropyItems = [
+      { type: 'table', id: 'table_kano_summary' },
+      { type: 'figure', id: 'figure_kano_distribution' },
+      { type: 'figure', id: 'figure_better_worse_matrix' },
+      { type: 'table', id: 'table_entropy_weights' },
+      { type: 'figure', id: 'figure_entropy_weights' },
+      { type: 'table', id: 'table_priority_ranking' },
+      { type: 'figure', id: 'figure_kano_entropy_priority' },
+    ] as const
+
+    orderedKanoEntropyItems.forEach(item => {
+      if (item.type === 'table') {
+        const found = tableById.get(item.id)
+        if (!found) return
+        appendTable(found.table, found.index)
+        consumedTables.add(item.id)
+      } else {
+        const found = figureById.get(item.id)
+        if (!found) return
+        appendFigure(found.figure, found.index)
+        consumedFigures.add(item.id)
+      }
     })
+
+    tables.forEach((table, index) => {
+      const id = normalizedResearchId(table.id)
+      if (id && consumedTables.has(id)) return
+      appendTable(table, index)
+    })
+    figures.forEach((figure, index) => {
+      const id = normalizedResearchId(figure.id)
+      if (id && consumedFigures.has(id)) return
+      appendFigure(figure, index)
+    })
+
     if ('analysisText' in result && result.analysisText) {
       components.push(component('research_component', {
         type: 'analysis',

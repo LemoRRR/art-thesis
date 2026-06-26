@@ -1733,8 +1733,10 @@ function normalizeWriteRole(value: unknown): WritePlanRole {
 }
 
 function guardedRoleForWriteComponent(component: { type: string; title?: string; content?: string }): WritePlanRole {
-  const text = `${component.title ?? ''}\n${component.content ?? ''}`
+  const title = `${component.title ?? ''}`
+  const text = `${title}\n${component.content ?? ''}`
   if (component.type === 'method') return 'method'
+  if (component.type === 'analysis' && (/[:：]\s*(before|after)$/i.test(title) || /^[图表]\s*\d|^表\s*\d/.test(title))) return 'result'
   if (component.type === 'analysis' && /(\u5efa\u8bae|\u7b56\u7565|\u4f18\u5316|\u8ba8\u8bba|\u542f\u793a|\u5bf9\u7b56|\u5c40\u9650|\u5c55\u671b|suggest|strategy|discussion|optimization|limitation)/i.test(text)) return 'discussion'
   if (/建议|策略|优化|讨论|启示|对策|局限|展望|寤鸿|绛栫暐|浼樺寲|璁ㄨ|鍚ず|瀵圭瓥/.test(text)) return 'discussion'
   return 'result'
@@ -1799,8 +1801,10 @@ function fallbackWritePlan(body: Record<string, unknown>) {
   const sections = arrayRecords(body.sections)
   const components = arrayRecords(body.components).map(compactComponentForWritePlan).filter(component => component.id)
   const roleFor = (component: { type: string; title?: string; content?: string }): WritePlanRole => {
-    const text = `${component.title ?? ''}\n${component.content ?? ''}`
+    const title = `${component.title ?? ''}`
+    const text = `${title}\n${component.content ?? ''}`
     if (component.type === 'method') return 'method'
+    if (component.type === 'analysis' && (/[:：]\s*(before|after)$/i.test(title) || /^[图表]\s*\d|^表\s*\d/.test(title))) return 'result'
     if (/建议|策略|优化|讨论|启示|对策/.test(text)) return 'discussion'
     return 'result'
   }

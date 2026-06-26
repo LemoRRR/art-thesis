@@ -1813,8 +1813,11 @@ export default function ResearchCenter() {
   type ResearchInsertRole = 'method' | 'result' | 'discussion'
 
   const componentInsertRole = (component: ResearchPackageComponent): ResearchInsertRole => {
+    const title = `${component.title ?? ''}`
+    const text = `${title}\n${component.content}`
     if (component.type === 'method') return 'method'
-    if (component.type === 'analysis' && /策略|建议|优化|讨论/.test(`${component.title ?? ''}\n${component.content}`)) return 'discussion'
+    if (component.type === 'analysis' && (/[:：]\s*(before|after)$/i.test(title) || /^[图表]\s*\d|^表\s*\d/.test(title))) return 'result'
+    if (component.type === 'analysis' && /策略|建议|优化|讨论/.test(text)) return 'discussion'
     return 'result'
   }
 
