@@ -621,13 +621,8 @@ async function makePriorityChart(rows: Record<string, unknown>[]) {
   const metaX = 970
   const total = Math.max(displayRows.length, 1)
   return canvasDataUrl(width, height, ctx => {
-    ctx.fillStyle = '#234234'
-    ctx.font = chartFont(28, '700')
-    ctx.fillText('KANO-熵权耦合优先级排序', 34, 46)
-    ctx.fillStyle = '#6d756f'
-    ctx.font = chartFont(16)
-    ctx.fillText('条形表示按排序归一化后的优先级强度；综合分越低，表示越应优先纳入设计优化。', 34, 76)
-    ctx.fillStyle = '#8a928c'
+    drawChartHeader(ctx, 'KANO-熵权耦合优先级排序', '条形表示按排序归一化后的优先级强度；综合分越低，表示越应优先纳入设计优化。')
+    ctx.fillStyle = CHART_THEME.muted
     ctx.font = chartFont(13)
     ctx.fillText('优先级强度', barX, 104)
     ctx.fillText('KANO类型 / 综合分', metaX, 104)
@@ -647,14 +642,15 @@ async function makePriorityChart(rows: Record<string, unknown>[]) {
       ctx.fillText(`排序 ${rank}`, 42, y)
       ctx.font = chartFont(16)
       ctx.fillText(name, 126, y)
-      ctx.fillStyle = '#dfeadc'
+      ctx.fillStyle = CHART_THEME.track
       ctx.fillRect(barX, y - 17, barMaxWidth, 18)
-      ctx.fillStyle = index < 3 ? '#1f7a4c' : '#6ba46f'
+      ctx.fillStyle = index < 3 ? CHART_THEME.primary : CHART_THEME.primaryMid
       ctx.fillRect(barX, y - 17, barWidth, 18)
-      ctx.fillStyle = '#1f3328'
+      ctx.fillStyle = CHART_THEME.ink
       ctx.font = chartFont(15)
       ctx.fillText(`KANO：${type || '-'}   综合分：${score.toFixed(4)}`, metaX, y)
     })
+    drawFootnote(ctx, '注：排序越靠前表示越应优先进入设计优化与策略建议；综合分原始值保留在右侧供核对。', 34, height - 18)
   })
 }
 
@@ -765,6 +761,21 @@ function calculateAhpMatrix(input: AhpMatrix) {
 
 type ChartCanvasContext = CanvasRenderingContext2D
 
+const CHART_THEME = {
+  background: '#fffdf8',
+  ink: '#1f3328',
+  inkSoft: '#53645a',
+  muted: '#6d756f',
+  rule: '#d8e2d6',
+  grid: '#e7eee4',
+  track: '#dfeadc',
+  primary: '#2f7d4b',
+  primaryDark: '#1f6b45',
+  primaryMid: '#6ba46f',
+  warm: '#9a5b4f',
+  warmTrack: '#eadfda',
+}
+
 function registerChartFonts(GlobalFonts: typeof import('@napi-rs/canvas').GlobalFonts) {
   if (chartFontsRegistered) return
   chartFontsRegistered = true
@@ -800,7 +811,7 @@ async function canvasDataUrl(
     const canvas = createCanvas(width * scale, height * scale)
     const ctx = canvas.getContext('2d') as unknown as ChartCanvasContext
     ctx.scale(scale, scale)
-    ctx.fillStyle = '#fffdf8'
+    ctx.fillStyle = CHART_THEME.background
     ctx.fillRect(0, 0, width, height)
     draw(ctx)
     return canvas.toDataURL('image/png')
@@ -814,13 +825,13 @@ function chartFont(size: number, weight = '400') {
 }
 
 function drawChartHeader(ctx: ChartCanvasContext, title: string, subtitle: string) {
-  ctx.fillStyle = '#1f3328'
+  ctx.fillStyle = CHART_THEME.ink
   ctx.font = chartFont(28, '700')
   ctx.fillText(title, 34, 46)
-  ctx.fillStyle = '#6d756f'
+  ctx.fillStyle = CHART_THEME.muted
   ctx.font = chartFont(15)
   ctx.fillText(subtitle, 34, 76)
-  ctx.strokeStyle = '#d8e2d6'
+  ctx.strokeStyle = CHART_THEME.rule
   ctx.lineWidth = 1
   ctx.beginPath()
   ctx.moveTo(34, 92)
@@ -829,15 +840,51 @@ function drawChartHeader(ctx: ChartCanvasContext, title: string, subtitle: strin
 }
 
 function drawAxisLabel(ctx: ChartCanvasContext, text: string, x: number, y: number) {
-  ctx.fillStyle = '#53645a'
+  ctx.fillStyle = CHART_THEME.inkSoft
   ctx.font = chartFont(12)
   ctx.fillText(text, x, y)
 }
 
 function drawFootnote(ctx: ChartCanvasContext, text: string, x: number, y: number) {
-  ctx.fillStyle = '#6d756f'
+  ctx.fillStyle = CHART_THEME.muted
   ctx.font = chartFont(12)
   ctx.fillText(text, x, y)
+}
+
+function drawLegendItem(ctx: ChartCanvasContext, x: number, y: number, color: string, label: string) {
+  ctx.fillStyle = color
+  ctx.fillRect(x, y - 11, 18, 12)
+  ctx.fillStyle = '#344238'
+  ctx.font = chartFont(13)
+  ctx.fillText(label, x + 24, y)
+}
+
+function drawLinearTicks(ctx: ChartCanvasContext, left: number, top: number, width: number, values: number[], formatter: (value: number) => string) {
+  ctx.strokeStyle = CHART_THEME.grid
+  ctx.fillStyle = CHART_THEME.inkSoft
+  ctx.font = chartFont(12)
+  values.forEach(value => {
+    const x = left + width * value
+    ctx.beginPath()
+    ctx.moveTo(x, top)
+    ctx.lineTo(x, top + 5)
+    ctx.stroke()
+    ctx.fillText(formatter(value), x - 12, top + 22)
+  })
+}
+
+function drawVerticalTicks(ctx: ChartCanvasContext, left: number, top: number, height: number, values: number[], formatter: (value: number) => string) {
+  ctx.strokeStyle = CHART_THEME.grid
+  ctx.fillStyle = CHART_THEME.inkSoft
+  ctx.font = chartFont(12)
+  values.forEach(value => {
+    const y = top + height - height * value
+    ctx.beginPath()
+    ctx.moveTo(left - 5, y)
+    ctx.lineTo(left, y)
+    ctx.stroke()
+    ctx.fillText(formatter(value), left - 34, y + 4)
+  })
 }
 
 async function makeKanoStackedChart(rows: Record<string, unknown>[]) {
@@ -849,24 +896,16 @@ async function makeKanoStackedChart(rows: Record<string, unknown>[]) {
     { label: 'Q/R', parts: ['Q_', '占比'], color: '#c9b06f' },
   ]
   return canvasDataUrl(1180, 680, ctx => {
-    ctx.fillStyle = '#234234'
-    ctx.font = chartFont(28, '700')
-    ctx.fillText('KANO需求类型分布', 34, 46)
-    ctx.fillStyle = '#6d756f'
-    ctx.font = chartFont(16)
-    ctx.fillText('各设计维度在M/O/A/I/Q-R类型中的占比分布。', 34, 76)
+    drawChartHeader(ctx, 'KANO需求类型分布', '各设计维度在M/O/A/I/Q-R类型中的占比分布。')
     types.forEach((type, index) => {
       const x = 620 + index * 72
-      ctx.fillStyle = type.color
-      ctx.fillRect(x, 52, 18, 12)
-      ctx.fillStyle = '#344238'
-      ctx.font = chartFont(14)
-      ctx.fillText(type.label, x + 24, 63)
+      drawLegendItem(ctx, x, 63, type.color, type.label)
     })
     const startY = 118
     const barX = 250
     const barWidth = 700
     const barHeight = 24
+    drawLinearTicks(ctx, barX, 96, barWidth, [0, 0.25, 0.5, 0.75, 1], value => `${Math.round(value * 100)}%`)
     rows.slice(0, 12).forEach((row, index) => {
       const y = startY + index * 44
       const name = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 12)
@@ -883,12 +922,13 @@ async function makeKanoStackedChart(rows: Record<string, unknown>[]) {
         ctx.fillRect(x, y, width, barHeight)
         x += width
       })
-      ctx.strokeStyle = '#d9e2d6'
+      ctx.strokeStyle = CHART_THEME.rule
       ctx.strokeRect(barX, y, barWidth, barHeight)
-      ctx.fillStyle = '#53645a'
+      ctx.fillStyle = CHART_THEME.inkSoft
       ctx.font = chartFont(13)
       ctx.fillText(`主导类型：${rowTextByParts(row, ['主导', 'KANO'], '-')}`, 988, y + 17)
     })
+    drawFootnote(ctx, '注：M=必备型，O=期望型，A=魅力型，I=无差异型；Q/R用于提示可疑或反向结果。', 42, 660)
   })
 }
 
@@ -897,12 +937,11 @@ async function makeBetterWorseChart(rows: Record<string, unknown>[]) {
     const left = 92
     const top = 112
     const size = 560
-    ctx.fillStyle = '#234234'
-    ctx.font = chartFont(28, '700')
-    ctx.fillText('Better-Worse系数矩阵', 34, 46)
-    ctx.fillStyle = '#6d756f'
-    ctx.font = chartFont(16)
-    ctx.fillText('横轴为Better满意提升系数，纵轴为Worse不满降低系数绝对值。', 34, 76)
+    drawChartHeader(ctx, 'Better-Worse系数矩阵', '横轴为Better满意提升系数，纵轴为Worse不满降低系数绝对值。')
+    ctx.fillStyle = '#eef6ed'
+    ctx.fillRect(left + size / 2, top, size / 2, size / 2)
+    ctx.fillStyle = '#f7fbf5'
+    ctx.fillRect(left, top + size / 2, size / 2, size / 2)
     ctx.strokeStyle = '#c9d6c7'
     ctx.lineWidth = 1
     ctx.strokeRect(left, top, size, size)
@@ -912,17 +951,19 @@ async function makeBetterWorseChart(rows: Record<string, unknown>[]) {
     ctx.moveTo(left, top + size / 2)
     ctx.lineTo(left + size, top + size / 2)
     ctx.stroke()
-    ctx.fillStyle = '#eef6ed'
-    ctx.fillRect(left + size / 2, top, size / 2, size / 2)
-    ctx.fillStyle = '#f7fbf5'
-    ctx.fillRect(left, top + size / 2, size / 2, size / 2)
+    ctx.fillStyle = CHART_THEME.muted
+    ctx.font = chartFont(12)
+    ctx.fillText('高满意提升 / 高不满风险', left + size / 2 + 18, top + 24)
+    ctx.fillText('低满意提升 / 低不满风险', left + 18, top + size / 2 + 26)
+    drawLinearTicks(ctx, left, top + size + 6, size, [0, 0.5, 1], value => value.toFixed(1))
+    drawVerticalTicks(ctx, left, top, size, [0, 0.5, 1], value => value.toFixed(1))
     rows.slice(0, 12).forEach((row, index) => {
       const better = rowMetric(row, ['Better'])
       const worse = rowMetric(row, ['Worse'])
       const label = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 5)
       const x = left + Math.min(1, Math.max(0, better)) * size
       const y = top + size - Math.min(1, Math.max(0, worse)) * size
-      ctx.fillStyle = index < 3 ? '#1f6b45' : '#6ba46f'
+      ctx.fillStyle = index < 3 ? CHART_THEME.primaryDark : CHART_THEME.primaryMid
       ctx.beginPath()
       ctx.arc(x, y, index < 3 ? 8 : 6, 0, Math.PI * 2)
       ctx.fill()
@@ -953,14 +994,10 @@ async function makeBetterWorseChart(rows: Record<string, unknown>[]) {
 
 async function makeEntropyWeightChart(rows: Record<string, unknown>[]) {
   return canvasDataUrl(1180, 430, ctx => {
-    ctx.fillStyle = '#234234'
-    ctx.font = chartFont(28, '700')
-    ctx.fillText('熵权指标权重分布', 34, 46)
-    ctx.fillStyle = '#6d756f'
-    ctx.font = chartFont(16)
-    ctx.fillText('用于耦合优先级得分计算的客观权重。', 34, 76)
+    drawChartHeader(ctx, '熵权指标权重分布', '用于耦合优先级得分计算的客观权重。')
     const chartRows = rows.filter(Boolean)
     const maxWeight = Math.max(...chartRows.map(row => rowMetric(row, ['权重'])), 1)
+    drawLinearTicks(ctx, 360, 96, 660, [0, 0.5, 1], value => `${(value * maxWeight).toFixed(0)}%`)
     chartRows.forEach((row, index) => {
       const y = 128 + index * 76
       const weight = rowMetric(row, ['权重'])
@@ -969,14 +1006,15 @@ async function makeEntropyWeightChart(rows: Record<string, unknown>[]) {
       ctx.fillStyle = '#284d34'
       ctx.font = chartFont(16, '700')
       ctx.fillText(label, 46, y + 18)
-      ctx.fillStyle = '#dfeadc'
+      ctx.fillStyle = CHART_THEME.track
       ctx.fillRect(360, y, 660, 24)
-      ctx.fillStyle = '#2f7d4b'
+      ctx.fillStyle = CHART_THEME.primary
       ctx.fillRect(360, y, width, 24)
-      ctx.fillStyle = '#1f3328'
+      ctx.fillStyle = CHART_THEME.ink
       ctx.font = chartFont(15)
       ctx.fillText(`${weight.toFixed(2)}%`, 1040, y + 18)
     })
+    drawFootnote(ctx, '注：熵权越高表示该指标在样本差异中提供的信息量越大。', 42, 404)
   })
 }
 
