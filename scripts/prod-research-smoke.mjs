@@ -11,6 +11,12 @@ const baseUrl = (process.argv[2] || process.env.PROD_SMOKE_BASE_URL || 'https://
 const outputPath = path.resolve(
   process.argv[3] || process.env.PROD_RESEARCH_SMOKE_DOCX || '../outputs/ich_kano_entropy/prod-research-smoke.docx'
 )
+const defaultKanoWorkbookPath = path.resolve(
+  process.cwd(),
+  '../outputs/ich_kano_entropy/非遗文创KANO-熵权法耦合模型问卷100份样本数据.xlsx'
+)
+const scenarioName = String(process.env.PROD_RESEARCH_SMOKE_SCENARIO ?? process.argv[4] ?? 'ahp').toLowerCase()
+const keepProject = process.env.PROD_RESEARCH_SMOKE_KEEP === '1'
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -79,14 +85,77 @@ function makeAhpWorkbookBase64() {
   return buffer.toString('base64')
 }
 
-function componentsFromAnalysis(analysis) {
+function makeKanoWorkbookBase64() {
+  const workbookPath = path.resolve(process.env.PROD_RESEARCH_SMOKE_XLSX || defaultKanoWorkbookPath)
+  assert(fs.existsSync(workbookPath), `KANO workbook not found: ${workbookPath}`)
+  return fs.readFileSync(workbookPath).toString('base64')
+}
+
+function scenarioConfig() {
+  if (scenarioName === 'kano' || scenarioName === 'kano_entropy') {
+    return {
+      name: 'kano_entropy',
+      title: 'Production KANO entropy research smoke test',
+      fileName: 'prod-kano-entropy-smoke.xlsx',
+      base64: makeKanoWorkbookBase64(),
+      method: 'kano_entropy',
+      assetType: 'quant_analysis_result',
+      assetTitle: 'Production KANO-熵权法分析结果',
+      assetSummary: '真实问卷 Excel 的 KANO-熵权法分析结果。',
+      userRequest: '请根据上传的真实问卷 Excel 生成 KANO-熵权法分析结果、论文表格、论文图和可写入正文的解释。',
+      sections: [
+        { id: 's3', title: '三、研究设计与数据来源', content: '本章说明问卷设计、样本来源、KANO模型和熵权法计算过程。' },
+        { id: 's4', title: '四、数据分析与研究结果', content: '本章呈现KANO分类、Better-Worse系数、熵权计算和耦合优先级排序结果。' },
+        { id: 's5', title: '五、优化策略与研究讨论', content: '本章结合数据分析结果提出非遗文创视觉创新优化策略。' },
+      ],
+      assertAnalysis: analysis => {
+        assert(analysis.method === 'kano_entropy', `production analysis method is not KANO entropy: ${analysis.method}`)
+        assert((analysis.tables ?? []).some(table => table.id === 'table_kano_summary'), 'production KANO summary table missing')
+        assert((analysis.tables ?? []).some(table => table.id === 'table_entropy_weights'), 'production entropy weight table missing')
+        assert((analysis.tables ?? []).some(table => table.id === 'table_priority_ranking'), 'production priority table missing')
+        assert((analysis.figures ?? []).some(figure => figure.id === 'figure_kano_distribution'), 'production KANO distribution figure missing')
+        assert((analysis.figures ?? []).some(figure => figure.id === 'figure_kano_entropy_priority'), 'production priority figure missing')
+      },
+      minTables: 3,
+      minFigures: 4,
+    }
+  }
+
+  return {
+    name: 'ahp',
+    title: 'Production research smoke test',
+    fileName: 'prod-ahp-smoke.xlsx',
+    base64: makeAhpWorkbookBase64(),
+    method: 'ahp',
+    assetType: 'ahp_result',
+    assetTitle: 'Production AHP analysis result',
+    assetSummary: 'AHP result returned from the deployed production API.',
+    userRequest: 'Use AHP to calculate weights, consistency, figures, tables and paper-ready method/result/discussion text.',
+    sections: [
+      { id: 's3', title: 'Chapter 3 Research Method', content: 'Method, sample and data source.' },
+      { id: 's4', title: 'Chapter 4 Data Analysis and Results', content: 'Tables, figures and result interpretation.' },
+      { id: 's5', title: 'Chapter 5 Discussion and Suggestions', content: 'Discussion and optimization suggestions.' },
+    ],
+    assertAnalysis: analysis => {
+      assert(analysis.method === 'ahp', `production analysis method is not AHP: ${analysis.method}`)
+      assert((analysis.tables ?? []).some(table => table.id === 'table_ahp_consistency'), 'production AHP consistency table missing')
+      assert((analysis.tables ?? []).some(table => table.id === 'table_ahp_weights'), 'production AHP weights table missing')
+      assert((analysis.figures ?? []).some(figure => figure.id === 'figure_ahp_weights'), 'production AHP weight figure missing')
+      assert((analysis.figures ?? []).some(figure => figure.id === 'figure_ahp_consistency'), 'production AHP consistency figure missing')
+    },
+    minTables: 2,
+    minFigures: 2,
+  }
+}
+
+function componentsFromAnalysis(analysis, scenario) {
   return splitResearchAssetIntoComponents({
     id: 'prod-smoke-asset',
     projectId: 'prod-smoke',
     taskId: 'prod-smoke-task',
-    type: 'ahp_result',
-    title: 'Production AHP analysis result',
-    summary: 'AHP result returned from the deployed production API.',
+    type: scenario.assetType,
+    title: scenario.assetTitle,
+    summary: scenario.assetSummary,
     plainText: analysis.plainText ?? '',
     structuredData: { result: analysis },
     status: 'ready',
@@ -130,43 +199,36 @@ async function main() {
   const projectId = randomUUID()
   const packageId = randomUUID()
   const savedSectionIds = ['s3', 's4', 's5'].map(() => randomUUID())
+  const scenario = scenarioConfig()
 
   try {
     await post('/api/projects', {
       id: projectId,
-      title: 'Production research smoke test',
+      title: scenario.title,
       description: 'Temporary automated smoke project',
       current_stage: 'stage3',
-      context: { smoke: true, createdBy: 'prod-research-smoke' },
+      context: { smoke: true, scenario: scenario.name, createdBy: 'prod-research-smoke' },
     }, token)
 
     const common = {
-      projectTitle: 'Production research smoke test',
-      fileName: 'prod-ahp-smoke.xlsx',
-      base64: makeAhpWorkbookBase64(),
-      method: 'ahp',
-      userRequest: 'Use AHP to calculate weights, consistency, figures, tables and paper-ready method/result/discussion text.',
+      projectTitle: scenario.title,
+      fileName: scenario.fileName,
+      base64: scenario.base64,
+      method: scenario.method,
+      userRequest: scenario.userRequest,
     }
     const plan = await post('/api/research/analysis-plan', common, token)
     const analysis = await post('/api/research/analyze', { ...common, plan: plan.plan }, token)
-    const components = componentsFromAnalysis(analysis)
+    const components = componentsFromAnalysis(analysis, scenario)
 
-    assert(plan.plan?.method === 'ahp', `production plan method is not AHP: ${plan.plan?.method}`)
-    assert(analysis.method === 'ahp', `production analysis method is not AHP: ${analysis.method}`)
-    assert((analysis.tables ?? []).some(table => table.id === 'table_ahp_consistency'), 'production AHP consistency table missing')
-    assert((analysis.tables ?? []).some(table => table.id === 'table_ahp_weights'), 'production AHP weights table missing')
-    assert((analysis.figures ?? []).some(figure => figure.id === 'figure_ahp_weights'), 'production AHP weight figure missing')
-    assert((analysis.figures ?? []).some(figure => figure.id === 'figure_ahp_consistency'), 'production AHP consistency figure missing')
+    assert(plan.plan?.method === scenario.method, `production plan method is wrong: ${plan.plan?.method}`)
+    scenario.assertAnalysis(analysis)
 
-    const sections = [
-      { id: 's3', title: 'Chapter 3 Research Method', content: 'Method, sample and data source.' },
-      { id: 's4', title: 'Chapter 4 Data Analysis and Results', content: 'Tables, figures and result interpretation.' },
-      { id: 's5', title: 'Chapter 5 Discussion and Suggestions', content: 'Discussion and optimization suggestions.' },
-    ]
+    const sections = scenario.sections
     const writePlan = await post('/api/research/write-plan', {
       paperTitle: common.projectTitle,
-      assetTitle: 'Production AHP analysis result',
-      assetSummary: 'AHP tables, figures and narrative generated by deployed API.',
+      assetTitle: scenario.assetTitle,
+      assetSummary: scenario.assetSummary,
       sections,
       components,
     }, token)
@@ -210,9 +272,9 @@ async function main() {
     const researchPackage = {
       id: packageId,
       projectId,
-      title: 'Production AHP analysis result',
-      method: 'ahp',
-      methodLabel: 'AHP',
+      title: scenario.assetTitle,
+      method: scenario.method,
+      methodLabel: scenario.name === 'kano_entropy' ? 'KANO-熵权法' : 'AHP',
       capabilityTier: 'closed_loop',
       intentSummary: 'Production smoke package generated from deployed research APIs.',
       components,
@@ -234,15 +296,16 @@ async function main() {
     fs.writeFileSync(outputPath, buffer)
     const docx = await inspectDocx(buffer)
     assert(docx.page.width === 11906 && docx.page.height === 16838, `DOCX page is not A4 portrait: ${JSON.stringify(docx.page)}`)
-    assert(docx.tableCount >= 2, `DOCX table count is too low: ${docx.tableCount}`)
+    assert(docx.tableCount >= scenario.minTables, `DOCX table count is too low: ${docx.tableCount}`)
     assert(docx.tableGridCount >= docx.tableCount, 'DOCX tables are missing fixed grids')
-    assert(docx.imageCount >= 2, `DOCX image count is too low: ${docx.imageCount}`)
-    assert(docx.imageExtentCount >= 2, `DOCX images are missing display extents: ${docx.imageExtentCount}`)
+    assert(docx.imageCount >= scenario.minFigures, `DOCX image count is too low: ${docx.imageCount}`)
+    assert(docx.imageExtentCount >= scenario.minFigures, `DOCX images are missing display extents: ${docx.imageExtentCount}`)
     assert(docx.internalLeakCount === 0, `DOCX leaked internal ids: ${docx.internalLeakCount}`)
 
     console.log(JSON.stringify({
       ok: true,
       baseUrl,
+      scenario: scenario.name,
       outputPath,
       projectPersisted: {
         projectId,
@@ -262,11 +325,15 @@ async function main() {
       docx,
     }, null, 2))
   } finally {
-    await Promise.allSettled([
-      ...savedSectionIds.map(id => del(`/api/sections/${encodeURIComponent(id)}`, token)),
-      del(`/api/research-packages/${encodeURIComponent(packageId)}`, token),
-      del(`/api/projects/${encodeURIComponent(projectId)}`, token),
-    ])
+    if (keepProject) {
+      console.log(JSON.stringify({ keptProjectId: projectId, keptPackageId: packageId, savedSectionIds }))
+    } else {
+      await Promise.allSettled([
+        ...savedSectionIds.map(id => del(`/api/sections/${encodeURIComponent(id)}`, token)),
+        del(`/api/research-packages/${encodeURIComponent(packageId)}`, token),
+        del(`/api/projects/${encodeURIComponent(projectId)}`, token),
+      ])
+    }
   }
 }
 

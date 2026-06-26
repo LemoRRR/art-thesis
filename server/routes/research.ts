@@ -2113,11 +2113,54 @@ function maxRowByNumber(rows: Record<string, unknown>[], key: string) {
   }, null)
 }
 
+function sortedKanoPriorityRows(rows: Record<string, unknown>[]) {
+  return [...rows].sort((a, b) => {
+    const rankA = maybeNumber(a['排名'])
+    const rankB = maybeNumber(b['排名'])
+    if (rankA !== null && rankB !== null) return rankA - rankB
+    if (rankA !== null) return -1
+    if (rankB !== null) return 1
+    const scoreA = maybeNumber(a['综合分'])
+    const scoreB = maybeNumber(b['综合分'])
+    if (scoreA !== null && scoreB !== null) return scoreA - scoreB
+    return 0
+  })
+}
+
+function deterministicKanoEntropyAnalysisText(result: Record<string, unknown>, fallbackText = '') {
+  if (result.method !== 'kano_entropy') return ''
+  const summaryRows = tableRowsById(result, 'table_kano_summary')
+  const weightRows = tableRowsById(result, 'table_entropy_weights')
+  const priorityRows = sortedKanoPriorityRows(tableRowsById(result, 'table_priority_ranking'))
+  if (!summaryRows.length && !priorityRows.length) return fallbackText
+
+  const sampleSize = rowValue(summaryRows[0] ?? {}, 'N') || rowValue(summaryRows[0] ?? {}, '样本总量') || result.sampleSize
+  const topBetter = maxRowByNumber(summaryRows, 'Better')
+  const topWorse = maxRowByNumber(summaryRows, 'Worse')
+  const topWeight = maxRowByNumber(weightRows, '权重(%)')
+  const top = priorityRows.slice(0, 5)
+  const first = top[0]
+  const topNames = top.map(row => rowValue(row, '维度') || rowValue(row, '设计维度')).filter(Boolean)
+
+  return [
+    `本次分析基于${sampleSize ? ` ${sampleSize} 份有效样本` : '上传问卷数据'}开展 KANO-熵权法耦合评价。系统先依据各维度的正反向题项判定 KANO 属性，并计算 Better 系数与 Worse 系数；随后采用熵权法对评价指标进行客观赋权，最终以耦合优先级排序确定后续论文讨论和优化建议的重点。`,
+    summaryRows.length
+      ? `由 KANO 维度汇总结果可知，${rowValue(topWorse ?? {}, '维度') || 'Worse系数较高的维度'}的 Worse 系数相对较高，说明该维度缺失时更容易引发受访者不满意；${rowValue(topBetter ?? {}, '维度') || 'Better系数较高的维度'}的 Better 系数相对较高，说明其对满意度提升具有较强作用。需要注意的是，Better 或 Worse 单项系数只能反映局部需求特征，最终优化顺序仍应以耦合优先级排序为准。`
+      : '',
+    weightRows.length
+      ? `熵权法结果显示，${rowValue(topWeight ?? {}, '指标') || '权重最高的指标'}的权重最高，权重为 ${rowValue(topWeight ?? {}, '权重(%)') || '-'}%。这说明该指标在区分不同评价维度优先级时具有更强作用，因此在综合排序解释中应优先纳入该权重结构，而不是直接以原始系数大小判断结论。`
+      : '',
+    first
+      ? `综合排序结果显示，排名第一的维度为“${rowValue(first, '维度') || '-'}”，其 KANO 类型为 ${kanoTypeName(rowValue(first, 'KANO'))}，综合分为 ${rowValue(first, '综合分') || '-'}。${topNames.length ? `前五位优先优化维度依次为：${topNames.map(name => `“${name}”`).join('、')}。` : ''}因此，论文结果章节应围绕这些排名靠前的维度展开解释，并在讨论或策略建议部分进一步转化为设计优化路径。`
+      : '',
+  ].filter(Boolean).join('\n')
+}
+
 function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
   if (result.method !== 'kano_entropy') return null
   const summaryRows = tableRowsById(result, 'table_kano_summary')
   const weightRows = tableRowsById(result, 'table_entropy_weights')
-  const priorityRows = tableRowsById(result, 'table_priority_ranking')
+  const priorityRows = sortedKanoPriorityRows(tableRowsById(result, 'table_priority_ranking'))
   const topPriority = priorityRows[0] ?? null
   const topBetter = maxRowByNumber(summaryRows, 'Better')
   const topWorse = maxRowByNumber(summaryRows, 'Worse')
@@ -2341,9 +2384,10 @@ async function interpretAnalysisResult(result: Record<string, unknown>, payload:
     const methodText = typeof ai?.methodText === 'string' && ai.methodText.trim()
       ? ai.methodText.trim()
       : fallback.methodText
-    const analysisText = typeof ai?.analysisText === 'string' && ai.analysisText.trim()
+    const deterministicKanoAnalysisText = deterministicKanoEntropyAnalysisText(result, fallback.analysisText)
+    const analysisText = deterministicKanoAnalysisText || (typeof ai?.analysisText === 'string' && ai.analysisText.trim()
       ? ai.analysisText.trim()
-      : fallback.analysisText
+      : fallback.analysisText)
     const aiWarnings = Array.isArray(ai?.warnings)
       ? ai.warnings.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
       : []
