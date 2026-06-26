@@ -50,6 +50,17 @@ function pythonCommand() {
   return process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3')
 }
 
+function sanitizeForPythonJson(value: unknown): unknown {
+  if (typeof value === 'string') return value.replace(/[\uD800-\uDFFF]/g, '')
+  if (Array.isArray(value)) return value.map(sanitizeForPythonJson)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, sanitizeForPythonJson(item)])
+    )
+  }
+  return value
+}
+
 function runPython(payload: unknown): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const child = spawn(pythonCommand(), [scriptPath], {
@@ -67,7 +78,7 @@ function runPython(payload: unknown): Promise<Record<string, unknown>> {
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', chunk => { stdout += chunk })
     child.stderr.on('data', chunk => { stderr += chunk })
-    child.stdin.write(JSON.stringify(payload ?? {}))
+    child.stdin.write(JSON.stringify(sanitizeForPythonJson(payload ?? {})))
     child.stdin.end()
 
     child.on('error', error => {
@@ -83,7 +94,7 @@ function runPython(payload: unknown): Promise<Record<string, unknown>> {
         return
       }
       try {
-        resolve(JSON.parse(trimmed))
+        resolve(sanitizeForPythonJson(JSON.parse(trimmed)) as Record<string, unknown>)
       } catch (error) {
         reject(new Error(`${error instanceof Error ? error.message : 'Invalid Python analysis output'}\n${trimmed.slice(0, 1000)}\n${stderr.slice(0, 1000)}`))
       }
@@ -2524,8 +2535,8 @@ router.post('/analysis-plan', async (req, res) => {
       ok: true,
       plan: {
         purpose: '对访谈记录、开放题回答或文本材料进行质性编码，生成可写入论文结果章节的编码表、主题归纳表、证据摘录和分析文字。',
-        method: 'descriptive',
-        methods: ['descriptive'],
+        method: 'qualitative_coding',
+        methods: ['qualitative_coding'],
         reason: '当前材料以访谈记录、开放题回答或文本片段为主，适合采用开放编码、主轴编码和主题归纳形成论文结果，而不适合直接套用数值统计。',
         variables: [
           { role: 'item', name: '文本片段', column: 'originalText', confidence: 0.9, note: '访谈/文本材料分段后的分析单位' },
@@ -2536,7 +2547,7 @@ router.post('/analysis-plan', async (req, res) => {
         requiredColumns: ['originalText', 'openCode', 'axialCategory', 'evidenceExcerpt'],
         outputs: ['method', 'statistics', 'figure', 'analysis'],
         limitations: ['AI 初编码需要研究者复核；正式论文中应保留典型原文证据，并说明编码过程与一致性控制。'],
-        toolCalls: [{ tool: 'descriptive', columns: ['originalText', 'openCode', 'axialCategory'] }],
+        toolCalls: [{ tool: 'qualitative_coding', columns: ['originalText', 'openCode', 'axialCategory'] }],
         needsVariableConfirmation: segments.length < 10,
       },
       columns: ['originalText', 'openCode', 'axialCategory', 'evidenceExcerpt'],

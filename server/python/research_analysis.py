@@ -371,7 +371,7 @@ def main():
             "numericColumns": cols,
             "categoricalColumns": cat_cols,
             "previewRows": df.head(8).where(pd.notna(df.head(8)), None).to_dict(orient="records"),
-        }, ensure_ascii=False))
+        }, ensure_ascii=True))
         return
 
     selected_cols = plan_columns(payload, cols)
@@ -407,7 +407,7 @@ def main():
     if anova_rows:
         lines += ["", "【单因素方差分析】", table_text(anova_rows, ["group", "variable", "f", "p"])]
     if mediation:
-        lines += ["", "【Bootstrap 单一中介】", json.dumps(mediation, ensure_ascii=False)]
+        lines += ["", "【Bootstrap 单一中介】", json.dumps(mediation, ensure_ascii=True)]
     if efa_result:
         lines += ["", "【探索性因子分析】", table_text(efa_result["loadings"], ["variable"] + [f"factor_{i + 1}" for i in range(efa_result["factors"])])]
 
@@ -458,12 +458,12 @@ def main():
         "cautions": cautions,
         "plainText": "\n".join(lines),
     }
-    print(json.dumps(result, ensure_ascii=False))
+    print(json.dumps(result, ensure_ascii=True))
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=True))
         sys.exit(1)

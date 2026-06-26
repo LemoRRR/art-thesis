@@ -98,6 +98,7 @@ function discussionTextForStructuredResult(result: StructuredResearchResult) {
   const method = normalizedResearchId(result.method)
   const priorityRows = tableRows(tableById(result, 'table_priority_ranking'))
   const ahpRows = tableRows(tableById(result, 'table_ahp_weights'))
+  const qualitativeRows = tableRows(tableById(result, 'table_theme_summary'))
 
   if (method === 'kano_entropy' || priorityRows.length > 0) {
     const top = priorityRows.slice(0, 3)
@@ -126,6 +127,20 @@ function discussionTextForStructuredResult(result: StructuredResearchResult) {
       topNames.length
         ? `具体而言，${topNames.map(name => `“${name}”`).join('、')}应作为后续策略建议的重点对象，论文写作中需要结合研究对象解释其优先性来源。`
         : '具体而言，应结合权重排序识别关键指标，并说明这些指标为何应优先进入后续优化路径。',
+    ].join('\n')
+  }
+
+  if (method === 'qualitative_coding' || qualitativeRows.length > 0) {
+    const top = qualitativeRows.slice(0, 3)
+    const topNames = top
+      .map(row => rowText(row, ['theme', 'openCode', 'axialCategory']))
+      .filter(Boolean)
+    return [
+      '基于定性编码结果，讨论部分不宜只复述开放编码表，而应围绕高频主题解释受访者态度、体验矛盾和设计优化方向。',
+      topNames.length
+        ? `具体而言，可优先围绕${topNames.map(name => `“${name}”`).join('、')}展开讨论：说明这些主题为何在材料中反复出现，它们回应了论文的哪个研究问题，并进一步转化为设计、传播或产品优化建议。`
+        : '具体而言，应结合主题归纳表与典型证据摘录，说明受访者关注点如何形成，并把编码结果转化为后续策略建议。',
+      '正式论文写作中还需要说明定性编码的研究者复核过程、同义编码合并规则和典型证据选取标准，避免把 AI 初编结果直接等同于最终研究结论。',
     ].join('\n')
   }
 
