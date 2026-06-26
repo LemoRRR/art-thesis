@@ -5,6 +5,7 @@ import JSZip from 'jszip'
 import researchRouter from '../server/routes/research.ts'
 import { buildSectionsDocxBlob } from '../src/lib/docxExport.ts'
 import { researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../src/lib/researchPackages.ts'
+import { idsByResolvedSection, listenOnSafePort } from './smoke-server.mjs'
 
 const defaultWorkbook = path.resolve(
   process.cwd(),
@@ -142,8 +143,7 @@ async function main() {
   const app = express()
   app.use(express.json({ limit: '50mb' }))
   app.use('/api/research', researchRouter)
-  const server = app.listen(0)
-  const port = server.address().port
+  const { server, port } = await listenOnSafePort(app)
   const base = `http://127.0.0.1:${port}`
 
   try {
@@ -181,9 +181,10 @@ async function main() {
     assert(placements.some(item => item.role === 'result' && item.targetSectionId === 's4'), '结果组件未写入数据分析章节')
     assert(placements.some(item => item.role === 'discussion' && item.targetSectionId === 's5'), '讨论建议组件未写入优化策略/研究讨论章节')
 
-    const methodIds = new Set(placements.filter(item => item.targetSectionId === 's3').flatMap(item => item.componentIds ?? []))
-    const resultIds = new Set(placements.filter(item => item.targetSectionId === 's4').flatMap(item => item.componentIds ?? []))
-    const discussionIds = new Set(placements.filter(item => item.targetSectionId === 's5').flatMap(item => item.componentIds ?? []))
+    const idsBySection = idsByResolvedSection(sections, placements)
+    const methodIds = idsBySection.get('s3') ?? new Set()
+    const resultIds = idsBySection.get('s4') ?? new Set()
+    const discussionIds = idsBySection.get('s5') ?? new Set()
     const methodPkg = {
       id: 'smoke-method',
       projectId: 'smoke',

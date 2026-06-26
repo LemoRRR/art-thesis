@@ -5,6 +5,7 @@ import JSZip from 'jszip'
 import XLSX from 'xlsx'
 import { buildSectionsDocxBlob } from '../src/lib/docxExport.ts'
 import { researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../src/lib/researchPackages.ts'
+import { idsByResolvedSection } from './smoke-server.mjs'
 
 const baseUrl = (process.argv[2] || process.env.PROD_SMOKE_BASE_URL || 'https://paper-ai-tool.vercel.app').replace(/\/$/, '')
 const outputPath = path.resolve(
@@ -174,11 +175,7 @@ async function main() {
     assert(placements.some(item => item.role === 'result' && item.targetSectionId === 's4'), 'production write-plan did not route result to chapter 4')
     assert(placements.some(item => item.role === 'discussion' && item.targetSectionId === 's5'), 'production write-plan did not route discussion to chapter 5')
 
-    const idsBySection = new Map(sections.map(section => [section.id, new Set()]))
-    for (const placement of placements) {
-      if (!idsBySection.has(placement.targetSectionId)) continue
-      for (const id of placement.componentIds ?? []) idsBySection.get(placement.targetSectionId).add(id)
-    }
+    const idsBySection = idsByResolvedSection(sections, placements)
     const docSections = sections.map((section, index) => ({
       id: section.id,
       projectId,

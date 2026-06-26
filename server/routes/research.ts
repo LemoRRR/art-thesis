@@ -791,6 +791,8 @@ function registerChartFonts(GlobalFonts: typeof import('@napi-rs/canvas').Global
   if (chartFontsRegistered) return
   chartFontsRegistered = true
   const candidates = [
+    path.resolve(process.cwd(), 'server/assets/fonts/NotoSansCJKsc-Regular.otf'),
+    path.resolve(__dirname, '../assets/fonts/NotoSansCJKsc-Regular.otf'),
     'C:/Windows/Fonts/msyh.ttc',
     'C:/Windows/Fonts/simhei.ttf',
     'C:/Windows/Fonts/simsun.ttc',
@@ -798,6 +800,9 @@ function registerChartFonts(GlobalFonts: typeof import('@napi-rs/canvas').Global
     '/System/Library/Fonts/STHeiti Light.ttc',
     '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
     '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf',
+    '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+    path.resolve(process.cwd(), 'node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf'),
   ]
   candidates
     .filter(fontPath => fs.existsSync(fontPath))

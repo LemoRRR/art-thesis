@@ -5,6 +5,7 @@ import JSZip from 'jszip'
 import researchRouter from '../server/routes/research.ts'
 import { buildSectionsDocxBlob } from '../src/lib/docxExport.ts'
 import { researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../src/lib/researchPackages.ts'
+import { idsByResolvedSection, listenOnSafePort } from './smoke-server.mjs'
 
 const outputPath = path.resolve(
   process.argv[2] || process.env.QUAL_RESEARCH_SMOKE_DOCX || '../outputs/ich_kano_entropy/qualitative-research-smoke.docx'
@@ -150,8 +151,7 @@ async function main() {
   const app = express()
   app.use(express.json({ limit: '50mb' }))
   app.use('/api/research', researchRouter)
-  const server = app.listen(0)
-  const port = server.address().port
+  const { server, port } = await listenOnSafePort(app)
   const base = `http://127.0.0.1:${port}`
 
   try {
@@ -184,12 +184,7 @@ async function main() {
     assert(placements.some(item => item.role === 'result' && item.targetSectionId === 's4'), 'result components were not routed to chapter 4')
     assert(placements.some(item => item.role === 'discussion' && item.targetSectionId === 's5'), 'discussion components were not routed to chapter 5')
 
-    const idsBySection = new Map(sections.map(section => [section.id, new Set()]))
-    for (const placement of placements) {
-      const target = placement.targetSectionId
-      if (!idsBySection.has(target)) continue
-      for (const id of placement.componentIds ?? []) idsBySection.get(target).add(id)
-    }
+    const idsBySection = idsByResolvedSection(sections, placements)
     const docSections = sections.map((section, index) => ({
       id: section.id,
       projectId: 'qual-smoke',

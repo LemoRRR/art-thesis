@@ -517,6 +517,7 @@ function selectResearchTableColumns(columns: string[], title = '') {
           : title.includes('AHP')
             ? ['matrix', 'criterion', 'weight', 'weightPercent', 'rank']
             : []
+  if (!preferred.length) return columns.slice(0, 7)
   const selected = preferred.filter(column => columnSet.has(column))
   const minimumUsefulSelection = Math.min(3, preferred.length)
   return (selected.length >= minimumUsefulSelection ? selected : columns).slice(0, 7)
