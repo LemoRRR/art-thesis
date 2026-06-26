@@ -2,7 +2,8 @@ import { Router } from 'express'
 import { supabase } from '../lib/supabase.js'
 
 const router = Router()
-const AUTH_TIMEOUT_MS = Number(process.env.AUTH_TIMEOUT_MS ?? 8000)
+const AUTH_TIMEOUT_MS = Number(process.env.AUTH_TIMEOUT_MS ?? 15000)
+const AUTH_RETRY_COUNT = Number(process.env.AUTH_RETRY_COUNT ?? 1)
 const DEMO_EMAIL = process.env.DEMO_EMAIL || 'admin@qq.com'
 const DEMO_PASSWORD = process.env.DEMO_PASSWORD || '123456789'
 
@@ -13,6 +14,18 @@ function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
       setTimeout(() => reject(new Error(`${label} timed out`)), AUTH_TIMEOUT_MS)
     }),
   ])
+}
+
+async function withAuthRetry<T>(factory: () => Promise<T>, label: string): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 0; attempt <= AUTH_RETRY_COUNT; attempt += 1) {
+    try {
+      return await withTimeout(factory(), `${label}${attempt > 0 ? ` retry ${attempt}` : ''}`)
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError
 }
 
 function canUseLocalDemoFallback(email: string, password: string) {
@@ -78,8 +91,8 @@ router.post('/login', async (req, res) => {
   }
 
   try {
-    const { data, error } = await withTimeout(
-      supabase.auth.signInWithPassword({ email, password }),
+    const { data, error } = await withAuthRetry(
+      () => supabase.auth.signInWithPassword({ email, password }),
       'Supabase login'
     )
     if (error) {
@@ -100,8 +113,8 @@ router.post('/login', async (req, res) => {
 
 router.post('/demo-login', async (_req, res) => {
   try {
-    const { data, error } = await withTimeout(
-      supabase.auth.signInWithPassword({ email: DEMO_EMAIL, password: DEMO_PASSWORD }),
+    const { data, error } = await withAuthRetry(
+      () => supabase.auth.signInWithPassword({ email: DEMO_EMAIL, password: DEMO_PASSWORD }),
       'Supabase demo login'
     )
     if (error) {
@@ -141,8 +154,8 @@ router.get('/me', async (req, res) => {
   }
 
   try {
-    const { data: { user }, error } = await withTimeout(
-      supabase.auth.getUser(token),
+    const { data: { user }, error } = await withAuthRetry(
+      () => supabase.auth.getUser(token),
       'Supabase get user'
     )
     if (error || !user) {
