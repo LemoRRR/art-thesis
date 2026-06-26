@@ -1011,15 +1011,22 @@ export async function syncRemoteData(options: { projectIds?: string[] } = {}): P
     return remoteOutline ?? localOutline ?? null
   }).filter((item): item is Outline => item !== null)
 
+  const hydratedProjectIds = new Set(projectPayloads.map(item => item.projectId))
+  const scopedLocalSections = localSectionsBeforeSync.filter(section => Boolean(section.projectId && hydratedProjectIds.has(section.projectId)))
+  const scopedLocalVersions = localVersionsBeforeSync.filter(snapshot => Boolean(snapshot.projectId && hydratedProjectIds.has(snapshot.projectId)))
+  const scopedLocalResearchPackages = localResearchPackagesBeforeSync.filter(pkg => hydratedProjectIds.has(pkg.projectId))
+  const scopedLocalChats = localChatsBeforeSync.filter(message => !message.projectId || hydratedProjectIds.has(message.projectId))
+  const scopedLocalRefs = localRefsBeforeSync.filter(ref => hydratedProjectIds.has(ref.projectId))
+
   write(KEYS.PROJECTS, mergedProjects)
   write(KEYS.LIBRARY, remoteLibrary)
   write(KEYS.STYLE_PROFILES, mergeById(localStyleProfilesBeforeSync, remoteStyleProfiles))
-  write(KEYS.SECTIONS, mergeById(localSectionsBeforeSync, mergedSections))
+  write(KEYS.SECTIONS, mergeById(scopedLocalSections, mergedSections))
   write(KEYS.OUTLINE, protectedOutlines)
-  write(KEYS.VERSIONS, mergeById(localVersionsBeforeSync, projectPayloads.flatMap(item => item.versions)))
-  write(KEYS.RESEARCH_PACKAGES, mergeById(localResearchPackagesBeforeSync, projectPayloads.flatMap(item => item.researchPackages)))
-  write(KEYS.CHAT, mergeById(localChatsBeforeSync, projectPayloads.flatMap(item => item.chats)))
-  write(KEYS.REFERENCES, mergeById(localRefsBeforeSync, projectPayloads.flatMap(item => item.refs)))
+  write(KEYS.VERSIONS, mergeById(scopedLocalVersions, projectPayloads.flatMap(item => item.versions)))
+  write(KEYS.RESEARCH_PACKAGES, mergeById(scopedLocalResearchPackages, projectPayloads.flatMap(item => item.researchPackages)))
+  write(KEYS.CHAT, mergeById(scopedLocalChats, projectPayloads.flatMap(item => item.chats)))
+  write(KEYS.REFERENCES, mergeById(scopedLocalRefs, projectPayloads.flatMap(item => item.refs)))
 
   if (!activeId || !mergedProjects.some(project => project.id === activeId)) {
     write(KEYS.ACTIVE_PROJECT, mergedProjects[0].id)
