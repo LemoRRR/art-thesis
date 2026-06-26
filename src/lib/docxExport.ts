@@ -31,6 +31,10 @@ const FILE_SAFE_PATTERN = /[\\/:*?"<>|]/g
 const TABLE_BORDER = { style: BorderStyle.SINGLE, size: 8, color: TEXT_COLOR }
 const TABLE_LIGHT_BORDER = { style: BorderStyle.SINGLE, size: 3, color: 'BFBFBF' }
 const TABLE_NO_BORDER = { style: BorderStyle.NIL, size: 0, color: 'FFFFFF' }
+const DOCX_PAGE_MARGIN_LEFT_DXA = 1800
+const DOCX_PAGE_MARGIN_RIGHT_DXA = 1800
+const DOCX_CONTENT_WIDTH_DXA = 8640
+const RESEARCH_TABLE_WIDTH_DXA = DOCX_CONTENT_WIDTH_DXA - 360
 
 function editorAlignment(value: unknown) {
   if (value === 'center') return AlignmentType.CENTER
@@ -187,7 +191,7 @@ function researchColumnWidths(columns: string[], labels: string[]) {
     return 1.25
   })
   const total = weights.reduce((sum, weight) => sum + weight, 0) || 1
-  return weights.map(weight => Math.max(760, Math.round(9000 * weight / total)))
+  return weights.map(weight => Math.max(680, Math.round(RESEARCH_TABLE_WIDTH_DXA * weight / total)))
 }
 
 function researchTableCellAlignment(label: string, column?: string) {
@@ -244,7 +248,7 @@ function createResearchTableBlocksFromData(data: {
 
   const widths = researchColumnWidths(columns, labels)
   const table = new Table({
-    width: { size: 9000, type: WidthType.DXA },
+    width: { size: RESEARCH_TABLE_WIDTH_DXA, type: WidthType.DXA },
     columnWidths: widths,
     layout: TableLayoutType.FIXED,
     alignment: AlignmentType.CENTER,
@@ -768,9 +772,9 @@ export async function buildSectionsDocxBlob(title: string, sections: DocSection[
           page: {
             margin: {
               top: 1440,
-              right: 1800,
+              right: DOCX_PAGE_MARGIN_RIGHT_DXA,
               bottom: 1440,
-              left: 1800,
+              left: DOCX_PAGE_MARGIN_LEFT_DXA,
             },
           },
         },
