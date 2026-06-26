@@ -9,6 +9,7 @@ import {
 import type { PaperEditorDoc, PaperEditorNode } from './editorDocument'
 
 type StructuredResearchResult = {
+  method?: string
   figures?: Array<{ id?: string; title?: string; dataUrl?: string; caption?: string }>
   tables?: Array<{ id?: string; title?: string; rows?: unknown[]; columns?: string[] }>
   componentNarratives?: Array<{ componentId?: string; title?: string; beforeText?: string; afterText?: string }>
@@ -72,6 +73,68 @@ function fallbackTableNarrative(table: { rows?: unknown[]; columns?: string[] },
 
 function normalizedResearchId(value: unknown) {
   return String(value ?? '').trim().toLowerCase()
+}
+
+function tableById(result: StructuredResearchResult, id: string) {
+  return (result.tables ?? []).find(table => normalizedResearchId(table.id) === id)
+}
+
+function tableRows(table: { rows?: unknown[] } | undefined) {
+  return Array.isArray(table?.rows)
+    ? table.rows.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
+    : []
+}
+
+function rowText(row: Record<string, unknown> | undefined, keys: string[]) {
+  if (!row) return ''
+  for (const key of keys) {
+    const value = row[key]
+    if (value != null && String(value).trim()) return String(value).trim()
+  }
+  return ''
+}
+
+function discussionTextForStructuredResult(result: StructuredResearchResult) {
+  const method = normalizedResearchId(result.method)
+  const priorityRows = tableRows(tableById(result, 'table_priority_ranking'))
+  const ahpRows = tableRows(tableById(result, 'table_ahp_weights'))
+
+  if (method === 'kano_entropy' || priorityRows.length > 0) {
+    const top = priorityRows.slice(0, 3)
+    const topNames = top
+      .map(row => rowText(row, ['维度', '设计维度', 'criterion', '指标']))
+      .filter(Boolean)
+    const first = top[0]
+    const firstName = rowText(first, ['维度', '设计维度', 'criterion', '指标']) || '排名靠前的维度'
+    const firstType = rowText(first, ['KANO', '主导KANO类型'])
+    const firstScore = rowText(first, ['综合分', '耦合优先级总得分'])
+    return [
+      `基于KANO属性与熵权耦合结果，后续讨论不宜只停留在数值排序，而应将排名靠前的维度转化为具体优化策略。${firstName}${firstType ? `属于${firstType}` : ''}${firstScore ? `，综合分为${firstScore}` : ''}，说明其既具有较强的需求识别意义，也适合作为论文策略建议部分的优先切入点。`,
+      topNames.length
+        ? `在策略展开时，可优先围绕${topNames.map(name => `“${name}”`).join('、')}提出分层优化建议：对必备型要素强调基础体验保障，对期望型要素强调持续改进，对魅力型要素强调差异化表达与传播亮点。`
+        : '在策略展开时，应根据KANO类型区分基础保障、持续改进和差异化塑造，避免把所有维度写成同一种笼统建议。',
+    ].join('\n')
+  }
+
+  if (method === 'ahp' || ahpRows.length > 0) {
+    const top = ahpRows.slice(0, 3)
+    const topNames = top
+      .map(row => rowText(row, ['criterion', '指标', 'matrix']))
+      .filter(Boolean)
+    return [
+      '基于AHP权重排序，讨论部分应从高权重指标解释其对研究目标的影响机制，并进一步转化为设计、传播或管理策略。',
+      topNames.length
+        ? `具体而言，${topNames.map(name => `“${name}”`).join('、')}应作为后续策略建议的重点对象，论文写作中需要结合研究对象解释其优先性来源。`
+        : '具体而言，应结合权重排序识别关键指标，并说明这些指标为何应优先进入后续优化路径。',
+    ].join('\n')
+  }
+
+  const cautions = (result.cautions ?? []).filter(Boolean)
+  if (cautions.length > 0) {
+    return `结合本次分析限制，论文讨论部分需要说明数据质量、样本规模或变量识别边界，并据此提出后续复核与优化建议。${cautions.slice(0, 2).join('；')}`
+  }
+
+  return ''
 }
 
 export function splitResearchAssetIntoComponents(asset: ResearchAsset): ResearchPackageComponent[] {
@@ -233,6 +296,14 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
         type: 'analysis',
         title: '分析文字',
         content: String(result.analysisText),
+      }))
+    }
+    const discussionText = discussionTextForStructuredResult(result)
+    if (discussionText) {
+      components.push(component('research_component', {
+        type: 'analysis',
+        title: '讨论与优化建议',
+        content: discussionText,
       }))
     }
     if (components.length > 0) return components

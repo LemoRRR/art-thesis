@@ -173,9 +173,11 @@ async function main() {
     assert(figureCount >= 4, `图片数量不足：${figureCount}`)
     assert(placements.some(item => item.role === 'method' && item.targetSectionId === 's3'), '方法组件未写入研究设计章节')
     assert(placements.some(item => item.role === 'result' && item.targetSectionId === 's4'), '结果组件未写入数据分析章节')
+    assert(placements.some(item => item.role === 'discussion' && item.targetSectionId === 's5'), '讨论建议组件未写入优化策略/研究讨论章节')
 
     const methodIds = new Set(placements.filter(item => item.targetSectionId === 's3').flatMap(item => item.componentIds ?? []))
     const resultIds = new Set(placements.filter(item => item.targetSectionId === 's4').flatMap(item => item.componentIds ?? []))
+    const discussionIds = new Set(placements.filter(item => item.targetSectionId === 's5').flatMap(item => item.componentIds ?? []))
     const methodPkg = {
       id: 'smoke-method',
       projectId: 'smoke',
@@ -190,6 +192,15 @@ async function main() {
       projectId: 'smoke',
       title: 'KANO-熵权法分析结果',
       components: components.filter(component => resultIds.has(component.id)),
+      insertedComponentIds: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+    const discussionPkg = {
+      id: 'smoke-discussion',
+      projectId: 'smoke',
+      title: '讨论与优化建议',
+      components: components.filter(component => discussionIds.has(component.id)),
       insertedComponentIds: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -212,6 +223,15 @@ async function main() {
         editorDoc: { type: 'doc', content: researchPackageToPaperNodes(resultPkg) },
         status: 'done',
         order: 4,
+      },
+      {
+        id: 's5',
+        projectId: 'smoke',
+        title: '五、优化策略与研究讨论',
+        content: '',
+        editorDoc: { type: 'doc', content: researchPackageToPaperNodes(discussionPkg) },
+        status: 'done',
+        order: 5,
       },
     ]
     const blob = await buildSectionsDocxBlob(common.projectTitle, docSections)
