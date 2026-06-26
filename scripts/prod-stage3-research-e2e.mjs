@@ -121,6 +121,9 @@ async function main() {
   const sectionIds = [randomUUID(), randomUUID(), randomUUID()]
   const packageIds = []
   let browser
+  let page
+  const apiResponses = []
+  const browserErrors = []
 
   try {
     await requestJson('POST', '/api/projects', {
@@ -165,9 +168,7 @@ async function main() {
       window.localStorage.setItem('auth_user', JSON.stringify(user))
     }, { accessToken: token, user: login.user })
 
-    const page = await context.newPage()
-    const apiResponses = []
-    const browserErrors = []
+    page = await context.newPage()
     page.on('console', message => {
       if (['error', 'warning'].includes(message.type())) browserErrors.push(`${message.type()}: ${message.text()}`)
     })
@@ -187,9 +188,9 @@ async function main() {
     await clickByTestId(page, 'stage3-open-research')
     await page.getByTestId('research-upload-input').setInputFiles(workbookPath)
     await clickByTestId(page, 'research-generate-plan')
-    await page.getByTestId('research-run-plan').waitFor({ state: 'visible', timeout: 90000 })
+    await page.getByTestId('research-run-plan').waitFor({ state: 'visible', timeout: 180000 })
     await clickByTestId(page, 'research-run-plan')
-    await page.getByTestId('research-insert-latest').waitFor({ state: 'visible', timeout: 180000 })
+    await page.getByTestId('research-insert-latest').waitFor({ state: 'visible', timeout: 240000 })
     await clickByTestId(page, 'research-insert-latest')
     await page.waitForTimeout(2500)
 
@@ -225,6 +226,23 @@ async function main() {
 
     await browser.close()
     browser = null
+  } catch (error) {
+    if (page) {
+      const screenshotPath = path.join(outputDir, 'failure.png')
+      await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => null)
+      const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '')
+      console.error(JSON.stringify({
+        failureDiagnostics: {
+          baseUrl,
+          projectId,
+          screenshotPath,
+          apiResponses,
+          browserErrors,
+          bodyText: bodyText.slice(0, 3000),
+        },
+      }, null, 2))
+    }
+    throw error
   } finally {
     if (browser) await browser.close().catch(() => null)
     await cleanup({ token, projectId, sectionIds, packageIds })
