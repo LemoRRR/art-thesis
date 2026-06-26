@@ -256,6 +256,29 @@ function compactResearchTableColumns(columns: string[], title = '') {
 }
 
 function researchTableCellText(column: string, value: unknown) {
+  const rawText = String(value ?? '').trim()
+  if (column === 'KANO' || column === '\u4e3b\u5bfcKANO\u7c7b\u578b') {
+    const map: Record<string, string> = {
+      M: '必备型',
+      O: '期望型',
+      A: '魅力型',
+      I: '无差异型',
+      Q: '可疑结果',
+      R: '反向型',
+    }
+    return map[rawText] ?? rawText
+  }
+  const digits = ['\u6392\u540d', 'N', '\u6837\u672c\u603b\u91cf', '\u6700\u7ec8\u8026\u5408\u4f18\u5148\u7ea7\u6392\u540d'].includes(column)
+    ? 0
+    : ['\u6743\u91cd(%)', '\u6743\u91cd\u5360\u6bd4(%)'].includes(column)
+      ? 2
+      : ['Better', 'Worse', '\u71b5\u6743', '\u7efc\u5408\u5206', '\u71b5\u503c', '\u5dee\u5f02'].includes(column)
+        ? 3
+        : null
+  if (digits !== null && rawText) {
+    const numeric = Number(rawText)
+    if (Number.isFinite(numeric)) return numeric.toFixed(digits)
+  }
   const text = String(value ?? '').trim()
   const maxLength = column === '\u7ef4\u5ea6\u5168\u79f0' ? 18 : column === '\u8bbe\u8ba1\u7ef4\u5ea6' ? 8 : 28
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text

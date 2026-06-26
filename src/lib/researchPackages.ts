@@ -504,6 +504,26 @@ function researchTableColumnLabel(column: string) {
     .replace(/_/g, ' ')
 }
 
+function displayKanoType(value: unknown) {
+  const text = String(value ?? '').trim()
+  const map: Record<string, string> = {
+    M: '必备型',
+    O: '期望型',
+    A: '魅力型',
+    I: '无差异型',
+    Q: '可疑结果',
+    R: '反向型',
+  }
+  return map[text] ?? text
+}
+
+function numericResearchColumnDigits(column: string) {
+  if (['排名', 'N', '样本总量', '最终耦合优先级排名'].includes(column)) return 0
+  if (['权重(%)', '权重占比(%)', 'weightPercent'].includes(column)) return 2
+  if (['Better', 'Worse', '熵权', '综合分', '熵值', '差异', 'CI', 'CR', 'RI', 'lambdaMax'].includes(column)) return 3
+  return null
+}
+
 function selectResearchTableColumns(columns: string[], title = '') {
   const rank = '\u6700\u7ec8\u8026\u5408\u4f18\u5148\u7ea7\u6392\u540d'
   const dimension = '\u8bbe\u8ba1\u7ef4\u5ea6'
@@ -537,12 +557,19 @@ function selectResearchTableColumns(columns: string[], title = '') {
 
 function formatResearchTableValue(column: string, value: unknown) {
   if (value == null) return ''
+  if (column === 'KANO' || column === '主导KANO类型') return displayKanoType(value)
+  const digits = numericResearchColumnDigits(column)
   if (typeof value === 'number') {
     if (column === 'p') return value < 0.001 ? '<0.001' : value.toFixed(3)
+    if (digits !== null) return value.toFixed(digits)
     if (Number.isInteger(value)) return String(value)
     return value.toFixed(Math.abs(value) < 1 ? 3 : 2)
   }
   const text = String(value).trim()
+  if (digits !== null && text !== '') {
+    const numeric = Number(text)
+    if (Number.isFinite(numeric)) return numeric.toFixed(digits)
+  }
   const maxLength = column === '\u7ef4\u5ea6\u5168\u79f0' ? 18 : column === '\u8bbe\u8ba1\u7ef4\u5ea6' ? 8 : 28
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
 }
@@ -573,7 +600,7 @@ function researchTableNote(component: ResearchPackageComponent) {
     return '注：综合分由KANO属性、Better/Worse系数与熵权结果耦合得到，排名越靠前表示越应优先纳入设计优化与策略建议。'
   }
   if (id.includes('kano') || title.includes('kano')) {
-    return '注：M表示必备型，O表示期望型，A表示魅力型，I表示无差异型；Better系数表示满意度提升作用，Worse系数绝对值表示缺失时导致不满意的程度。'
+    return '注：KANO类型包括必备型、期望型、魅力型、无差异型等；Better系数表示满意度提升作用，Worse系数绝对值表示缺失时导致不满意的程度。'
   }
   if (id.includes('entropy') || title.includes('熵权')) {
     return '注：熵值越低、差异系数越高，表示该指标对综合评价的区分作用越强；权重用于后续耦合优先级计算。'

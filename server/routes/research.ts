@@ -604,6 +604,7 @@ function maybeNumber(value: unknown) {
 }
 
 function kanoTypeName(type: string) {
+  const normalized = type.trim()
   const map: Record<string, string> = {
     M: '必备型',
     O: '期望型',
@@ -612,7 +613,24 @@ function kanoTypeName(type: string) {
     Q: '可疑结果',
     R: '反向型',
   }
-  return map[type] ?? type
+  return map[normalized] ?? normalized
+}
+
+function formatResearchNumber(value: unknown, digits = 3) {
+  const number = maybeNumber(value)
+  if (number === null) return rowValue({ value }, 'value')
+  if (Number.isInteger(number)) return String(number)
+  return number.toFixed(digits)
+}
+
+function formatKanoTableValue(label: string, value: unknown) {
+  if (label === 'KANO') return kanoTypeName(rowValue({ value }, 'value'))
+  if (label === '排名' || label === 'N') return formatResearchNumber(value, 0)
+  if (label === '权重(%)') return formatResearchNumber(value, 2)
+  if (label === '熵值' || label === '差异' || label === 'Better' || label === 'Worse' || label === '熵权' || label === '综合分') {
+    return formatResearchNumber(value, 3)
+  }
+  return value
 }
 
 function tableContent(rows: Record<string, unknown>[], columns: string[]) {
@@ -659,7 +677,7 @@ async function makePriorityChart(rows: Record<string, unknown>[]) {
       ctx.fillRect(barX, y - 17, barWidth, 18)
       ctx.fillStyle = CHART_THEME.ink
       ctx.font = chartFont(15)
-      ctx.fillText(`KANO：${type || '-'}   综合分：${score.toFixed(4)}`, metaX, y)
+      ctx.fillText(`KANO：${type ? kanoTypeName(type) : '-'}   综合分：${score.toFixed(3)}`, metaX, y)
     })
     drawFootnote(ctx, '注：排序越靠前表示越应优先进入设计优化与策略建议；综合分原始值保留在右侧供核对。', 34, height - 18)
   })
@@ -936,16 +954,16 @@ function drawVerticalGrid(
 
 async function makeKanoStackedChart(rows: Record<string, unknown>[]) {
   const types = [
-    { label: 'M', parts: ['M_', '占比'], color: '#2f6f4e' },
-    { label: 'O', parts: ['O_', '占比'], color: '#5d9a65' },
-    { label: 'A', parts: ['A_', '占比'], color: '#94bd77' },
-    { label: 'I', parts: ['I_', '占比'], color: '#d5e5c8' },
-    { label: 'Q/R', parts: ['Q_', '占比'], color: '#c9b06f' },
+    { code: 'M', label: '必备', parts: ['M_', '占比'], color: '#2f6f4e' },
+    { code: 'O', label: '期望', parts: ['O_', '占比'], color: '#5d9a65' },
+    { code: 'A', label: '魅力', parts: ['A_', '占比'], color: '#94bd77' },
+    { code: 'I', label: '无差异', parts: ['I_', '占比'], color: '#d5e5c8' },
+    { code: 'Q/R', label: '可疑/反向', parts: ['Q_', '占比'], color: '#c9b06f' },
   ]
   return canvasDataUrl(1180, 680, ctx => {
-    drawChartHeader(ctx, 'KANO需求类型分布', '各设计维度在M/O/A/I/Q-R类型中的占比分布。')
+    drawChartHeader(ctx, 'KANO需求类型分布', '各设计维度在必备型、期望型、魅力型、无差异型等类型中的占比分布。')
     types.forEach((type, index) => {
-      const x = 620 + index * 72
+      const x = 570 + index * 104
       drawLegendItem(ctx, x, 63, type.color, type.label)
     })
     const startY = 118
@@ -961,7 +979,7 @@ async function makeKanoStackedChart(rows: Record<string, unknown>[]) {
       ctx.fillText(name, 42, y + 17)
       let x = barX
       types.forEach(type => {
-        const value = type.label === 'Q/R'
+        const value = type.code === 'Q/R'
           ? rowMetric(row, ['Q_', '占比']) + rowMetric(row, ['R_', '占比'])
           : rowMetric(row, type.parts)
         const width = Math.max(0, Math.round((value / 100) * barWidth))
@@ -973,9 +991,9 @@ async function makeKanoStackedChart(rows: Record<string, unknown>[]) {
       ctx.strokeRect(barX, y, barWidth, barHeight)
       ctx.fillStyle = CHART_THEME.inkSoft
       ctx.font = chartFont(13)
-      ctx.fillText(`主导类型：${rowTextByParts(row, ['主导', 'KANO'], '-')}`, 988, y + 17)
+      ctx.fillText(`主导类型：${kanoTypeName(rowTextByParts(row, ['主导', 'KANO'], '-'))}`, 988, y + 17)
     })
-    drawFootnote(ctx, '注：M=必备型，O=期望型，A=魅力型，I=无差异型；Q/R用于提示可疑或反向结果。', 42, 660)
+    drawFootnote(ctx, '注：必备型、期望型、魅力型、无差异型用于说明不同维度的用户需求属性；可疑/反向结果需结合问卷质量进一步复核。', 42, 660)
   })
 }
 
@@ -1091,14 +1109,14 @@ ${body}
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function makeKanoStackedChartSvg(rows: Record<string, unknown>[]) {
   const types = [
-    { label: 'M', parts: ['M_', '占比'], color: '#2f6f4e' },
-    { label: 'O', parts: ['O_', '占比'], color: '#5d9a65' },
-    { label: 'A', parts: ['A_', '占比'], color: '#94bd77' },
-    { label: 'I', parts: ['I_', '占比'], color: '#d5e5c8' },
-    { label: 'Q/R', parts: ['Q_', '占比'], color: '#c9b06f' },
+    { code: 'M', label: '必备', parts: ['M_', '占比'], color: '#2f6f4e' },
+    { code: 'O', label: '期望', parts: ['O_', '占比'], color: '#5d9a65' },
+    { code: 'A', label: '魅力', parts: ['A_', '占比'], color: '#94bd77' },
+    { code: 'I', label: '无差异', parts: ['I_', '占比'], color: '#d5e5c8' },
+    { code: 'Q/R', label: '可疑/反向', parts: ['Q_', '占比'], color: '#c9b06f' },
   ]
   const legend = types.map((type, index) => {
-    const x = 620 + index * 72
+    const x = 570 + index * 104
     return `<rect x="${x}" y="52" width="18" height="12" fill="${type.color}"/><text x="${x + 24}" y="64" class="small">${escapeXml(type.label)}</text>`
   }).join('')
   const bars = rows.slice(0, 12).map((row, index) => {
@@ -1106,7 +1124,7 @@ async function makeKanoStackedChartSvg(rows: Record<string, unknown>[]) {
     let x = 250
     const label = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 12)
     const segments = types.map(type => {
-      const value = type.label === 'Q/R'
+      const value = type.code === 'Q/R'
         ? rowMetric(row, ['Q_', '占比']) + rowMetric(row, ['R_', '占比'])
         : rowMetric(row, type.parts)
       const width = Math.max(0, Math.round((value / 100) * 700))
@@ -1116,10 +1134,10 @@ async function makeKanoStackedChartSvg(rows: Record<string, unknown>[]) {
     }).join('')
     return `<text x="42" y="${y + 17}" font-size="15" font-weight="700">${escapeXml(label)}</text>
 ${segments}<rect x="250" y="${y}" width="700" height="24" fill="none" stroke="#d9e2d6"/>
-<text x="988" y="${y + 17}" class="small">主导类型：${escapeXml(rowTextByParts(row, ['主导', 'KANO'], '-'))}</text>`
+<text x="988" y="${y + 17}" class="small">主导类型：${escapeXml(kanoTypeName(rowTextByParts(row, ['主导', 'KANO'], '-')))}</text>`
   }).join('')
   return svgDataUrl(1180, 680, `<text x="34" y="46" class="title">KANO需求类型分布</text>
-<text x="34" y="76" class="sub">各设计维度在M/O/A/I/Q-R类型中的占比分布。</text>
+<text x="34" y="76" class="sub">各设计维度在必备型、期望型、魅力型、无差异型等类型中的占比分布。</text>
 ${legend}${bars}`)
 }
 
@@ -1198,7 +1216,7 @@ async function makePriorityChartSvg(rows: Record<string, unknown>[]) {
 <text x="126" y="${y}" font-size="16">${escapeXml(name)}</text>
 <rect x="${barX}" y="${y - 17}" width="${barMaxWidth}" height="18" fill="#dfeadc"/>
 <rect x="${barX}" y="${y - 17}" width="${barWidth}" height="18" fill="${index < 3 ? '#1f7a4c' : '#6ba46f'}"/>
-<text x="${metaX}" y="${y}" font-size="15">KANO：${escapeXml(type || '-')}   综合分：${score.toFixed(4)}</text>`
+<text x="${metaX}" y="${y}" font-size="15">KANO：${escapeXml(type ? kanoTypeName(type) : '-')}   综合分：${score.toFixed(3)}</text>`
   }).join('')
   return svgDataUrl(width, height, `<text x="34" y="46" class="title">KANO-熵权耦合优先级排序</text>
 <text x="34" y="76" class="sub">条形表示按排序归一化后的优先级强度；综合分越低，表示越应优先纳入设计优化。</text>
@@ -1729,7 +1747,7 @@ async function buildKanoEntropyResult(payload: Record<string, unknown>, workbook
     const activeDefs = defs.filter(([source]) => available.has(source))
     return {
       columns: activeDefs.map(([, label]) => label),
-      rows: rows.map(row => Object.fromEntries(activeDefs.map(([source, label]) => [label, row[source]]))),
+      rows: rows.map(row => Object.fromEntries(activeDefs.map(([source, label]) => [label, formatKanoTableValue(label, row[source])]))),
     }
   }
   const summaryTable = projectTable(summaryRows, summaryColumnDefs, workbook.summary.columns)
@@ -1737,7 +1755,7 @@ async function buildKanoEntropyResult(payload: Record<string, unknown>, workbook
   const priorityTable = projectTable(priorityRows, priorityColumnDefs, workbook.priority.columns)
   const analysisText = [
     `本次共纳入 ${rowValue(summaryRows[0] ?? {}, '样本总量') || '100'} 份有效问卷，围绕 ${subjectLabel}的 ${priorityRows.length} 个评价维度进行 KANO 分类，并进一步引入熵权法计算综合优先级。`,
-    first ? `耦合排序结果显示，排名第一的维度为“${rowValue(first, '设计维度')}”，其主导 KANO 类型为 ${kanoTypeName(rowValue(first, '主导KANO类型'))}，耦合优先级总得分为 ${rowValue(first, '耦合优先级总得分')}，说明该维度可作为后续结果讨论和优化建议的重点。` : '',
+    first ? `耦合排序结果显示，排名第一的维度为“${rowValue(first, '设计维度')}”，其主导 KANO 类型为 ${kanoTypeName(rowValue(first, '主导KANO类型'))}，耦合优先级总得分为 ${formatResearchNumber(first['耦合优先级总得分'], 3)}，说明该维度可作为后续结果讨论和优化建议的重点。` : '',
     top.length ? `前五位优先优化维度依次为：${top.map(row => `“${rowValue(row, '设计维度')}”`).join('、')}。论文写作时可结合研究问题，将其分别纳入用户需求属性识别、评价维度排序和优化策略提出等部分展开。` : '',
   ].filter(Boolean).join('\n')
 

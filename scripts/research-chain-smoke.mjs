@@ -72,6 +72,17 @@ function assertResearchOutputQuality(analysis, components) {
     JSON.stringify(priorityTable.columns) === JSON.stringify(['排名', '维度', 'KANO', 'Better', 'Worse', '熵权', '综合分']),
     `priority ranking table columns are not paper-ready: ${JSON.stringify(priorityTable.columns)}`
   )
+  const rawKanoCodes = new Set(['M', 'O', 'A', 'I', 'Q', 'R'])
+  const priorityKanoValues = (priorityTable.rows ?? []).map(row => String(row.KANO ?? '').trim()).filter(Boolean)
+  assert(priorityKanoValues.length > 0, 'priority ranking table has no KANO labels')
+  assert(
+    priorityKanoValues.every(value => !rawKanoCodes.has(value)),
+    `priority ranking table still exposes raw KANO codes: ${priorityKanoValues.join(', ')}`
+  )
+  assert(
+    priorityKanoValues.some(value => value.includes('型')),
+    `priority ranking table should use Chinese KANO labels: ${priorityKanoValues.join(', ')}`
+  )
   assert(
     JSON.stringify(entropyTable.columns) === JSON.stringify(['指标', '熵值', '差异', '权重(%)']),
     `entropy weight table columns are not paper-ready: ${JSON.stringify(entropyTable.columns)}`
