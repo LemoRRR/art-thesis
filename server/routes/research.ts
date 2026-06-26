@@ -940,7 +940,16 @@ ${items}`)
 
 function shortLabel(value: unknown, max = 16) {
   const text = String(value ?? '').trim()
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+  if (text.length <= max) return text
+  const numberedSuffix = text.match(/^(.+?)([\s_-]*(?:\d+|[A-Z])(?:\)|）)?|\([^)]+\)|（[^）]+）)$/)
+  if (numberedSuffix) {
+    const suffix = numberedSuffix[2].trim()
+    const prefixLength = Math.max(2, max - suffix.length - 1)
+    if (suffix.length > 0 && prefixLength >= 2) {
+      return `${numberedSuffix[1].trim().slice(0, prefixLength)}…${suffix}`
+    }
+  }
+  return `${text.slice(0, max - 1)}…`
 }
 
 function normalizeFigureTitle(title: unknown, index: number) {
