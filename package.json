@@ -7,6 +7,7 @@
     "dev": "vite",
     "server:dev": "tsx server/index.ts",
     "smoke:research-chain": "tsx scripts/research-chain-smoke.mjs",
+    "smoke:citation-docx": "tsx scripts/citation-docx-smoke.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
