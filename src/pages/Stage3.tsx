@@ -2746,6 +2746,11 @@ export default function Stage3() {
   const showCenterGenerateButton = sections.length === 0 && !isGeneratingFull
   const centerGenerateButtonLabel = hasCurrentOutline ? '生成全文' : '检查大纲并生成'
   const autoCitationSourceCount = referenceStore.get(project.id, 'stage3').autoSources?.length ?? 0
+  const citationStatusText = citationAuditNote
+    ? citationAuditNote.split('\n').slice(-2).join(' ')
+    : allGenerated
+      ? '生成后可运行引用增强：系统会重新扫描正文、匹配来源，并把合适观点改写为带脚注的论文表述。'
+      : ''
   const pendingAddedTitleList = pendingAddedOutlineSections.map(outlineSectionTitle).join('、')
   const generatePendingAddedSections = () => {
     if (!pendingAddedOutlineSections.length || !currentOutlineSections?.length || isGeneratingFull) return
@@ -3182,9 +3187,24 @@ export default function Stage3() {
                 {autoCitationSourceCount > 0 ? `${autoCitationSourceCount} 条来源 · ` : ''}{totalChars} 字
               </span>
             </div>
-            {citationAuditNote && (
-              <div style={{ padding: '6px 16px', borderTop: '1px solid rgba(45, 90, 61, 0.16)', background: '#F8FBF8', color: 'var(--color-ink-3)', fontSize: 11, lineHeight: 1.5, flexShrink: 0 }}>
-                {citationAuditNote.split('\n').slice(-2).join(' ')}
+            {citationStatusText && (
+              <div style={{ padding: '7px 16px', borderTop: '1px solid rgba(45, 90, 61, 0.16)', background: '#F8FBF8', color: 'var(--color-ink-3)', fontSize: 11, lineHeight: 1.5, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <span style={{ minWidth: 0 }}>
+                  <strong style={{ color: 'var(--color-ink)' }}>引用依据：</strong>
+                  {citationStatusText}
+                </span>
+                {allGenerated && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowReferences(true)
+                      setShowResearchDrawer(false)
+                    }}
+                    style={{ border: '1px solid var(--color-accent)', background: '#fff', color: 'var(--color-accent)', borderRadius: 6, padding: '5px 9px', fontSize: 11, fontWeight: 750, cursor: 'pointer', fontFamily: 'var(--font-sans)', whiteSpace: 'nowrap', flexShrink: 0 }}
+                  >
+                    校准引用
+                  </button>
+                )}
               </div>
             )}
           </div>
