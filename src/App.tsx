@@ -46,7 +46,7 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(!auth.isLoggedIn())
   const [error, setError] = useState('')
   const [redirectToLogin, setRedirectToLogin] = useState(false)
-  const syncedRef = useRef(false)
+  const syncedProjectIdsRef = useRef(new Set<string>())
 
   useEffect(() => {
     const handleAuthExpired = () => {
@@ -60,7 +60,11 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
-    if (!auth.isLoggedIn() || auth.isLocalSession() || isAuthEntryRoute || syncedRef.current) {
+    const routeProjectId = location.pathname.match(/^\/projects\/([^/]+)/)?.[1]
+    const activeProjectId = projectStore.getActiveId()
+    const projectIds = Array.from(new Set([routeProjectId, activeProjectId].filter((id): id is string => Boolean(id))))
+    const needsProjectSync = projectIds.length === 0 || projectIds.some(id => !syncedProjectIdsRef.current.has(id))
+    if (!auth.isLoggedIn() || auth.isLocalSession() || isAuthEntryRoute || !needsProjectSync) {
       setReady(true)
       return
     }
@@ -68,15 +72,15 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
     setReady(false)
     setError('')
     setRedirectToLogin(false)
-    const routeProjectId = location.pathname.match(/^\/projects\/([^/]+)/)?.[1]
-    const activeProjectId = projectStore.getActiveId()
-    const projectIds = Array.from(new Set([routeProjectId, activeProjectId].filter((id): id is string => Boolean(id))))
     Promise.race([
-      syncRemoteData({ projectIds }),
+      syncRemoteData({ projectIds }).then(() => true),
       new Promise<void>((resolve) => {
         window.setTimeout(() => resolve(), 5000)
-      }),
+      }).then(() => false),
     ])
+      .then(didSync => {
+        if (didSync) projectIds.forEach(id => syncedProjectIdsRef.current.add(id))
+      })
       .catch(err => {
         console.warn('[App] Supabase 同步失败，继续使用本地缓存', err)
         if (!cancelled) setError('云端同步失败，已切换为本地缓存模式。')
@@ -86,7 +90,6 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
           if (auth.isAuthRequired() && !auth.isLoggedIn() && !isAuthEntryRoute) {
             setRedirectToLogin(true)
           }
-          syncedRef.current = true
           setReady(true)
         }
       })
