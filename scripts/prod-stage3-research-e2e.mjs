@@ -98,6 +98,29 @@ async function clickByTestId(page, testId, timeout = 30000) {
   assert(clicked, `Could not click ${testId}`)
 }
 
+async function uploadFileByChangeEvent(page, testId, filePath) {
+  const fileName = path.basename(filePath)
+  const base64 = fs.readFileSync(filePath).toString('base64')
+  const uploaded = await page.evaluate(({ id, name, fileBase64 }) => {
+    const input = document.querySelector(`[data-testid="${id}"]`)
+    if (!(input instanceof HTMLInputElement)) return false
+    const binary = atob(fileBase64)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index)
+    }
+    const file = new File([bytes], name, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const transfer = new DataTransfer()
+    transfer.items.add(file)
+    input.files = transfer.files
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    return true
+  }, { id: testId, name: fileName, fileBase64: base64 })
+  assert(uploaded, `Could not upload file through ${testId}`)
+}
+
 async function cleanup({ token, projectId, sectionIds, packageIds }) {
   if (!token || keepProject) return
   await Promise.allSettled([
@@ -186,9 +209,8 @@ async function main() {
       timeout: 60000,
     })
     await clickByTestId(page, 'stage3-open-research')
-    const uploadInput = await page.getByTestId('research-upload-input').elementHandle({ timeout: 30000 })
-    assert(uploadInput, 'Research upload input is missing')
-    await uploadInput.setInputFiles(workbookPath)
+    await page.getByTestId('research-upload-input').waitFor({ state: 'attached', timeout: 30000 })
+    await uploadFileByChangeEvent(page, 'research-upload-input', workbookPath)
     await page.waitForFunction(() => {
       const button = document.querySelector('[data-testid="research-generate-plan"]')
       return button instanceof HTMLButtonElement && !button.disabled
