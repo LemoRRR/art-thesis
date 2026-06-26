@@ -319,11 +319,6 @@ function findAnchorRange(textBeforeMarker: string): { start: number; end: number
   return { start, end, anchorText }
 }
 
-function citationNumberForKey(key: string, fallbackNumber: number): number {
-  const match = key.match(/^S(\d+)$/)
-  return match ? Number.parseInt(match[1], 10) : fallbackNumber
-}
-
 export function applyCitationsToContent(
   rawContent: string,
   sources: CitableSource[],
@@ -340,10 +335,9 @@ export function applyCitationsToContent(
 
   const cleanBlocks = blocks.map((block, blockIndex) => {
     let text = block.text
-    const matches = [...text.matchAll(CITATION_MARKER)].reverse()
+    const matches = [...text.matchAll(CITATION_MARKER)]
 
     matches.forEach(match => {
-      const marker = match[0]
       const markerIndex = match.index ?? 0
       const keys = match[1].split(',').map(key => key.trim()).filter(Boolean)
       const { start, end, anchorText } = findAnchorRange(text.slice(0, markerIndex))
@@ -353,18 +347,18 @@ export function applyCitationsToContent(
         if (!source || !anchorText) return
         footnotes.push({
           id: uid(),
-          number: citationNumberForKey(key, footnoteNumber),
+          number: footnoteNumber,
           blockIndex,
           start,
           end,
           anchorText,
           noteText: source.noteText,
         })
-        if (!/^S\d+$/.test(key)) footnoteNumber += 1
+        footnoteNumber += 1
       })
-
-      text = `${text.slice(0, markerIndex)}${text.slice(markerIndex + marker.length)}`.trimEnd()
     })
+
+    text = text.replace(CITATION_MARKER, '').trimEnd()
 
     return text.trim()
   })

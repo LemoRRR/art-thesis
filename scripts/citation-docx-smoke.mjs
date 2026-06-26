@@ -59,8 +59,27 @@ async function main() {
   ]
   const finalized = applyCitationsToContent(rawContent, sources, 1)
   assert(finalized.footnotes.length === 2, `脚注数量不正确：${finalized.footnotes.length}`)
+  assert(
+    JSON.stringify(finalized.footnotes.map(footnote => footnote.number)) === JSON.stringify([1, 2]),
+    `脚注编号应从 1 连续生成：${finalized.footnotes.map(footnote => footnote.number).join(',')}`
+  )
   assert(!finalized.content.includes('{{cite:'), '正文仍包含内部引用标记')
   assert(finalized.footnotes.every(footnote => footnote.anchorText && footnote.noteText), '脚注缺少锚点或说明文本')
+
+  const continued = applyCitationsToContent(rawContent, sources, 5)
+  assert(
+    JSON.stringify(continued.footnotes.map(footnote => footnote.number)) === JSON.stringify([5, 6]),
+    `跨章节继续生成时不应把 S1/S2 重置成 1/2：${continued.footnotes.map(footnote => footnote.number).join(',')}`
+  )
+  const sameParagraph = applyCitationsToContent(
+    'KANO模型可以识别用户需求属性。{{cite:S1}} 熵权法则可用于指标客观赋权。{{cite:S2}}',
+    sources,
+    3
+  )
+  assert(
+    JSON.stringify(sameParagraph.footnotes.map(footnote => footnote.number)) === JSON.stringify([3, 4]),
+    `同段多个引用应按正文顺序连续编号：${sameParagraph.footnotes.map(footnote => footnote.number).join(',')}`
+  )
 
   const sections = [
     {

@@ -184,6 +184,10 @@ function candidateBrief(candidate: CitationCandidate) {
   ].join('\n')
 }
 
+function hasInlineCitationLeak(text: string) {
+  return /\{\{cite:[^}]+}}|\[[\d,\s]+\]|(?:^|[^\w])S\d+(?:[^\w]|$)/i.test(text)
+}
+
 function normalizePatch(
   value: unknown,
   sections: SectionInput[],
@@ -209,6 +213,8 @@ function normalizePatch(
   const originalText = candidate?.text ?? String(row.originalText ?? '').trim()
   const revisedText = String(row.revisedText ?? originalText).trim()
   if (!originalText || !revisedText || !section.content.includes(originalText)) return null
+  if (hasInlineCitationLeak(revisedText)) return null
+  if (revisedText.length > Math.max(originalText.length * 3, 520)) return null
 
   const rawClaimType = String(row.claimType ?? row.enhancementType ?? 'assertion')
   const claimType = CLAIM_TYPES.has(rawClaimType) ? rawClaimType : 'assertion'
