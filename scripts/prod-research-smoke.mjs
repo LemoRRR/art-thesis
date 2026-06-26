@@ -209,10 +209,56 @@ function assertPaperReadyComponents(analysis, components, scenario) {
   }
 }
 
-async function inspectDocx(buffer) {
+function docxPlainTextFromXml(documentXml) {
+  return Array.from(documentXml.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g))
+    .map(match => match[1])
+    .join('')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+}
+
+function normalizedSectionTitle(title) {
+  return String(title ?? '')
+    .replace(/^\s*(第?[一二三四五六七八九十]+[章节篇部分]?|[一二三四五六七八九十]+|[0-9]+(?:\.[0-9]+)*)[、.．\s-]*/u, '')
+    .trim()
+}
+
+function assertDocxPaperStructure(text, sections, scenario) {
+  const sectionPositions = sections.map(section => ({
+    title: section.title,
+    normalizedTitle: normalizedSectionTitle(section.title),
+    index: Math.max(text.indexOf(section.title), text.indexOf(normalizedSectionTitle(section.title))),
+  }))
+  for (const item of sectionPositions) {
+    assert(item.index >= 0, `DOCX is missing target section heading: ${item.title}`)
+  }
+  for (let index = 1; index < sectionPositions.length; index += 1) {
+    assert(
+      sectionPositions[index - 1].index < sectionPositions[index].index,
+      `DOCX section order is wrong: ${sectionPositions[index - 1].title} should appear before ${sectionPositions[index].title}`
+    )
+  }
+
+  const [methodSection, resultSection, discussionSection] = sectionPositions
+  const methodText = text.slice(methodSection.index, resultSection.index)
+  const resultText = text.slice(resultSection.index, discussionSection.index)
+  const discussionText = text.slice(discussionSection.index)
+
+  assert(/KANO|AHP|层次分析|熵权|模型|方法|计算|权重/.test(methodText), 'DOCX method section lacks method/calculation wording')
+  assert(/表4-|图4-|结果显示|由表|由图|可知/.test(resultText), 'DOCX result section lacks table/figure result analysis')
+  assert(/讨论|建议|策略|优化|转化|路径|启示/.test(discussionText), 'DOCX discussion section lacks strategy/discussion wording')
+  assert((resultText.match(/表4-/g) ?? []).length >= scenario.minTables, 'DOCX result section has too few table captions')
+  assert((resultText.match(/图4-/g) ?? []).length >= scenario.minFigures, 'DOCX result section has too few figure captions')
+}
+
+async function inspectDocx(buffer, sections, scenario) {
   const zip = await JSZip.loadAsync(buffer)
   const documentXml = await zip.file('word/document.xml')?.async('string')
   assert(documentXml, 'DOCX is missing word/document.xml')
+  const text = docxPlainTextFromXml(documentXml)
+  assertDocxPaperStructure(text, sections, scenario)
   const media = Object.keys(zip.files).filter(name => name.startsWith('word/media/') && !name.endsWith('/'))
   const mediaChecks = []
   for (const name of media) {
@@ -254,6 +300,12 @@ async function inspectDocx(buffer) {
     ),
     imageExtentCount: (documentXml.match(/<wp:extent\b/g) ?? []).length,
     internalLeakCount: ((documentXml.match(/table_ahp_|figure_ahp_|research_component/g) ?? []).length),
+    paperStructure: {
+      hasOrderedSections: true,
+      hasMethodNarrative: true,
+      hasResultNarrative: true,
+      hasDiscussionNarrative: true,
+    },
   }
 }
 
@@ -363,7 +415,7 @@ async function main() {
     const buffer = Buffer.from(await blob.arrayBuffer())
     fs.mkdirSync(path.dirname(outputPath), { recursive: true })
     fs.writeFileSync(outputPath, buffer)
-    const docx = await inspectDocx(buffer)
+    const docx = await inspectDocx(buffer, sections, scenario)
     assert(docx.page.width === 11906 && docx.page.height === 16838, `DOCX page is not A4 portrait: ${JSON.stringify(docx.page)}`)
     assert(docx.tableCount >= scenario.minTables, `DOCX table count is too low: ${docx.tableCount}`)
     assert(docx.tableGridCount >= docx.tableCount, 'DOCX tables are missing fixed grids')
