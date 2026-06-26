@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process'
-import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Router } from 'express'
@@ -11,7 +10,6 @@ router.use(requireAuth)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const scriptPath = path.resolve(__dirname, '../python/research_analysis.py')
 const chartFontPath = path.resolve(__dirname, '../assets/fonts/NotoSansCJKsc-Regular.otf')
-let chartFontFaceCssCache = ''
 type ResearchAnalysisMethod =
   | 'descriptive'
   | 'cronbach_alpha'
@@ -767,23 +765,11 @@ function escapeXml(value: unknown) {
     .replace(/"/g, '&quot;')
 }
 
-function chartFontFaceCss() {
-  if (chartFontFaceCssCache) return chartFontFaceCssCache
-  try {
-    const fontBase64 = fs.readFileSync(chartFontPath).toString('base64')
-    chartFontFaceCssCache = `@font-face{font-family:PaperChartCN;src:url('data:font/otf;base64,${fontBase64}') format('opentype');font-weight:400 900}`
-  } catch {
-    chartFontFaceCssCache = ''
-  }
-  return chartFontFaceCssCache
-}
-
 function svgDataUrl(width: number, height: number, body: string) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
 <rect width="100%" height="100%" fill="#fffdf8"/>
 <style>
-${chartFontFaceCss()}
-text{font-family:PaperChartCN,'Noto Sans CJK SC','Microsoft YaHei',Arial,sans-serif;fill:#1f3328}
+text{font-family:'Noto Sans CJK SC','Microsoft YaHei',Arial,sans-serif;fill:#1f3328}
 .title{font-size:28px;font-weight:700;fill:#234234}
 .sub{font-size:16px;fill:#6d756f}
 .small{font-size:13px;fill:#53645a}
@@ -798,6 +784,28 @@ async function svgDataUrlToPngDataUrl(dataUrl: string) {
   try {
     const svg = decodeURIComponent(dataUrl.split(',')[1] ?? '')
     if (!svg.includes('<svg')) return ''
+    try {
+      const { Resvg } = await import('@resvg/resvg-js')
+      const { default: sharp } = await import('sharp')
+      const rendered = new Resvg(svg, {
+        background: CHART_THEME.background,
+        fitTo: { mode: 'original' },
+        font: {
+          fontFiles: [chartFontPath],
+          defaultFontFamily: 'Noto Sans CJK SC',
+          loadSystemFonts: true,
+        },
+      }).render()
+      const png = rendered.asPng()
+      const flattened = await sharp(png)
+        .flatten({ background: CHART_THEME.background })
+        .png()
+        .toBuffer()
+      return `data:image/png;base64,${flattened.toString('base64')}`
+    } catch {
+      // Fallback keeps the analysis feature usable if the native resvg package
+      // cannot load in a given runtime, though Chinese font rendering may be weaker.
+    }
     const { default: sharp } = await import('sharp')
     const buffer = await sharp(Buffer.from(svg, 'utf8'), { density: 192 })
       .flatten({ background: CHART_THEME.background })
