@@ -169,6 +169,21 @@ async function inspectDocx(buffer) {
   const documentXml = await zip.file('word/document.xml')?.async('string')
   assert(documentXml, 'DOCX is missing word/document.xml')
   const media = Object.keys(zip.files).filter(name => name.startsWith('word/media/') && !name.endsWith('/'))
+  const mediaChecks = []
+  for (const name of media) {
+    const mediaBuffer = await zip.file(name)?.async('nodebuffer')
+    assert(mediaBuffer && mediaBuffer.length > 25, `DOCX image is empty: ${name}`)
+    if (name.toLowerCase().endsWith('.png')) {
+      assert(mediaBuffer.toString('ascii', 1, 4) === 'PNG', `DOCX image is not a valid PNG: ${name}`)
+      const width = mediaBuffer.readUInt32BE(16)
+      const height = mediaBuffer.readUInt32BE(20)
+      const colorType = mediaBuffer[25]
+      assert(width >= 900, `DOCX PNG width is too low: ${name} ${width}`)
+      assert(height >= 250, `DOCX PNG height is too low: ${name} ${height}`)
+      assert(colorType !== 4 && colorType !== 6, `DOCX PNG image must be flattened without alpha: ${name}`)
+      mediaChecks.push({ name, width, height, colorType, bytes: mediaBuffer.length })
+    }
+  }
   const pageSize = documentXml.match(/<w:pgSz[^>]*w:w="(\d+)"[^>]*w:h="(\d+)"[^>]*>/)
   const pageMargin = documentXml.match(/<w:pgMar[^>]*w:top="(\d+)"[^>]*w:right="(\d+)"[^>]*w:bottom="(\d+)"[^>]*w:left="(\d+)"/)
   return {
@@ -184,6 +199,14 @@ async function inspectDocx(buffer) {
     tableGridCount: (documentXml.match(/<w:tblGrid>/g) ?? []).length,
     cellWidthCount: (documentXml.match(/<w:tcW\b/g) ?? []).length,
     imageCount: media.length,
+    flattenedPngCount: mediaChecks.length,
+    minImagePixels: mediaChecks.reduce(
+      (min, item) => ({
+        width: Math.min(min.width, item.width),
+        height: Math.min(min.height, item.height),
+      }),
+      { width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY }
+    ),
     imageExtentCount: (documentXml.match(/<wp:extent\b/g) ?? []).length,
     internalLeakCount: ((documentXml.match(/table_ahp_|figure_ahp_|research_component/g) ?? []).length),
   }
@@ -299,6 +322,8 @@ async function main() {
     assert(docx.tableCount >= scenario.minTables, `DOCX table count is too low: ${docx.tableCount}`)
     assert(docx.tableGridCount >= docx.tableCount, 'DOCX tables are missing fixed grids')
     assert(docx.imageCount >= scenario.minFigures, `DOCX image count is too low: ${docx.imageCount}`)
+    assert(docx.flattenedPngCount >= scenario.minFigures, `DOCX flattened PNG count is too low: ${docx.flattenedPngCount}`)
+    assert(docx.minImagePixels.width >= 900 && docx.minImagePixels.height >= 250, `DOCX image pixels are too small: ${JSON.stringify(docx.minImagePixels)}`)
     assert(docx.imageExtentCount >= scenario.minFigures, `DOCX images are missing display extents: ${docx.imageExtentCount}`)
     assert(docx.internalLeakCount === 0, `DOCX leaked internal ids: ${docx.internalLeakCount}`)
 
