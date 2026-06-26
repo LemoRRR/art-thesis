@@ -954,12 +954,14 @@ function shortLabel(value: unknown, max = 16) {
 
 function normalizeFigureTitle(title: unknown, index: number) {
   const raw = String(title ?? '').trim() || '分析结果图'
-  return /^图\d+[-—-]\d+/.test(raw) || /^图\d+/.test(raw) ? raw : `图4-${index + 1} ${raw}`
+  const cleanTitle = raw.replace(/^图\d+(?:[-—-]\d+)?\s*/u, '').trim() || '分析结果图'
+  return `图4-${index + 1} ${cleanTitle}`
 }
 
 function normalizeTableTitle(title: unknown, index: number) {
   const raw = String(title ?? '').trim() || '分析结果表'
-  return /^表\d+[-—-]\d+/.test(raw) || /^表\d+/.test(raw) ? raw : `表4-${index + 1} ${raw}`
+  const cleanTitle = raw.replace(/^表\d+(?:[-—-]\d+)?\s*/u, '').trim() || '分析结果表'
+  return `表4-${index + 1} ${cleanTitle}`
 }
 
 function uniqueWarnings(items: unknown[]) {

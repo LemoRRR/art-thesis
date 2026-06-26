@@ -273,10 +273,13 @@ async function main() {
     await clickByTestId(page, 'research-run-plan')
     await page.getByTestId('research-insert-latest').waitFor({ state: 'visible', timeout: 240000 })
     await clickByTestId(page, 'research-insert-latest')
-    await page.waitForTimeout(2500)
+    await page.waitForFunction(() => {
+      const text = document.body?.innerText ?? ''
+      return /表4[-—-]1/.test(text) && /图4[-—-]1/.test(text)
+    }, { timeout: 120000 })
 
     const bodyText = await page.locator('body').innerText({ timeout: 15000 })
-    assert(/表4-|图4-|描述统计|信度分析|相关分析|方差分析|因子分析/.test(bodyText), 'Inserted research content is not visible in Stage3')
+    assert(/表4[-—-]1/.test(bodyText) && /图4[-—-]1/.test(bodyText), 'Inserted research content is not visible in Stage3')
 
     const packages = await requestJson('GET', `/api/research-packages/project/${encodeURIComponent(projectId)}`, undefined, token)
     for (const item of Array.isArray(packages) ? packages : []) {
