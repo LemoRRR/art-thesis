@@ -52,6 +52,7 @@ import {
   referenceStore,
   sectionStore,
   styleProfileStore,
+  syncRemoteData,
   versionStore,
   type CitationEvidenceSource,
   type CitationEvidencePack,
@@ -1007,6 +1008,7 @@ export default function Stage3() {
   const abortRef = useRef<AbortController | null>(null)
   const hasStartedGenerationRef = useRef(false)
   const generationRunIdRef = useRef(0)
+  const remoteHydrationAttemptedRef = useRef(false)
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [sections, setSections] = useState<DocSection[]>([])
@@ -1165,6 +1167,40 @@ export default function Stage3() {
     chatStore.saveForProject(project.id, 'stage3', normalizedMessages)
     return normalizedMessages
   }, [project.id])
+
+  useEffect(() => {
+    if (sections.length > 0 || isGeneratingFull || remoteHydrationAttemptedRef.current) return
+    remoteHydrationAttemptedRef.current = true
+    let cancelled = false
+
+    syncRemoteData({ projectIds: [project.id] })
+      .then(() => {
+        if (cancelled) return
+        const remoteSections = sectionStore.getByProject(project.id)
+        if (remoteSections.length === 0) return
+
+        let formattedSections = formatSectionsForPaper(remoteSections)
+        const tableRepair = repairMissingResearchTables(formattedSections)
+        formattedSections = tableRepair.sections
+        if (tableRepair.changed) {
+          sectionStore.saveForProject(project.id, formattedSections, { syncRemote: false })
+          versionStore.snapshot('修复研究表格显示', project.id)
+        }
+        setIsPreparingDraft(false)
+        setAwaitingDraftStart(false)
+        setSections(formattedSections)
+        setActiveSectionId(formattedSections[0]?.id ?? null)
+        setAllGenerated(formattedSections.every(section => section.status === 'done'))
+      })
+      .catch(error => {
+        console.warn('[Stage3] Failed to hydrate remote sections', error)
+        remoteHydrationAttemptedRef.current = false
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isGeneratingFull, project.id, repairMissingResearchTables, sections.length])
 
   const buildCitationAwareContext = useCallback((baseContext: string, mentionItemIds: string[] = []) => {
     const citableSources = getStageCitableSources(project.id, mentionItemIds)
