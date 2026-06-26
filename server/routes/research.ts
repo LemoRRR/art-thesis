@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process'
-import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Router } from 'express'
@@ -10,9 +9,6 @@ const router = Router()
 router.use(requireAuth)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const scriptPath = path.resolve(__dirname, '../python/research_analysis.py')
-const CHART_FONT_FAMILY = 'PaperChartCN'
-let chartFontsRegistered = false
-
 type ResearchAnalysisMethod =
   | 'descriptive'
   | 'cronbach_alpha'
@@ -640,49 +636,6 @@ function tableContent(rows: Record<string, unknown>[], columns: string[]) {
   ].join('\n')
 }
 
-async function makePriorityChart(rows: Record<string, unknown>[]) {
-  const displayRows = rows.slice(0, 12)
-  const width = 1320
-  const rowHeight = 46
-  const height = 136 + Math.max(1, displayRows.length) * rowHeight
-  const barX = 390
-  const barMaxWidth = 540
-  const metaX = 970
-  const total = Math.max(displayRows.length, 1)
-  return canvasDataUrl(width, height, ctx => {
-    drawChartHeader(ctx, 'KANO-熵权耦合优先级排序', '条形表示按排序归一化后的优先级强度；综合分越低，表示越应优先纳入设计优化。')
-    ctx.fillStyle = CHART_THEME.muted
-    ctx.font = chartFont(13)
-    ctx.fillText('优先级强度', barX, 104)
-    ctx.fillText('KANO类型 / 综合分', metaX, 104)
-    displayRows.forEach((row, index) => {
-      const y = 132 + index * rowHeight
-      const rank = rowValue(row, '最终耦合优先级排名') || String(index + 1)
-      const rawName = rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`
-      const name = shortLabel(rawName, 14)
-      const type = rowValue(row, '主导KANO类型')
-      const score = maybeNumber(row['耦合优先级总得分']) ?? 0
-      const priorityStrength = (total - index) / total
-      const barWidth = Math.max(18, Math.round(priorityStrength * barMaxWidth))
-      ctx.fillStyle = index % 2 === 0 ? '#f5faf2' : '#ffffff'
-      ctx.fillRect(24, y - 26, width - 48, rowHeight - 6)
-      ctx.fillStyle = '#284d34'
-      ctx.font = chartFont(17, '700')
-      ctx.fillText(`排序 ${rank}`, 42, y)
-      ctx.font = chartFont(16)
-      ctx.fillText(name, 126, y)
-      ctx.fillStyle = CHART_THEME.track
-      ctx.fillRect(barX, y - 17, barMaxWidth, 18)
-      ctx.fillStyle = index < 3 ? CHART_THEME.primary : CHART_THEME.primaryMid
-      ctx.fillRect(barX, y - 17, barWidth, 18)
-      ctx.fillStyle = CHART_THEME.ink
-      ctx.font = chartFont(15)
-      ctx.fillText(`KANO：${type ? kanoTypeName(type) : '-'}   综合分：${score.toFixed(3)}`, metaX, y)
-    })
-    drawFootnote(ctx, '注：排序越靠前表示越应优先进入设计优化与策略建议；综合分原始值保留在右侧供核对。', 34, height - 18)
-  })
-}
-
 function rowKey(row: Record<string, unknown>, parts: string[]) {
   return Object.keys(row).find(key => parts.every(part => key.includes(part))) ?? ''
 }
@@ -788,8 +741,6 @@ function calculateAhpMatrix(input: AhpMatrix) {
   }
 }
 
-type ChartCanvasContext = CanvasRenderingContext2D
-
 const CHART_THEME = {
   background: '#fffdf8',
   ink: '#1f3328',
@@ -803,286 +754,6 @@ const CHART_THEME = {
   primaryMid: '#6ba46f',
   warm: '#9a5b4f',
   warmTrack: '#eadfda',
-}
-
-function registerChartFonts(GlobalFonts: typeof import('@napi-rs/canvas').GlobalFonts) {
-  if (chartFontsRegistered) return
-  chartFontsRegistered = true
-  const candidates = [
-    path.resolve(process.cwd(), 'server/assets/fonts/NotoSansCJKsc-Regular.otf'),
-    path.resolve(__dirname, '../assets/fonts/NotoSansCJKsc-Regular.otf'),
-    'C:/Windows/Fonts/msyh.ttc',
-    'C:/Windows/Fonts/simhei.ttf',
-    'C:/Windows/Fonts/simsun.ttc',
-    '/System/Library/Fonts/PingFang.ttc',
-    '/System/Library/Fonts/STHeiti Light.ttc',
-    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-    '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf',
-    '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
-    path.resolve(process.cwd(), 'node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf'),
-  ]
-  candidates
-    .filter(fontPath => fs.existsSync(fontPath))
-    .forEach(fontPath => {
-      try {
-        GlobalFonts.registerFromPath(fontPath, CHART_FONT_FAMILY)
-      } catch {
-        // Ignore unavailable font formats; the next candidate may work.
-      }
-    })
-}
-
-async function canvasDataUrl(
-  width: number,
-  height: number,
-  draw: (ctx: ChartCanvasContext) => void
-) {
-  try {
-    const { createCanvas, GlobalFonts } = await import('@napi-rs/canvas')
-    registerChartFonts(GlobalFonts)
-    const scale = 2
-    const canvas = createCanvas(width * scale, height * scale)
-    const ctx = canvas.getContext('2d') as unknown as ChartCanvasContext
-    ctx.fillStyle = CHART_THEME.background
-    ctx.fillRect(0, 0, width * scale, height * scale)
-    ctx.scale(scale, scale)
-    ctx.fillStyle = CHART_THEME.background
-    ctx.fillRect(0, 0, width, height)
-    draw(ctx)
-    return canvas.toDataURL('image/png')
-  } catch {
-    return ''
-  }
-}
-
-function chartFont(size: number, weight = '400') {
-  return `${weight} ${size}px "${CHART_FONT_FAMILY}", "Microsoft YaHei", "SimHei", "Noto Sans CJK SC", Arial, sans-serif`
-}
-
-function drawChartHeader(ctx: ChartCanvasContext, title: string, subtitle: string) {
-  ctx.fillStyle = CHART_THEME.ink
-  ctx.font = chartFont(28, '700')
-  ctx.fillText(title, 34, 46)
-  ctx.fillStyle = CHART_THEME.muted
-  ctx.font = chartFont(15)
-  ctx.fillText(subtitle, 34, 76)
-  ctx.strokeStyle = CHART_THEME.rule
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(34, 92)
-  ctx.lineTo(940, 92)
-  ctx.stroke()
-}
-
-function drawAxisLabel(ctx: ChartCanvasContext, text: string, x: number, y: number) {
-  ctx.fillStyle = CHART_THEME.inkSoft
-  ctx.font = chartFont(12)
-  ctx.fillText(text, x, y)
-}
-
-function drawFootnote(ctx: ChartCanvasContext, text: string, x: number, y: number) {
-  ctx.fillStyle = CHART_THEME.muted
-  ctx.font = chartFont(12)
-  ctx.fillText(text, x, y)
-}
-
-function drawLegendItem(ctx: ChartCanvasContext, x: number, y: number, color: string, label: string) {
-  ctx.fillStyle = color
-  ctx.fillRect(x, y - 11, 18, 12)
-  ctx.fillStyle = '#344238'
-  ctx.font = chartFont(13)
-  ctx.fillText(label, x + 24, y)
-}
-
-function drawLinearTicks(ctx: ChartCanvasContext, left: number, top: number, width: number, values: number[], formatter: (value: number) => string) {
-  ctx.strokeStyle = CHART_THEME.grid
-  ctx.fillStyle = CHART_THEME.inkSoft
-  ctx.font = chartFont(12)
-  values.forEach(value => {
-    const x = left + width * value
-    ctx.beginPath()
-    ctx.moveTo(x, top)
-    ctx.lineTo(x, top + 5)
-    ctx.stroke()
-    ctx.fillText(formatter(value), x - 12, top + 22)
-  })
-}
-
-function drawVerticalTicks(ctx: ChartCanvasContext, left: number, top: number, height: number, values: number[], formatter: (value: number) => string) {
-  ctx.strokeStyle = CHART_THEME.grid
-  ctx.fillStyle = CHART_THEME.inkSoft
-  ctx.font = chartFont(12)
-  values.forEach(value => {
-    const y = top + height - height * value
-    ctx.beginPath()
-    ctx.moveTo(left - 5, y)
-    ctx.lineTo(left, y)
-    ctx.stroke()
-    ctx.fillText(formatter(value), left - 34, y + 4)
-  })
-}
-
-function drawChartArea(ctx: ChartCanvasContext, left: number, top: number, width: number, height: number) {
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(left, top, width, height)
-  ctx.strokeStyle = CHART_THEME.rule
-  ctx.lineWidth = 1
-  ctx.strokeRect(left, top, width, height)
-}
-
-function drawVerticalGrid(
-  ctx: ChartCanvasContext,
-  left: number,
-  top: number,
-  width: number,
-  height: number,
-  values: number[],
-  maxValue: number,
-  formatter: (value: number) => string
-) {
-  ctx.strokeStyle = CHART_THEME.grid
-  ctx.fillStyle = CHART_THEME.inkSoft
-  ctx.font = chartFont(12)
-  values.forEach(value => {
-    const x = left + (value / maxValue) * width
-    ctx.beginPath()
-    ctx.moveTo(x, top)
-    ctx.lineTo(x, top + height)
-    ctx.stroke()
-    ctx.fillText(formatter(value), x - 14, top + height + 22)
-  })
-}
-
-async function makeKanoStackedChart(rows: Record<string, unknown>[]) {
-  const types = [
-    { code: 'M', label: '必备', parts: ['M_', '占比'], color: '#2f6f4e' },
-    { code: 'O', label: '期望', parts: ['O_', '占比'], color: '#5d9a65' },
-    { code: 'A', label: '魅力', parts: ['A_', '占比'], color: '#94bd77' },
-    { code: 'I', label: '无差异', parts: ['I_', '占比'], color: '#d5e5c8' },
-    { code: 'Q/R', label: '可疑/反向', parts: ['Q_', '占比'], color: '#c9b06f' },
-  ]
-  return canvasDataUrl(1180, 680, ctx => {
-    drawChartHeader(ctx, 'KANO需求类型分布', '各设计维度在必备型、期望型、魅力型、无差异型等类型中的占比分布。')
-    types.forEach((type, index) => {
-      const x = 570 + index * 104
-      drawLegendItem(ctx, x, 63, type.color, type.label)
-    })
-    const startY = 118
-    const barX = 250
-    const barWidth = 700
-    const barHeight = 24
-    drawLinearTicks(ctx, barX, 96, barWidth, [0, 0.25, 0.5, 0.75, 1], value => `${Math.round(value * 100)}%`)
-    rows.slice(0, 12).forEach((row, index) => {
-      const y = startY + index * 44
-      const name = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 12)
-      ctx.fillStyle = '#284d34'
-      ctx.font = chartFont(15, '700')
-      ctx.fillText(name, 42, y + 17)
-      let x = barX
-      types.forEach(type => {
-        const value = type.code === 'Q/R'
-          ? rowMetric(row, ['Q_', '占比']) + rowMetric(row, ['R_', '占比'])
-          : rowMetric(row, type.parts)
-        const width = Math.max(0, Math.round((value / 100) * barWidth))
-        ctx.fillStyle = type.color
-        ctx.fillRect(x, y, width, barHeight)
-        x += width
-      })
-      ctx.strokeStyle = CHART_THEME.rule
-      ctx.strokeRect(barX, y, barWidth, barHeight)
-      ctx.fillStyle = CHART_THEME.inkSoft
-      ctx.font = chartFont(13)
-      ctx.fillText(`主导类型：${kanoTypeName(rowTextByParts(row, ['主导', 'KANO'], '-'))}`, 988, y + 17)
-    })
-    drawFootnote(ctx, '注：必备型、期望型、魅力型、无差异型用于说明不同维度的用户需求属性；可疑/反向结果需结合问卷质量进一步复核。', 42, 660)
-  })
-}
-
-async function makeBetterWorseChart(rows: Record<string, unknown>[]) {
-  return canvasDataUrl(1120, 760, ctx => {
-    const left = 92
-    const top = 112
-    const size = 560
-    drawChartHeader(ctx, 'Better-Worse系数矩阵', '横轴为Better满意提升系数，纵轴为Worse不满降低系数绝对值。')
-    ctx.fillStyle = '#eef6ed'
-    ctx.fillRect(left + size / 2, top, size / 2, size / 2)
-    ctx.fillStyle = '#f7fbf5'
-    ctx.fillRect(left, top + size / 2, size / 2, size / 2)
-    ctx.strokeStyle = '#c9d6c7'
-    ctx.lineWidth = 1
-    ctx.strokeRect(left, top, size, size)
-    ctx.beginPath()
-    ctx.moveTo(left + size / 2, top)
-    ctx.lineTo(left + size / 2, top + size)
-    ctx.moveTo(left, top + size / 2)
-    ctx.lineTo(left + size, top + size / 2)
-    ctx.stroke()
-    ctx.fillStyle = CHART_THEME.muted
-    ctx.font = chartFont(12)
-    ctx.fillText('高满意提升 / 高不满风险', left + size / 2 + 18, top + 24)
-    ctx.fillText('低满意提升 / 低不满风险', left + 18, top + size / 2 + 26)
-    drawLinearTicks(ctx, left, top + size + 6, size, [0, 0.5, 1], value => value.toFixed(1))
-    drawVerticalTicks(ctx, left, top, size, [0, 0.5, 1], value => value.toFixed(1))
-    rows.slice(0, 12).forEach((row, index) => {
-      const better = rowMetric(row, ['Better'])
-      const worse = rowMetric(row, ['Worse'])
-      const label = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 5)
-      const x = left + Math.min(1, Math.max(0, better)) * size
-      const y = top + size - Math.min(1, Math.max(0, worse)) * size
-      ctx.fillStyle = index < 3 ? CHART_THEME.primaryDark : CHART_THEME.primaryMid
-      ctx.beginPath()
-      ctx.arc(x, y, index < 3 ? 8 : 6, 0, Math.PI * 2)
-      ctx.fill()
-      if (index < 6 || worse > 0.1) {
-        ctx.fillStyle = '#1f3328'
-        ctx.font = chartFont(13, '700')
-        const labelDy = y > top + size - 34 ? -18 : -8
-        ctx.fillText(label, x + 9, y + labelDy)
-      }
-    })
-    ctx.fillStyle = '#24382d'
-    ctx.font = chartFont(16)
-    ctx.fillText('Better满意提升系数', left + 190, top + size + 44)
-    ctx.save()
-    ctx.translate(28, top + 360)
-    ctx.rotate(-Math.PI / 2)
-    ctx.fillText('Worse不满降低系数绝对值', 0, 0)
-    ctx.restore()
-    ctx.fillStyle = '#6d756f'
-    ctx.font = chartFont(14)
-    ctx.fillText('图中点标签为评价维度简称。', 700, 180)
-    ctx.fillText('完整数值见KANO维度汇总表。', 700, 208)
-    ctx.fillText('低不满风险的未标注点可结合表4-1读取。', 700, 236)
-    ctx.fillText('右上区域表示满意提升与不满风险均较高，', 700, 270)
-    ctx.fillText('可作为优先优化对象。', 700, 298)
-  })
-}
-
-async function makeEntropyWeightChart(rows: Record<string, unknown>[]) {
-  return canvasDataUrl(1180, 430, ctx => {
-    drawChartHeader(ctx, '熵权指标权重分布', '用于耦合优先级得分计算的客观权重。')
-    const chartRows = rows.filter(Boolean)
-    const maxWeight = Math.max(...chartRows.map(row => rowMetric(row, ['权重'])), 1)
-    drawLinearTicks(ctx, 360, 96, 660, [0, 0.5, 1], value => `${(value * maxWeight).toFixed(0)}%`)
-    chartRows.forEach((row, index) => {
-      const y = 128 + index * 76
-      const weight = rowMetric(row, ['权重'])
-      const label = shortLabel(rowValue(row, '指标') || rowValue(row, '指标名称') || rowValue(row, '评价指标') || `指标${index + 1}`, 18)
-      const width = Math.round((weight / maxWeight) * 640)
-      ctx.fillStyle = '#284d34'
-      ctx.font = chartFont(16, '700')
-      ctx.fillText(label, 46, y + 18)
-      ctx.fillStyle = CHART_THEME.track
-      ctx.fillRect(360, y, 660, 24)
-      ctx.fillStyle = CHART_THEME.primary
-      ctx.fillRect(360, y, width, 24)
-      ctx.fillStyle = CHART_THEME.ink
-      ctx.font = chartFont(15)
-      ctx.fillText(`${weight.toFixed(2)}%`, 1040, y + 18)
-    })
-    drawFootnote(ctx, '注：熵权越高表示该指标在样本差异中提供的信息量越大。', 42, 404)
-  })
 }
 
 function escapeXml(value: unknown) {
@@ -1108,7 +779,21 @@ ${body}
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function svgDataUrlToPngDataUrl(dataUrl: string) {
+  try {
+    const svg = decodeURIComponent(dataUrl.split(',')[1] ?? '')
+    if (!svg.includes('<svg')) return ''
+    const { default: sharp } = await import('sharp')
+    const buffer = await sharp(Buffer.from(svg, 'utf8'), { density: 192 })
+      .flatten({ background: CHART_THEME.background })
+      .png()
+      .toBuffer()
+    return `data:image/png;base64,${buffer.toString('base64')}`
+  } catch {
+    return ''
+  }
+}
+
 async function makeKanoStackedChartSvg(rows: Record<string, unknown>[]) {
   const types = [
     { code: 'M', label: '必备', parts: ['M_', '占比'], color: '#2f6f4e' },
@@ -1143,7 +828,6 @@ ${segments}<rect x="250" y="${y}" width="700" height="24" fill="none" stroke="#d
 ${legend}${bars}`)
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function makeBetterWorseChartSvg(rows: Record<string, unknown>[]) {
   const left = 92
   const top = 112
@@ -1175,7 +859,6 @@ ${points}
 <text x="700" y="298" class="small">可作为优先优化对象。</text>`)
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function makeEntropyWeightChartSvg(rows: Record<string, unknown>[]) {
   const chartRows = rows.filter(Boolean)
   const maxWeight = Math.max(...chartRows.map(row => rowMetric(row, ['权重'])), 1)
@@ -1194,7 +877,6 @@ async function makeEntropyWeightChartSvg(rows: Record<string, unknown>[]) {
 ${items}`)
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function makePriorityChartSvg(rows: Record<string, unknown>[]) {
   const displayRows = rows.slice(0, 12)
   const width = 1320
@@ -1292,27 +974,21 @@ async function makeDescriptiveMeanFigure(descriptive: Record<string, unknown>[])
   const height = 150 + rows.length * 42
   const means = rows.map(row => Number(row.mean) || 0)
   const max = Math.max(...means.map(value => Math.abs(value)), 1)
-  return canvasDataUrl(width, height, ctx => {
-    drawChartHeader(ctx, '主要变量均值分布', '主要数值变量的均值与标准差，用于呈现样本总体评价水平。')
-    const barX = 235
-    const barWidth = 560
-    rows.forEach((row, index) => {
-      const y = 118 + index * 42
-      const value = Number(row.mean) || 0
-      const widthValue = Math.max(4, Math.round((Math.abs(value) / max) * barWidth))
-      ctx.fillStyle = '#1f3328'
-      ctx.font = chartFont(14, '700')
-      ctx.fillText(shortLabel(row.variable, 18), 42, y + 17)
-      ctx.fillStyle = '#e5eddf'
-      ctx.fillRect(barX, y, barWidth, 22)
-      ctx.fillStyle = '#2f7d4b'
-      ctx.fillRect(barX, y, widthValue, 22)
-      ctx.fillStyle = '#263a2e'
-      ctx.font = chartFont(13)
-      ctx.fillText(`M=${row.mean ?? '-'}  SD=${row.sd ?? '-'}`, 815, y + 16)
-    })
-    drawFootnote(ctx, '注：M 表示均值，SD 表示标准差；仅展示前 10 个主要数值变量。', 42, height - 22)
-  })
+  const barX = 235
+  const barWidth = 560
+  const bars = rows.map((row, index) => {
+    const y = 118 + index * 42
+    const value = Number(row.mean) || 0
+    const widthValue = Math.max(4, Math.round((Math.abs(value) / max) * barWidth))
+    return `<text x="42" y="${y + 17}" font-size="14" font-weight="700">${escapeXml(shortLabel(row.variable, 18))}</text>
+<rect x="${barX}" y="${y}" width="${barWidth}" height="22" fill="#e5eddf"/>
+<rect x="${barX}" y="${y}" width="${widthValue}" height="22" fill="#2f7d4b"/>
+<text x="815" y="${y + 16}" font-size="13">M=${escapeXml(row.mean ?? '-')}  SD=${escapeXml(row.sd ?? '-')}</text>`
+  }).join('')
+  return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">主要变量均值分布</text>
+<text x="34" y="76" class="sub">主要数值变量的均值与标准差，用于呈现样本总体评价水平。</text>
+${bars}
+<text x="42" y="${height - 22}" class="small">注：M 表示均值，SD 表示标准差；仅展示前 10 个主要数值变量。</text>`))
 }
 
 async function makeCorrelationHeatmapFigure(correlations: Record<string, unknown>[]) {
@@ -1337,38 +1013,26 @@ async function makeCorrelationHeatmapFigure(correlations: Record<string, unknown
   const color = (r: number) => {
     const intensity = Math.min(1, Math.abs(r))
     const alpha = 0.18 + intensity * 0.72
+    const base = r >= 0 ? [47, 125, 75] : [174, 82, 72]
+    const bg = [255, 253, 248]
+    const mixed = base.map((channel, index) => Math.round(channel * alpha + bg[index] * (1 - alpha)))
     return r >= 0
-      ? `rgba(47,125,75,${alpha})`
-      : `rgba(174,82,72,${alpha})`
+      ? `rgb(${mixed.join(',')})`
+      : `rgb(${mixed.join(',')})`
   }
-  return canvasDataUrl(width, height, ctx => {
-    drawChartHeader(ctx, '变量相关系数热力图', '主要变量之间的 Pearson 相关系数矩阵。')
-    variables.forEach((name, index) => {
-      ctx.fillStyle = '#344238'
-      ctx.font = chartFont(11)
-      ctx.textAlign = 'center'
-      ctx.fillText(shortLabel(name, 8), left + index * cell + 25, 104)
-      ctx.textAlign = 'right'
-      ctx.fillText(shortLabel(name, 14), left - 12, top + index * cell + 31)
-    })
-    variables.forEach((rowName, rowIndex) => {
-      variables.forEach((colName, colIndex) => {
-        const r = rowName === colName ? 1 : valueMap.get(`${rowName}|||${colName}`) ?? 0
-        const x = left + colIndex * cell
-        const y = top + rowIndex * cell
-        ctx.fillStyle = color(r)
-        ctx.fillRect(x, y, cell - 2, cell - 2)
-        ctx.strokeStyle = '#ffffff'
-        ctx.strokeRect(x, y, cell - 2, cell - 2)
-        ctx.fillStyle = '#1f3328'
-        ctx.font = chartFont(11)
-        ctx.textAlign = 'center'
-        ctx.fillText(r.toFixed(2), x + cell / 2, y + 31)
-      })
-    })
-    ctx.textAlign = 'left'
-    drawFootnote(ctx, '注：绿色表示正相关，红色表示负相关；系数绝对值越大，色块越深。', left, height - 34)
-  })
+  const labels = variables.map((name, index) => `<text x="${left + index * cell + 25}" y="104" font-size="11" text-anchor="middle">${escapeXml(shortLabel(name, 8))}</text>
+<text x="${left - 12}" y="${top + index * cell + 31}" font-size="11" text-anchor="end">${escapeXml(shortLabel(name, 14))}</text>`).join('')
+  const cells = variables.flatMap((rowName, rowIndex) => variables.map((colName, colIndex) => {
+    const r = rowName === colName ? 1 : valueMap.get(`${rowName}|||${colName}`) ?? 0
+    const x = left + colIndex * cell
+    const y = top + rowIndex * cell
+    return `<rect x="${x}" y="${y}" width="${cell - 2}" height="${cell - 2}" fill="${color(r)}" stroke="#ffffff"/>
+<text x="${x + cell / 2}" y="${y + 31}" font-size="11" text-anchor="middle">${r.toFixed(2)}</text>`
+  })).join('')
+  return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">变量相关系数热力图</text>
+<text x="34" y="76" class="sub">主要变量之间的 Pearson 相关系数矩阵。</text>
+${labels}${cells}
+<text x="${left}" y="${height - 34}" class="small">注：绿色表示正相关，红色表示负相关；系数绝对值越大，色块越深。</text>`))
 }
 
 async function makeAnovaFigure(anova: Record<string, unknown>[]) {
@@ -1378,25 +1042,19 @@ async function makeAnovaFigure(anova: Record<string, unknown>[]) {
   const height = 145 + rows.length * 44
   const values = rows.map(row => Number(row.f) || 0)
   const max = Math.max(...values, 1)
-  return canvasDataUrl(width, height, ctx => {
-    drawChartHeader(ctx, '组间差异检验结果', '分组比较中的方差分析 F 统计量。')
-    rows.forEach((row, index) => {
-      const y = 118 + index * 44
-      const f = Number(row.f) || 0
-      const barWidth = Math.max(4, Math.round((f / max) * 560))
-      ctx.fillStyle = '#1f3328'
-      ctx.font = chartFont(14, '700')
-      ctx.fillText(shortLabel(row.variable, 18), 42, y + 17)
-      ctx.fillStyle = '#eadfda'
-      ctx.fillRect(230, y, 580, 22)
-      ctx.fillStyle = '#9a5b4f'
-      ctx.fillRect(230, y, barWidth, 22)
-      ctx.fillStyle = '#263a2e'
-      ctx.font = chartFont(13)
-      ctx.fillText(`F=${row.f ?? '-'}  p=${row.p ?? '未计算'}`, 830, y + 16)
-    })
-    drawFootnote(ctx, '注：F 值用于呈现组间差异强度，p 值用于辅助判断显著性。', 42, height - 22)
-  })
+  const bars = rows.map((row, index) => {
+    const y = 118 + index * 44
+    const f = Number(row.f) || 0
+    const widthValue = Math.max(4, Math.round((f / max) * 560))
+    return `<text x="42" y="${y + 17}" font-size="14" font-weight="700">${escapeXml(shortLabel(row.variable, 18))}</text>
+<rect x="230" y="${y}" width="580" height="22" fill="#eadfda"/>
+<rect x="230" y="${y}" width="${widthValue}" height="22" fill="#9a5b4f"/>
+<text x="830" y="${y + 16}" font-size="13">F=${escapeXml(row.f ?? '-')}  p=${escapeXml(row.p ?? '未计算')}</text>`
+  }).join('')
+  return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">组间差异检验结果</text>
+<text x="34" y="76" class="sub">分组比较中的方差分析 F 统计量。</text>
+${bars}
+<text x="42" y="${height - 22}" class="small">注：F 值用于呈现组间差异强度，p 值用于辅助判断显著性。</text>`))
 }
 
 async function makeReliabilityFigure(cronbachAlpha: Record<string, unknown> | null | undefined) {
@@ -1413,30 +1071,16 @@ async function makeReliabilityFigure(cronbachAlpha: Record<string, unknown> | nu
   const items = Number(cronbachAlpha.items) || (Array.isArray(cronbachAlpha.items) ? cronbachAlpha.items.length : 0)
   const n = Number(cronbachAlpha.n) || 0
   const level = alpha >= 0.9 ? '优秀' : alpha >= 0.8 ? '良好' : alpha >= 0.7 ? '可接受' : alpha >= 0.6 ? '偏低' : '不足'
-  return canvasDataUrl(width, height, ctx => {
-    drawChartHeader(ctx, '量表信度分析', 'Cronbach α 用于衡量量表题项内部一致性。')
-    ctx.fillStyle = '#eadfda'
-    ctx.fillRect(left, top, barWidth, 34)
-    ctx.fillStyle = alpha >= 0.7 ? '#2f7d4b' : '#9a5b4f'
-    ctx.fillRect(left, top, filled, 34)
-    ctx.strokeStyle = '#5f5b52'
-    ctx.setLineDash([4, 4])
-    ctx.beginPath()
-    ctx.moveTo(left + barWidth * 0.7, top - 8)
-    ctx.lineTo(left + barWidth * 0.7, top + 48)
-    ctx.stroke()
-    ctx.setLineDash([])
-    ctx.fillStyle = '#1f3328'
-    ctx.font = chartFont(18, '700')
-    ctx.fillText(`α=${alpha.toFixed(3)}（${level}）`, left, top - 18)
-    drawAxisLabel(ctx, '0', left, top + 68)
-    ctx.textAlign = 'center'
-    drawAxisLabel(ctx, '0.70', left + barWidth * 0.7, top + 68)
-    ctx.textAlign = 'right'
-    drawAxisLabel(ctx, '1.00', left + barWidth, top + 68)
-    ctx.textAlign = 'left'
-    drawFootnote(ctx, `注：题项数 ${items || 'N/A'}，有效样本 ${n || 'N/A'}；虚线表示常用 0.70 参考阈值。`, left, top + 102)
-  })
+  return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">量表信度分析</text>
+<text x="34" y="76" class="sub">Cronbach α 用于衡量量表题项内部一致性。</text>
+<text x="${left}" y="${top - 18}" font-size="18" font-weight="700">α=${alpha.toFixed(3)}（${escapeXml(level)}）</text>
+<rect x="${left}" y="${top}" width="${barWidth}" height="34" fill="#eadfda"/>
+<rect x="${left}" y="${top}" width="${filled}" height="34" fill="${alpha >= 0.7 ? '#2f7d4b' : '#9a5b4f'}"/>
+<line x1="${left + barWidth * 0.7}" y1="${top - 8}" x2="${left + barWidth * 0.7}" y2="${top + 48}" stroke="#5f5b52" stroke-dasharray="4 4"/>
+<text x="${left}" y="${top + 68}" class="small">0</text>
+<text x="${left + barWidth * 0.7}" y="${top + 68}" class="small" text-anchor="middle">0.70</text>
+<text x="${left + barWidth}" y="${top + 68}" class="small" text-anchor="end">1.00</text>
+<text x="${left}" y="${top + 102}" class="small">注：题项数 ${items || 'N/A'}，有效样本 ${n || 'N/A'}；虚线表示常用 0.70 参考阈值。</text>`))
 }
 
 async function makeEfaLoadingFigure(efa: Record<string, unknown> | null | undefined) {
@@ -1447,26 +1091,22 @@ async function makeEfaLoadingFigure(efa: Record<string, unknown> | null | undefi
   const width = 980
   const height = 150 + loadings.length * 42
   const max = Math.max(...loadings.flatMap(row => factorKeys.map(key => Math.abs(Number(row[key]) || 0))), 1)
-  return canvasDataUrl(width, height, ctx => {
-    drawChartHeader(ctx, '探索性因子载荷分布', '各题项在提取因子上的载荷强度。')
-    loadings.forEach((row, index) => {
-      const y = 118 + index * 42
-      ctx.fillStyle = '#1f3328'
-      ctx.font = chartFont(14, '700')
-      ctx.fillText(shortLabel(row.variable, 18), 42, y + 17)
-      factorKeys.forEach((key, factorIndex) => {
-        const value = Number(row[key]) || 0
-        const barWidth = Math.max(3, Math.round((Math.abs(value) / max) * 150))
-        const x = 230 + factorIndex * 205
-        ctx.fillStyle = factorIndex === 0 ? '#2f7d4b' : factorIndex === 1 ? '#566c86' : '#9a5b4f'
-        ctx.fillRect(x, y + factorIndex * 8, barWidth, 7)
-        ctx.fillStyle = '#263a2e'
-        ctx.font = chartFont(11)
-        ctx.fillText(`${key.replace('_', ' ')}: ${value.toFixed(2)}`, x + 156, y + 7 + factorIndex * 8)
-      })
-    })
-    drawFootnote(ctx, '注：载荷越高，表示题项与对应因子的关联越强。', 42, height - 22)
-  })
+  const rows = loadings.map((row, index) => {
+    const y = 118 + index * 42
+    const bars = factorKeys.map((key, factorIndex) => {
+      const value = Number(row[key]) || 0
+      const widthValue = Math.max(3, Math.round((Math.abs(value) / max) * 150))
+      const x = 230 + factorIndex * 205
+      const color = factorIndex === 0 ? '#2f7d4b' : factorIndex === 1 ? '#566c86' : '#9a5b4f'
+      return `<rect x="${x}" y="${y + factorIndex * 8}" width="${widthValue}" height="7" fill="${color}"/>
+<text x="${x + 156}" y="${y + 7 + factorIndex * 8}" font-size="11">${escapeXml(key.replace('_', ' '))}: ${value.toFixed(2)}</text>`
+    }).join('')
+    return `<text x="42" y="${y + 17}" font-size="14" font-weight="700">${escapeXml(shortLabel(row.variable, 18))}</text>${bars}`
+  }).join('')
+  return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">探索性因子载荷分布</text>
+<text x="34" y="76" class="sub">各题项在提取因子上的载荷强度。</text>
+${rows}
+<text x="42" y="${height - 22}" class="small">注：载荷越高，表示题项与对应因子的关联越强。</text>`))
 }
 
 async function makeAhpWeightFigure(rows: Record<string, unknown>[]) {
@@ -1475,37 +1115,32 @@ async function makeAhpWeightFigure(rows: Record<string, unknown>[]) {
   const rowHeight = 58
   const height = Math.max(520, 184 + items.length * rowHeight)
   const axisMax = Math.min(100, Math.max(20, Math.ceil(Math.max(...items.map(row => Number(row.weightPercent) || 0), 1) / 10) * 10))
-  return canvasDataUrl(width, height, ctx => {
-    drawChartHeader(ctx, 'AHP指标权重排序图', '依据判断矩阵计算得到的指标权重及排序。')
-    const left = 330
-    const top = 126
-    const chartWidth = 660
-    const chartHeight = Math.max(1, items.length) * rowHeight - 12
-    drawChartArea(ctx, left, top - 18, chartWidth, chartHeight)
-    drawVerticalGrid(ctx, left, top - 18, chartWidth, chartHeight, [0, axisMax * 0.25, axisMax * 0.5, axisMax * 0.75, axisMax], axisMax, value => `${Math.round(value)}%`)
-    items.forEach((row, index) => {
-      const y = top + index * rowHeight
-      const weight = Number(row.weightPercent) || 0
-      const barWidth = Math.max(5, Math.round((weight / axisMax) * chartWidth))
-      ctx.fillStyle = index % 2 === 0 ? '#f7fbf5' : '#ffffff'
-      ctx.fillRect(28, y - 20, width - 56, rowHeight - 10)
-      ctx.fillStyle = index < 3 ? CHART_THEME.primaryDark : CHART_THEME.inkSoft
-      ctx.font = chartFont(13, '700')
-      ctx.fillText(`第${row.rank ?? index + 1}位`, 42, y + 16)
-      ctx.fillStyle = '#1f3328'
-      ctx.font = chartFont(17, '700')
-      ctx.fillText(shortLabel(row.criterion, 18), 118, y + 16)
-      ctx.fillStyle = CHART_THEME.track
-      ctx.fillRect(left, y, chartWidth, 24)
-      ctx.fillStyle = index < 3 ? CHART_THEME.primary : CHART_THEME.primaryMid
-      ctx.fillRect(left, y, barWidth, 24)
-      ctx.fillStyle = '#263a2e'
-      ctx.font = chartFont(15, '700')
-      ctx.fillText(`${weight.toFixed(2)}%`, left + chartWidth + 22, y + 18)
-    })
-    drawAxisLabel(ctx, '权重占比（%）', left + 258, height - 50)
-    drawFootnote(ctx, '注：权重越高，表示该指标在目标评价中的相对重要性越强；排序用于识别论文讨论中的重点影响因素。', 42, height - 22)
-  })
+  const left = 330
+  const top = 126
+  const chartWidth = 660
+  const chartHeight = Math.max(1, items.length) * rowHeight - 12
+  const grid = [0, axisMax * 0.25, axisMax * 0.5, axisMax * 0.75, axisMax].map(value => {
+    const x = left + (value / axisMax) * chartWidth
+    return `<line x1="${x}" y1="${top - 18}" x2="${x}" y2="${top - 18 + chartHeight}" stroke="#e7eee4"/>
+<text x="${x - 14}" y="${top + chartHeight + 4}" class="small">${Math.round(value)}%</text>`
+  }).join('')
+  const bars = items.map((row, index) => {
+    const y = top + index * rowHeight
+    const weight = Number(row.weightPercent) || 0
+    const barWidth = Math.max(5, Math.round((weight / axisMax) * chartWidth))
+    return `<rect x="28" y="${y - 20}" width="${width - 56}" height="${rowHeight - 10}" fill="${index % 2 === 0 ? '#f7fbf5' : '#ffffff'}"/>
+<text x="42" y="${y + 16}" font-size="13" font-weight="700" fill="${index < 3 ? CHART_THEME.primaryDark : CHART_THEME.inkSoft}">第${escapeXml(row.rank ?? index + 1)}位</text>
+<text x="118" y="${y + 16}" font-size="17" font-weight="700">${escapeXml(shortLabel(row.criterion, 18))}</text>
+<rect x="${left}" y="${y}" width="${chartWidth}" height="24" fill="${CHART_THEME.track}"/>
+<rect x="${left}" y="${y}" width="${barWidth}" height="24" fill="${index < 3 ? CHART_THEME.primary : CHART_THEME.primaryMid}"/>
+<text x="${left + chartWidth + 22}" y="${y + 18}" font-size="15" font-weight="700">${weight.toFixed(2)}%</text>`
+  }).join('')
+  return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">AHP指标权重排序图</text>
+<text x="34" y="76" class="sub">依据判断矩阵计算得到的指标权重及排序。</text>
+<rect x="${left}" y="${top - 18}" width="${chartWidth}" height="${chartHeight}" fill="#ffffff" stroke="${CHART_THEME.rule}"/>
+${grid}${bars}
+<text x="${left + 258}" y="${height - 50}" class="small">权重占比（%）</text>
+<text x="42" y="${height - 22}" class="small">注：权重越高，表示该指标在目标评价中的相对重要性越强；排序用于识别论文讨论中的重点影响因素。</text>`))
 }
 
 async function makeAhpConsistencyFigure(rows: Record<string, unknown>[]) {
@@ -1513,48 +1148,37 @@ async function makeAhpConsistencyFigure(rows: Record<string, unknown>[]) {
   const width = 1180
   const rowHeight = 62
   const height = Math.max(440, 186 + items.length * rowHeight)
-  return canvasDataUrl(width, height, ctx => {
-    drawChartHeader(ctx, 'AHP一致性检验结果', 'CR < 0.10 通常表示判断矩阵一致性可接受。')
-    const left = 300
-    const top = 130
-    const chartWidth = 650
-    const chartHeight = Math.max(1, items.length) * rowHeight - 12
-    drawChartArea(ctx, left, top - 20, chartWidth, chartHeight)
-    drawVerticalGrid(ctx, left, top - 20, chartWidth, chartHeight, [0, 0.05, 0.1, 0.15, 0.2], 0.2, value => value.toFixed(2))
-    const thresholdX = left + chartWidth * 0.5
-    ctx.strokeStyle = CHART_THEME.warm
-    ctx.setLineDash([6, 5])
-    ctx.beginPath()
-    ctx.moveTo(thresholdX, top - 28)
-    ctx.lineTo(thresholdX, top + chartHeight - 8)
-    ctx.stroke()
-    ctx.setLineDash([])
-    ctx.fillStyle = CHART_THEME.warm
-    ctx.font = chartFont(13, '700')
-    ctx.fillText('CR=0.10', thresholdX + 8, top - 32)
-    items.forEach((row, index) => {
-      const y = top + index * rowHeight
-      const cr = Number(row.CR) || 0
-      const passed = cr < 0.1
-      const barWidth = Math.min(chartWidth, Math.max(4, Math.round((cr / 0.2) * chartWidth)))
-      ctx.fillStyle = index % 2 === 0 ? '#f7fbf5' : '#ffffff'
-      ctx.fillRect(28, y - 22, width - 56, rowHeight - 10)
-      ctx.fillStyle = '#1f3328'
-      ctx.font = chartFont(16, '700')
-      ctx.fillText(shortLabel(row.matrix, 18), 42, y + 18)
-      ctx.fillStyle = CHART_THEME.warmTrack
-      ctx.fillRect(left, y, chartWidth, 24)
-      ctx.fillStyle = passed ? CHART_THEME.primary : CHART_THEME.warm
-      ctx.fillRect(left, y, barWidth, 24)
-      ctx.fillStyle = '#263a2e'
-      ctx.font = chartFont(15, '700')
-      ctx.fillText(`CR=${cr.toFixed(4)}`, left + chartWidth + 22, y + 18)
-      ctx.fillStyle = passed ? CHART_THEME.primaryDark : CHART_THEME.warm
-      ctx.fillText(passed ? '通过' : '需复核', left + chartWidth + 128, y + 18)
-    })
-    drawAxisLabel(ctx, '一致性比例 CR', left + 264, height - 50)
-    drawFootnote(ctx, '注：虚线为 CR=0.10 参考阈值；超过阈值的矩阵建议重新组织专家评分或复核极端判断。', 42, height - 22)
-  })
+  const left = 300
+  const top = 130
+  const chartWidth = 650
+  const chartHeight = Math.max(1, items.length) * rowHeight - 12
+  const grid = [0, 0.05, 0.1, 0.15, 0.2].map(value => {
+    const x = left + (value / 0.2) * chartWidth
+    return `<line x1="${x}" y1="${top - 20}" x2="${x}" y2="${top - 20 + chartHeight}" stroke="#e7eee4"/>
+<text x="${x - 14}" y="${top + chartHeight + 6}" class="small">${value.toFixed(2)}</text>`
+  }).join('')
+  const thresholdX = left + chartWidth * 0.5
+  const bars = items.map((row, index) => {
+    const y = top + index * rowHeight
+    const cr = Number(row.CR) || 0
+    const passed = cr < 0.1
+    const barWidth = Math.min(chartWidth, Math.max(4, Math.round((cr / 0.2) * chartWidth)))
+    return `<rect x="28" y="${y - 22}" width="${width - 56}" height="${rowHeight - 10}" fill="${index % 2 === 0 ? '#f7fbf5' : '#ffffff'}"/>
+<text x="42" y="${y + 18}" font-size="16" font-weight="700">${escapeXml(shortLabel(row.matrix, 18))}</text>
+<rect x="${left}" y="${y}" width="${chartWidth}" height="24" fill="${CHART_THEME.warmTrack}"/>
+<rect x="${left}" y="${y}" width="${barWidth}" height="24" fill="${passed ? CHART_THEME.primary : CHART_THEME.warm}"/>
+<text x="${left + chartWidth + 22}" y="${y + 18}" font-size="15" font-weight="700">CR=${cr.toFixed(4)}</text>
+<text x="${left + chartWidth + 128}" y="${y + 18}" font-size="15" font-weight="700" fill="${passed ? CHART_THEME.primaryDark : CHART_THEME.warm}">${passed ? '通过' : '需复核'}</text>`
+  }).join('')
+  return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">AHP一致性检验结果</text>
+<text x="34" y="76" class="sub">CR &lt; 0.10 通常表示判断矩阵一致性可接受。</text>
+<rect x="${left}" y="${top - 20}" width="${chartWidth}" height="${chartHeight}" fill="#ffffff" stroke="${CHART_THEME.rule}"/>
+${grid}
+<line x1="${thresholdX}" y1="${top - 28}" x2="${thresholdX}" y2="${top + chartHeight - 8}" stroke="${CHART_THEME.warm}" stroke-dasharray="6 5"/>
+<text x="${thresholdX + 8}" y="${top - 32}" font-size="13" font-weight="700" fill="${CHART_THEME.warm}">CR=0.10</text>
+${bars}
+<text x="${left + 264}" y="${height - 50}" class="small">一致性比例 CR</text>
+<text x="42" y="${height - 22}" class="small">注：虚线为 CR=0.10 参考阈值；超过阈值的矩阵建议重新组织专家评分或复核极端判断。</text>`))
 }
 
 async function buildGenericQuantFigures(
@@ -1671,11 +1295,17 @@ async function enrichQuantResult<T extends Record<string, unknown>>(result: T, p
 }
 
 async function makeKanoEntropyCharts(summaryRows: Record<string, unknown>[], weightRows: Record<string, unknown>[], priorityRows: Record<string, unknown>[]) {
+  const [stackedSvg, quadrantSvg, weightsSvg, prioritySvg] = await Promise.all([
+    makeKanoStackedChartSvg(summaryRows),
+    makeBetterWorseChartSvg(summaryRows),
+    weightRows.length ? makeEntropyWeightChartSvg(weightRows) : Promise.resolve(''),
+    makePriorityChartSvg(priorityRows),
+  ])
   const [stacked, quadrant, weights, priority] = await Promise.all([
-    makeKanoStackedChart(summaryRows),
-    makeBetterWorseChart(summaryRows),
-    weightRows.length ? makeEntropyWeightChart(weightRows) : Promise.resolve(''),
-    makePriorityChart(priorityRows),
+    svgDataUrlToPngDataUrl(stackedSvg),
+    svgDataUrlToPngDataUrl(quadrantSvg),
+    weightsSvg ? svgDataUrlToPngDataUrl(weightsSvg) : Promise.resolve(''),
+    svgDataUrlToPngDataUrl(prioritySvg),
   ])
   return [
     stacked ? {
@@ -2287,6 +1917,8 @@ function deterministicAnalysisText(result: Record<string, unknown>, fallbackText
     || deterministicQuantAnalysisText(result, fallbackText)
 }
 
+type ResearchComponentNarrative = { componentId: string; title: string; beforeText: string; afterText: string }
+
 function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
   if (result.method !== 'kano_entropy') return null
   const summaryRows = tableRowsById(result, 'table_kano_summary')
@@ -2300,7 +1932,7 @@ function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
     .slice(0, 5)
     .map(row => rowValue(row, '维度') || rowValue(row, '设计维度'))
     .filter(Boolean)
-  const narratives: Array<{ componentId: string; title: string; beforeText: string; afterText: string }> = []
+  const narratives: ResearchComponentNarrative[] = []
 
   if (summaryRows.length) {
     narratives.push({
@@ -2363,6 +1995,199 @@ function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
   }
 
   return narratives
+}
+
+function quantComponentNarratives(result: Record<string, unknown>) {
+  if (result.method === 'kano_entropy' || result.method === 'ahp' || result.method === 'qualitative_coding') return null
+  const descriptiveRows = tableRowsById(result, 'table_descriptive')
+  const reliabilityRows = tableRowsById(result, 'table_reliability')
+  const correlationRows = tableRowsById(result, 'table_correlation')
+  const anovaRows = tableRowsById(result, 'table_anova')
+  const efaRows = tableRowsById(result, 'table_efa')
+  const qualityRows = tableRowsById(result, 'table_data_quality')
+  const narratives: ResearchComponentNarrative[] = []
+  const firstDesc = descriptiveRows[0]
+  const alpha = reliabilityRows[0]
+  const strongestCorrelation = correlationRows.reduce<Record<string, unknown> | null>((best, row) => {
+    const value = Math.abs(Number(row.r ?? 0))
+    const bestValue = best ? Math.abs(Number(best.r ?? 0)) : -1
+    return value > bestValue ? row : best
+  }, null)
+  const firstAnova = anovaRows[0]
+  const factorKeys = efaRows[0] ? Object.keys(efaRows[0]).filter(key => key.startsWith('factor_')) : []
+  const quality = qualityRows[0]
+
+  if (qualityRows.length) {
+    narratives.push({
+      componentId: 'table_data_quality',
+      title: '数据质量与方法适用性检查表',
+      beforeText: '在展开统计分析之前，本文先对样本量、缺失率、重复记录和方法适用性进行检查，以判断后续描述统计、信度检验、相关分析和差异检验是否具备基本数据条件。',
+      afterText: `数据质量检查结果显示，本次样本量为 ${rowValue(quality, 'sampleSize') || rowValue(quality, '样本量') || result.sampleSize || '-'}，缺失率为 ${rowValue(quality, 'missingRate') || rowValue(quality, '缺失率') || '-'}。该结果为后续统计解释提供了边界条件，论文写作中应在此基础上说明结论适用范围。`,
+    })
+  }
+  if (descriptiveRows.length) {
+    narratives.push({
+      componentId: 'table_descriptive',
+      title: '描述性统计表',
+      beforeText: '为呈现主要变量的总体水平和离散程度，本文先对核心题项进行描述性统计，并将样本量、均值、标准差及取值范围汇总如下。',
+      afterText: `描述性统计结果显示，${rowValue(firstDesc, 'variable') || '核心变量'}的均值为 ${rowValue(firstDesc, 'mean') || '-'}，标准差为 ${rowValue(firstDesc, 'sd') || '-'}。这说明样本在该指标上的评价具有一定集中趋势，后续应结合研究对象解释均值高低所反映的现实含义。`,
+    }, {
+      componentId: 'figure_descriptive_means',
+      title: '描述统计均值图',
+      beforeText: '为更直观比较不同变量的均值差异，本文进一步绘制描述统计均值图，以辅助识别样本评价中相对突出的变量维度。',
+      afterText: `图示结果表明，${rowValue(firstDesc, 'variable') || '部分变量'}在样本评价中表现较为突出。该图与描述性统计表相互印证，可为后续解释变量分布特征和筛选重点分析维度提供依据。`,
+    })
+  }
+  if (reliabilityRows.length) {
+    const alphaValue = maybeNumber(alpha?.alpha)
+    narratives.push({
+      componentId: 'table_reliability',
+      title: '信度分析表',
+      beforeText: '为检验问卷量表题项是否具有较好的内部一致性，本文采用 Cronbach α 系数进行信度分析，并据此判断后续综合分析的可靠性基础。',
+      afterText: `信度分析结果显示，Cronbach α 为 ${rowValue(alpha, 'alpha') || '-'}，题项数为 ${rowValue(alpha, 'items') || '-' }。该结果说明量表内部一致性${alphaValue !== null && alphaValue >= 0.7 ? '达到常用可接受水平' : '仍需进一步复核'}，后续结果解释应结合题项内容保持审慎。`,
+    }, {
+      componentId: 'figure_reliability_alpha',
+      title: '信度分析 Alpha 系数图',
+      beforeText: '为直观呈现量表信度水平，本文将 Cronbach α 系数绘制为参考图，并以 0.70 作为常用判断阈值进行辅助说明。',
+      afterText: `图示结果显示，本次量表的 Cronbach α 系数为 ${rowValue(alpha, 'alpha') || '-'}。该结果为后续相关分析、差异检验或维度解释提供了必要的测量可靠性依据。`,
+    })
+  }
+  if (correlationRows.length) {
+    narratives.push({
+      componentId: 'table_correlation',
+      title: '相关分析表',
+      beforeText: '为考察主要变量之间的线性关联，本文采用 Pearson 相关分析，并结合相关系数方向与强度判断变量之间的关系特征。',
+      afterText: `相关分析结果显示，${rowValue(strongestCorrelation ?? {}, 'x') || '变量X'}与${rowValue(strongestCorrelation ?? {}, 'y') || '变量Y'}之间的相关系数为 r=${rowValue(strongestCorrelation ?? {}, 'r') || '-'}。该结果可用于说明变量之间的关联程度，但不宜直接解释为因果关系。`,
+    }, {
+      componentId: 'figure_correlation_heatmap',
+      title: '相关系数热力图',
+      beforeText: '为直观呈现变量之间相关关系的整体结构，本文绘制相关系数热力图，以便识别相关程度较强的变量组合。',
+      afterText: `热力图显示，${rowValue(strongestCorrelation ?? {}, 'x') || '部分变量'}与${rowValue(strongestCorrelation ?? {}, 'y') || '相关变量'}之间存在相对更强的相关关系。该发现可作为后续讨论变量联动机制的依据，但仍需结合理论假设和显著性结果进行解释。`,
+    })
+  }
+  if (anovaRows.length) {
+    narratives.push({
+      componentId: 'table_anova',
+      title: '单因素方差分析表',
+      beforeText: '为检验不同分组样本在核心变量上的评价差异，本文进一步采用单因素方差分析，对组间差异进行统计比较。',
+      afterText: `方差分析结果显示，分组变量 ${rowValue(firstAnova, 'group') || '-'} 在 ${rowValue(firstAnova, 'variable') || '-'} 上的检验结果为 F=${rowValue(firstAnova, 'f') || '-'}，p=${rowValue(firstAnova, 'p') || '未计算'}。该结果可用于判断不同群体是否存在差异，但需结合样本量和组别分布谨慎解释。`,
+    }, {
+      componentId: 'figure_anova_f',
+      title: '组间差异检验图',
+      beforeText: '为更直观比较不同变量的组间差异强度，本文将方差分析中的 F 统计量绘制为图示，用于辅助识别差异较明显的指标。',
+      afterText: `图示结果表明，${rowValue(firstAnova, 'variable') || '部分变量'}的组间差异检验结果相对突出。后续讨论应结合 p 值、分组变量含义和研究问题判断该差异是否具有实质解释意义。`,
+    })
+  }
+  if (efaRows.length) {
+    narratives.push({
+      componentId: 'table_efa',
+      title: '探索性因子载荷表',
+      beforeText: '为初步观察量表题项背后的潜在维度结构，本文对题项载荷进行探索性整理，并据此判断不同题项与潜在因子之间的关联强度。',
+      afterText: `探索性因子载荷结果显示，当前数据形成了 ${factorKeys.length || '若干'} 个潜在因子维度。正式论文中应结合理论维度、旋转结果以及 KMO/Bartlett 检验进一步复核题项归属。`,
+    }, {
+      componentId: 'figure_efa_loadings',
+      title: '探索性因子载荷图',
+      beforeText: '为直观呈现题项在潜在因子上的载荷强度，本文绘制因子载荷图，用于辅助判断题项聚合与维度划分情况。',
+      afterText: '图示结果显示，部分题项在主要因子上具有较高载荷，说明这些题项可能共同指向相近的潜在结构。后续写作应结合研究假设对因子命名和题项归属进行解释。',
+    })
+  }
+  return narratives.length ? narratives : null
+}
+
+function ahpComponentNarratives(result: Record<string, unknown>) {
+  if (result.method !== 'ahp') return null
+  const weightRows = sortedRankRows(tableRowsById(result, 'table_ahp_weights'))
+  const consistencyRows = tableRowsById(result, 'table_ahp_consistency')
+  const top = weightRows[0]
+  const failedCount = consistencyRows.filter(row => !String(row.consistency ?? '').includes('通过')).length
+  const narratives: ResearchComponentNarrative[] = []
+  if (weightRows.length) {
+    narratives.push({
+      componentId: 'table_ahp_weights',
+      title: 'AHP指标权重表',
+      beforeText: '为明确评价体系中各指标的相对重要性，本文依据专家判断矩阵计算各层级指标权重，并形成权重排序结果。',
+      afterText: `由权重结果可知，${rowValue(top, 'criterion') || '排名第一的指标'}的权重最高，权重为 ${rowValue(top, 'weightPercent') || rowValue(top, 'weight') || '-'}${rowValue(top, 'weightPercent') ? '%' : ''}。这说明该指标在评价目标中具有更高解释力，应作为后续策略建议的优先关注对象。`,
+    }, {
+      componentId: 'figure_ahp_weights',
+      title: 'AHP指标权重排序图',
+      beforeText: '为提升权重结果的可读性，本文将指标权重绘制为排序图，以直观呈现不同指标的重要性差异。',
+      afterText: `排序图显示，${rowValue(top, 'criterion') || '高权重指标'}位于前列，说明其在整体评价结构中占据较高权重。论文讨论部分应进一步解释该指标为何对研究目标具有更强影响。`,
+    })
+  }
+  if (consistencyRows.length) {
+    narratives.push({
+      componentId: 'table_ahp_consistency',
+      title: 'AHP一致性检验表',
+      beforeText: '为保证专家判断矩阵具有逻辑一致性，本文对各判断矩阵进行 λmax、CI 与 CR 检验，并以 CR<0.10 作为常用通过标准。',
+      afterText: failedCount
+        ? `一致性检验结果显示，仍有 ${failedCount} 个判断矩阵需要复核。论文中应说明专家评分修正或复核过程，避免直接采用一致性不足的判断矩阵。`
+        : '一致性检验结果显示，各判断矩阵满足 CR<0.10 的常用要求，说明专家判断具有较好的逻辑一致性，可用于后续权重解释。',
+    }, {
+      componentId: 'figure_ahp_consistency',
+      title: 'AHP一致性检验图',
+      beforeText: '为直观展示各判断矩阵的一致性水平，本文绘制 CR 检验图，并与 0.10 参考阈值进行比较。',
+      afterText: failedCount
+        ? '图示结果提示部分矩阵超过一致性阈值，后续应优先复核对应专家判断或指标比较关系。'
+        : '图示结果表明，各矩阵 CR 值整体低于常用阈值，权重计算具有较好的稳定性基础。',
+    })
+  }
+  return narratives.length ? narratives : null
+}
+
+function qualitativeComponentNarratives(result: Record<string, unknown>) {
+  if (result.method !== 'qualitative_coding') return null
+  const themeRows = sortedRankRows(tableRowsById(result, 'table_theme_summary'), 'count').reverse()
+  const openRows = tableRowsById(result, 'table_open_coding')
+  const axialRows = sortedRankRows(tableRowsById(result, 'table_axial_coding'), 'evidenceCount').reverse()
+  const evidenceRows = tableRowsById(result, 'table_evidence_excerpt')
+  const topTheme = themeRows[0]
+  const topAxial = axialRows[0]
+  const narratives: ResearchComponentNarrative[] = []
+  if (openRows.length) {
+    narratives.push({
+      componentId: 'table_open_coding',
+      title: '开放编码表',
+      beforeText: '为从原始文本中提取可分析的意义单元，本文首先进行开放编码，将受访者表达或文本片段转化为初始概念。',
+      afterText: '开放编码结果为后续主轴归纳和主题提炼提供了基础。正式写作中应说明同义表达合并规则，避免把零散词句直接等同于研究结论。',
+    })
+  }
+  if (axialRows.length) {
+    narratives.push({
+      componentId: 'table_axial_coding',
+      title: '主轴编码表',
+      beforeText: '在开放编码基础上，本文进一步进行主轴编码，将相近概念归入更高层级的范畴，以呈现材料中的结构性关系。',
+      afterText: `主轴编码结果显示，“${rowValue(topAxial, 'axialCategory') || '核心范畴'}”包含的证据数量相对较多，说明该范畴在受访材料中具有较高集中度，可作为结果解释的重点。`,
+    })
+  }
+  if (themeRows.length) {
+    narratives.push({
+      componentId: 'table_theme_summary',
+      title: '主题归纳表',
+      beforeText: '为概括文本材料中的主要关注点，本文对编码结果进行主题归纳，并统计不同主题的出现频次。',
+      afterText: `主题归纳结果显示，“${rowValue(topTheme, 'theme') || '核心主题'}”出现频次最高，说明该主题是材料中最集中的关注方向。后续讨论应进一步解释该主题如何回应研究问题。`,
+    }, {
+      componentId: 'figure_theme_frequency',
+      title: '主题频次分布图',
+      beforeText: '为更直观呈现不同主题的集中程度，本文绘制主题频次分布图，用于辅助识别材料中的主要关注方向。',
+      afterText: `图示结果进一步说明，“${rowValue(topTheme, 'theme') || '高频主题'}”在材料中具有更高出现频次。该结果可为后续讨论和策略建议提供经验依据。`,
+    })
+  }
+  if (evidenceRows.length) {
+    narratives.push({
+      componentId: 'table_evidence_excerpt',
+      title: '典型证据摘录表',
+      beforeText: '为增强定性分析的可追溯性，本文选取典型证据摘录，用于说明主题和范畴判断所依据的原始材料。',
+      afterText: '典型证据摘录能够补充频次统计无法呈现的语义细节。论文写作中应结合摘录内容解释受访者态度、体验矛盾和潜在需求，而不是只罗列表格。',
+    })
+  }
+  return narratives.length ? narratives : null
+}
+
+function deterministicComponentNarratives(result: Record<string, unknown>) {
+  return kanoEntropyComponentNarratives(result)
+    ?? ahpComponentNarratives(result)
+    ?? qualitativeComponentNarratives(result)
+    ?? quantComponentNarratives(result)
 }
 
 function compactComponentForWritePlan(component: Record<string, unknown>) {
@@ -2562,7 +2387,7 @@ async function interpretAnalysisResult(result: Record<string, unknown>, payload:
     const aiWarnings = Array.isArray(ai?.warnings)
       ? ai.warnings.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
       : []
-    const deterministicNarratives = kanoEntropyComponentNarratives(result)
+    const deterministicNarratives = deterministicComponentNarratives(result)
     const componentNarratives = deterministicNarratives ?? (Array.isArray(ai?.componentNarratives)
       ? ai.componentNarratives
           .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
@@ -2644,25 +2469,19 @@ async function makeThemeFrequencyFigure(rows: Record<string, unknown>[]) {
   const width = 920
   const height = 130 + rows.length * 48
   const max = Math.max(...rows.map(row => Number(row.count) || 0), 1)
-  return canvasDataUrl(width, height, ctx => {
-    drawChartHeader(ctx, '定性主题频次分布', '访谈、开放题或文本材料中主要编码主题的出现频次。')
-    rows.forEach((row, index) => {
-      const y = 108 + index * 48
-      const count = Number(row.count) || 0
-      const barWidth = Math.max(8, Math.round((count / max) * 560))
-      ctx.fillStyle = '#1f3328'
-      ctx.font = chartFont(15, '700')
-      ctx.fillText(shortLabel(row.theme, 14), 42, y + 18)
-      ctx.fillStyle = '#dfeadc'
-      ctx.fillRect(210, y, 580, 24)
-      ctx.fillStyle = '#2f7d4b'
-      ctx.fillRect(210, y, barWidth, 24)
-      ctx.fillStyle = '#263a2e'
-      ctx.font = chartFont(14)
-      ctx.fillText(`${count} 条`, 812, y + 18)
-    })
-    drawFootnote(ctx, '注：频次表示该主题在可分析文本片段中的出现次数，可辅助判断访谈材料的关注重点。', 42, height - 22)
-  })
+  const bars = rows.map((row, index) => {
+    const y = 108 + index * 48
+    const count = Number(row.count) || 0
+    const barWidth = Math.max(8, Math.round((count / max) * 560))
+    return `<text x="42" y="${y + 18}" font-size="15" font-weight="700">${escapeXml(shortLabel(row.theme, 14))}</text>
+<rect x="210" y="${y}" width="580" height="24" fill="#dfeadc"/>
+<rect x="210" y="${y}" width="${barWidth}" height="24" fill="#2f7d4b"/>
+<text x="812" y="${y + 18}" font-size="14">${count} 条</text>`
+  }).join('')
+  return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">定性主题频次分布</text>
+<text x="34" y="76" class="sub">访谈、开放题或文本材料中主要编码主题的出现频次。</text>
+${bars}
+<text x="42" y="${height - 22}" class="small">注：频次表示该主题在可分析文本片段中的出现次数，可辅助判断访谈材料的关注重点。</text>`))
 }
 
 async function buildQualitativeResult(payload: Record<string, unknown>) {

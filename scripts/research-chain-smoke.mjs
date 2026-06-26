@@ -49,15 +49,32 @@ function componentsFromAnalysis(analysis) {
   })
 }
 
-function pngDimensionsFromDataUrl(dataUrl) {
-  const match = /^data:image\/png;base64,(.+)$/.exec(String(dataUrl ?? ''))
-  assert(match, 'figure is missing a PNG data URL')
-  const buffer = Buffer.from(match[1], 'base64')
-  assert(buffer.length > 24 && buffer.toString('ascii', 1, 4) === 'PNG', 'figure data is not a valid PNG')
+function imageDimensionsFromDataUrl(dataUrl) {
+  const value = String(dataUrl ?? '')
+  const pngMatch = /^data:image\/png;base64,(.+)$/.exec(value)
+  if (pngMatch) {
+    const buffer = Buffer.from(pngMatch[1], 'base64')
+    assert(buffer.length > 24 && buffer.toString('ascii', 1, 4) === 'PNG', 'figure data is not a valid PNG')
+    return {
+      type: 'png',
+      width: buffer.readUInt32BE(16),
+      height: buffer.readUInt32BE(20),
+      bytes: buffer.length,
+    }
+  }
+  const svgMatch = /^data:image\/svg\+xml[^,]*,(.+)$/.exec(value)
+  assert(svgMatch, 'figure is missing a PNG or SVG data URL')
+  const svg = decodeURIComponent(svgMatch[1])
+  assert(svg.includes('<svg') && svg.includes('</svg>'), 'figure data is not a valid SVG')
+  const width = Number(svg.match(/\bwidth=["']?([\d.]+)/)?.[1])
+  const height = Number(svg.match(/\bheight=["']?([\d.]+)/)?.[1])
+  assert(Number.isFinite(width) && width > 0, 'SVG figure width is missing')
+  assert(Number.isFinite(height) && height > 0, 'SVG figure height is missing')
   return {
-    width: buffer.readUInt32BE(16),
-    height: buffer.readUInt32BE(20),
-    bytes: buffer.length,
+    type: 'svg',
+    width,
+    height,
+    bytes: Buffer.byteLength(svg, 'utf8'),
   }
 }
 
@@ -92,9 +109,9 @@ function assertResearchOutputQuality(analysis, components) {
     assert(!(table.columns ?? []).includes('维度全称'), `${table.title} still exposes the long dimension column`)
   }
   for (const figure of figures) {
-    const dimensions = pngDimensionsFromDataUrl(figure.dataUrl)
-    assert(dimensions.width >= 1600, `${figure.title} width is too low: ${dimensions.width}`)
-    assert(dimensions.height >= 800, `${figure.title} height is too low: ${dimensions.height}`)
+    const dimensions = imageDimensionsFromDataUrl(figure.dataUrl)
+    assert(dimensions.width >= 1000, `${figure.title} width is too low: ${dimensions.width}`)
+    assert(dimensions.height >= 360, `${figure.title} height is too low: ${dimensions.height}`)
   }
   const narrativeComponents = components.filter(component => component.type === 'analysis')
   const beforeCount = narrativeComponents.filter(component => String(component.title ?? '').endsWith(': before')).length
@@ -114,6 +131,17 @@ async function inspectDocx(buffer) {
     .map(match => match[1])
     .join('')
   const media = Object.keys(zip.files).filter(name => name.startsWith('word/media/') && !name.endsWith('/'))
+  const mediaChecks = []
+  for (const name of media) {
+    const mediaBuffer = await zip.file(name)?.async('nodebuffer')
+    assert(mediaBuffer && mediaBuffer.length > 25, `DOCX image is empty: ${name}`)
+    if (name.toLowerCase().endsWith('.png')) {
+      assert(mediaBuffer.toString('ascii', 1, 4) === 'PNG', `DOCX image is not a valid PNG: ${name}`)
+      const colorType = mediaBuffer[25]
+      assert(colorType !== 4 && colorType !== 6, `DOCX PNG image must be flattened without alpha: ${name}`)
+      mediaChecks.push({ name, colorType, bytes: mediaBuffer.length })
+    }
+  }
   const pageSize = documentXml.match(/<w:pgSz[^>]*w:w="(\d+)"[^>]*w:h="(\d+)"[^>]*>/)
   const pageMargin = documentXml.match(/<w:pgMar[^>]*w:top="(\d+)"[^>]*w:right="(\d+)"[^>]*w:bottom="(\d+)"[^>]*w:left="(\d+)"/)
   const tableCount = (documentXml.match(/<w:tbl>/g) ?? []).length
@@ -143,6 +171,7 @@ async function inspectDocx(buffer) {
     tableGridCount,
     cellWidthCount,
     imageCount: media.length,
+    flattenedPngCount: mediaChecks.length,
     imageExtentCount: imageExtents.length,
     minImageExtent,
     tableCaptionCount: (text.match(/表4-/g) ?? []).length,
@@ -194,6 +223,23 @@ async function main() {
     assert(placements.some(item => item.role === 'method' && item.targetSectionId === 's3'), '方法组件未写入研究设计章节')
     assert(placements.some(item => item.role === 'result' && item.targetSectionId === 's4'), '结果组件未写入数据分析章节')
     assert(placements.some(item => item.role === 'discussion' && item.targetSectionId === 's5'), '讨论建议组件未写入优化策略/研究讨论章节')
+
+    const semanticSections = [
+      { id: 'design', title: '研究设计、样本与测量', content: '说明问卷来源、样本处理、KANO模型和熵权法计算口径。' },
+      { id: 'findings', title: '实证结果分析', content: '呈现KANO分类、Better-Worse系数、熵权结果和综合排序。' },
+      { id: 'strategy', title: '设计优化路径与讨论', content: '将实证发现转化为视觉元素优化策略和研究讨论。' },
+    ]
+    const semanticWritePlan = await post(base, '/api/research/write-plan', {
+      paperTitle: common.projectTitle,
+      assetTitle: 'KANO-熵权法分析',
+      assetSummary: '问卷数据分析结果',
+      sections: semanticSections,
+      components,
+    })
+    const semanticPlacements = semanticWritePlan.plan?.placements ?? []
+    assert(semanticPlacements.some(item => item.role === 'method' && item.targetSectionId === 'design'), '语义大纲下方法组件未写入研究设计章节')
+    assert(semanticPlacements.some(item => item.role === 'result' && item.targetSectionId === 'findings'), '语义大纲下结果组件未写入实证结果章节')
+    assert(semanticPlacements.some(item => item.role === 'discussion' && item.targetSectionId === 'strategy'), '语义大纲下讨论组件未写入优化讨论章节')
 
     const idsBySection = idsByResolvedSection(sections, placements)
     const methodIds = idsBySection.get('s3') ?? new Set()

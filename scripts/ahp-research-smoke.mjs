@@ -129,6 +129,17 @@ async function inspectDocx(buffer) {
     .map(match => match[1])
     .join('')
   const media = Object.keys(zip.files).filter(name => name.startsWith('word/media/') && !name.endsWith('/'))
+  const mediaChecks = []
+  for (const name of media) {
+    const mediaBuffer = await zip.file(name)?.async('nodebuffer')
+    assert(mediaBuffer && mediaBuffer.length > 25, `DOCX image is empty: ${name}`)
+    if (name.toLowerCase().endsWith('.png')) {
+      assert(mediaBuffer.toString('ascii', 1, 4) === 'PNG', `DOCX image is not a valid PNG: ${name}`)
+      const colorType = mediaBuffer[25]
+      assert(colorType !== 4 && colorType !== 6, `DOCX PNG image must be flattened without alpha: ${name}`)
+      mediaChecks.push({ name, colorType, bytes: mediaBuffer.length })
+    }
+  }
   const pageSize = documentXml.match(/<w:pgSz[^>]*w:w="(\d+)"[^>]*w:h="(\d+)"[^>]*>/)
   const pageMargin = documentXml.match(/<w:pgMar[^>]*w:top="(\d+)"[^>]*w:right="(\d+)"[^>]*w:bottom="(\d+)"[^>]*w:left="(\d+)"/)
   return {
@@ -144,6 +155,7 @@ async function inspectDocx(buffer) {
     tableGridCount: (documentXml.match(/<w:tblGrid>/g) ?? []).length,
     cellWidthCount: (documentXml.match(/<w:tcW\b/g) ?? []).length,
     imageCount: media.length,
+    flattenedPngCount: mediaChecks.length,
     imageExtentCount: (documentXml.match(/<wp:extent\b/g) ?? []).length,
     hasAhpText: /AHP|CR|权重|一致性/.test(text),
     internalLeakCount: (text.match(/table_ahp_|figure_ahp_|research_component/g) ?? []).length,
