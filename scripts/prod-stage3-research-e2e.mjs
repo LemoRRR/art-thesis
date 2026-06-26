@@ -4,6 +4,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 
+import JSZip from 'jszip'
 import XLSX from 'xlsx'
 
 const require = createRequire(import.meta.url)
@@ -119,6 +120,58 @@ async function uploadFileByChangeEvent(page, testId, filePath) {
     return true
   }, { id: testId, name: fileName, fileBase64: base64 })
   assert(uploaded, `Could not upload file through ${testId}`)
+}
+
+function plainTextFromDocumentXml(xml) {
+  return Array.from(String(xml).matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g))
+    .map(match => match[1])
+    .join('')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+}
+
+function assertCaptionSequence(text, label, minimumCount) {
+  const matches = Array.from(text.matchAll(new RegExp(`${label}4[-—-](\\d+)`, 'g')))
+    .map(match => ({ number: Number(match[1]), index: match.index ?? 0 }))
+  const unique = []
+  for (const match of matches) {
+    if (!unique.some(item => item.number === match.number)) unique.push(match)
+  }
+  assert(unique.length >= minimumCount, `DOCX has too few ${label}4-x captions: ${unique.length}`)
+  assert(unique[0].number === 1, `DOCX first ${label} caption should be ${label}4-1, got ${label}4-${unique[0].number}`)
+  for (let index = 1; index < unique.length; index += 1) {
+    assert(
+      unique[index - 1].number < unique[index].number,
+      `DOCX ${label} captions are out of order: ${unique.map(item => `${label}4-${item.number}`).join(', ')}`
+    )
+  }
+}
+
+async function inspectDownloadedDocx(filePath) {
+  const buffer = fs.readFileSync(filePath)
+  const zip = await JSZip.loadAsync(buffer)
+  const documentXml = await zip.file('word/document.xml')?.async('string')
+  assert(documentXml, 'DOCX is missing word/document.xml')
+  const text = plainTextFromDocumentXml(documentXml)
+  assert(/研究设计与数据来源/.test(text), 'DOCX is missing method chapter heading')
+  assert(/数据分析与研究结果/.test(text), 'DOCX is missing result chapter heading')
+  assert(/讨论与优化建议/.test(text), 'DOCX is missing discussion chapter heading')
+  assert(/数据质量与方法适用性检查表/.test(text), 'DOCX is missing data quality table')
+  assert(/描述性统计表/.test(text), 'DOCX is missing descriptive statistics table')
+  assert(/描述统计均值图/.test(text), 'DOCX is missing descriptive mean figure')
+  assertCaptionSequence(text, '表', 5)
+  assertCaptionSequence(text, '图', 4)
+  assert(!/table_data_quality|table_descriptive|figure_descriptive_means|research_component/.test(text), 'DOCX leaked internal research ids')
+
+  const media = Object.keys(zip.files).filter(name => name.startsWith('word/media/') && !name.endsWith('/'))
+  assert(media.length >= 4, `DOCX should contain at least 4 generated figures, got ${media.length}`)
+  return {
+    tableCaptions: (text.match(/表4[-—-]\d+/g) ?? []).length,
+    figureCaptions: (text.match(/图4[-—-]\d+/g) ?? []).length,
+    mediaCount: media.length,
+  }
 }
 
 async function cleanup({ token, projectId, sectionIds, packageIds }) {
@@ -238,6 +291,7 @@ async function main() {
     await download.saveAs(savedPath)
     const bytes = fs.statSync(savedPath).size
     assert(bytes > 10000, `Downloaded DOCX is too small: ${bytes}`)
+    const docxInspection = await inspectDownloadedDocx(savedPath)
 
     const relevantErrors = browserErrors.filter(message => !/favicon|ResizeObserver/i.test(message))
     assert(relevantErrors.length === 0, `Browser errors:\n${relevantErrors.join('\n')}`)
@@ -250,6 +304,7 @@ async function main() {
       apiResponses,
       downloadedDocx: savedPath,
       bytes,
+      docxInspection,
     }, null, 2))
 
     await browser.close()

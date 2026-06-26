@@ -1308,7 +1308,6 @@ async function enrichQuantResult<T extends Record<string, unknown>>(result: T, p
       qualityReport,
       cautions: uniqueWarnings([...(Array.isArray(enriched.cautions) ? enriched.cautions : []), ...qualityWarnings]),
       tables: hasQualityTable ? tables : [
-        ...tables,
         {
           id: 'table_data_quality',
           title: '数据质量与方法适用性检查表',
@@ -1324,6 +1323,7 @@ async function enrichQuantResult<T extends Record<string, unknown>>(result: T, p
           }],
           columns: ['sampleSize', 'missingRate', 'duplicateRows', 'invalidSampleCandidates', 'reliabilitySuitable', 'efaSuitable', 'correlationSuitable', 'anovaSuitable'],
         },
+        ...tables,
       ],
     }
   } catch {
