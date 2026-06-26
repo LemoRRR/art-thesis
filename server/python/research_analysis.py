@@ -73,18 +73,27 @@ def plan_methods(payload: dict[str, Any], numeric: list[str], categorical: list[
     plan = payload.get("confirmedPlan") or {}
     calls = plan.get("toolCalls") if isinstance(plan, dict) else None
     methods = []
+    def add_methods(value: Any):
+        if isinstance(value, list):
+            for item in value:
+                add_methods(item)
+            return
+        for item in str(value or "").replace("，", ",").replace("、", ",").split(","):
+            item = item.strip().lower()
+            if item:
+                methods.append(item)
     if isinstance(calls, list):
         for call in calls:
             if isinstance(call, dict) and isinstance(call.get("tool"), str):
-                methods.append(call["tool"])
+                add_methods(call["tool"])
     if isinstance(plan, dict):
         raw_methods = plan.get("methods")
         if isinstance(raw_methods, list):
-            methods += [str(item) for item in raw_methods]
+            add_methods(raw_methods)
         if isinstance(plan.get("method"), str):
-            methods.append(str(plan["method"]))
+            add_methods(plan["method"])
     if isinstance(payload.get("method"), str):
-        methods.append(str(payload["method"]))
+        add_methods(payload["method"])
     if not methods:
         methods = ["descriptive"]
         if len(numeric) >= 2:

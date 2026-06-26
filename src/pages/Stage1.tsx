@@ -8,7 +8,7 @@ import TopBar from '../components/TopBar'
 import ChatBubble from '../components/ChatBubble'
 import MentionInput, { type MentionRef } from '../components/MentionInput'
 import { callGPT } from '../lib/ai'
-import { filesAPI, libraryAPI } from '../lib/api'
+import { filesAPI, libraryAPI, scholarAPI, type ScholarPaper } from '../lib/api'
 import { buildAIContext, buildMentionContext } from '../lib/context'
 import { promptChatFollowup, type AcademicLevel } from '../lib/prompts'
 import {
@@ -16,7 +16,9 @@ import {
   createEmptyProjectContext,
   libraryStore,
   projectStore,
+  referenceStore,
   type ChatMessage,
+  type CitationEvidenceSource,
   type ComprehensionModel,
   type LibraryItem,
   type ResearchMethodType,
@@ -68,6 +70,37 @@ interface Stage1UploadedFile {
   status: Stage1UploadStatus
   item?: LibraryItem
   error?: string
+}
+
+type CitationPoolStatus = 'idle' | 'preparing' | 'ready' | 'error'
+
+function scholarPaperToEvidenceSource(paper: ScholarPaper, provider?: string): CitationEvidenceSource {
+  return {
+    id: paper.id || paper.doi || paper.url || `${paper.title}-${paper.year ?? ''}`,
+    title: paper.title,
+    authors: paper.authors ?? [],
+    year: paper.year,
+    source: paper.source,
+    doi: paper.doi,
+    url: paper.url,
+    abstract: paper.abstract,
+    provider,
+    citedByCount: paper.citedByCount,
+    relevanceReason: paper.relevanceReason,
+  }
+}
+
+function buildStage1CitationPoolContext(model: ComprehensionModel, projectTitle: string): string {
+  return [
+    `论文题目：${projectTitle}`,
+    model.rawSummary,
+    model.outlineSummary ? `大纲理解：${model.outlineSummary}` : '',
+    model.draftSummary ? `已有正文理解：${model.draftSummary}` : '',
+    model.coreArguments?.length ? `核心论点：${model.coreArguments.join('；')}` : '',
+    model.researchPlan?.methodLabel ? `研究方法：${model.researchPlan.methodLabel}；${model.researchPlan.methodReason ?? ''}` : '',
+    model.researchPlan?.dataNeeds?.length ? `数据与材料需求：${model.researchPlan.dataNeeds.join('；')}` : '',
+    model.researchPlan?.pendingResearchTasks?.length ? `后续研究任务：${model.researchPlan.pendingResearchTasks.join('；')}` : '',
+  ].filter(Boolean).join('\n')
 }
 
 // AI 第一句话
@@ -389,6 +422,62 @@ export default function Stage1() {
     getSelectedAcademicLevel(project.context.writingRequirements)
   )
   const [showFullMaterialSummary, setShowFullMaterialSummary] = useState(false)
+  const [citationPoolStatus, setCitationPoolStatus] = useState<CitationPoolStatus>('idle')
+  const [citationPoolNote, setCitationPoolNote] = useState('')
+  const citationPoolPreparingRef = useRef(false)
+
+  const prepareSharedCitationPool = useCallback(async (model: ComprehensionModel, options: { force?: boolean } = {}) => {
+    if (citationPoolPreparingRef.current) return
+
+    const currentProject = projectStore.ensure(project.id)
+    const selection = referenceStore.get(project.id, 'stage3')
+    const existingSourceCount = selection.autoSources?.length ?? 0
+    if (!options.force && existingSourceCount >= 25 && selection.evidencePack) {
+      setCitationPoolStatus('ready')
+      setCitationPoolNote(`已准备 ${existingSourceCount} 条可复用文献来源，后续全文生成和引用增强会直接使用。`)
+      return
+    }
+
+    citationPoolPreparingRef.current = true
+    setCitationPoolStatus('preparing')
+    setCitationPoolNote('正在准备共享文献池，Stage1 论文检索会直接服务后续引用增强。')
+
+    try {
+      const response = await scholarAPI.prepare({
+        title: currentProject.title || inferPaperTitle({
+          paperTitle: currentProject.title,
+          researchObject: model.researchObject,
+          materialTopic: model.researchObject,
+        }),
+        outline: buildStage1CitationPoolContext(model, currentProject.title),
+        researchObject: model.researchObject || currentProject.context.researchObject,
+        academicLevel: selectedLevel || model.academicLevel || currentProject.context.academicLevel,
+        limit: 40,
+        targetFinalCitationCount: 30,
+        firstDraftCitationCount: 16,
+      })
+      const autoSources = response.autoSources.map(source => scholarPaperToEvidenceSource(source, response.provider))
+      referenceStore.save({
+        ...selection,
+        autoCitationEnabled: true,
+        autoSources,
+        evidencePack: response.evidencePack,
+        lastAutoRunAt: Date.now(),
+      })
+      setCitationPoolStatus('ready')
+      const evidenceSummary = response.evidencePack?.summary ? ` ${response.evidencePack.summary}` : ''
+      setCitationPoolNote(
+        response.auditNote
+          || `已准备 ${autoSources.length} 条可复用文献来源，Stage3 引用增强会复用这份文献池。${evidenceSummary}`
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setCitationPoolStatus('error')
+      setCitationPoolNote(`共享文献池准备失败：${message}。后续引用增强会在 Stage3 再次补检索。`)
+    } finally {
+      citationPoolPreparingRef.current = false
+    }
+  }, [project.id, selectedLevel])
 
   // 初始化：从 localStorage 读取历史记录
   useEffect(() => {
@@ -404,6 +493,8 @@ export default function Stage1() {
       setIsLoading(false)
       setStreamingId(null)
       setMentions([])
+      setCitationPoolStatus('idle')
+      setCitationPoolNote('')
       const currentProject = projectStore.ensure(project.id)
       const storedLevel = getSelectedAcademicLevel(currentProject.context.writingRequirements)
         || normalizeAcademicLevelCandidate(currentProject.context.academicLevel)
@@ -462,6 +553,11 @@ export default function Stage1() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    if (!isCompleted || !comprehension?.rawSummary) return
+    void prepareSharedCitationPool(comprehension)
+  }, [comprehension, isCompleted, prepareSharedCitationPool])
 
   const sendMessage = useCallback(async () => {
     const text = inputText.trim()
@@ -678,6 +774,8 @@ export default function Stage1() {
     setIsLoading(false)
     setStreamingId(null)
     setSelectedLevel('')
+    setCitationPoolStatus('idle')
+    setCitationPoolNote('')
   }
 
   return (
@@ -879,6 +977,25 @@ export default function Stage1() {
                     )
                   })}
                 </div>
+                {citationPoolNote && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 8,
+                      padding: '8px 10px',
+                      borderRadius: 'var(--radius-sm)',
+                      border: `1px solid ${citationPoolStatus === 'error' ? '#F1B8B8' : '#B8D9C0'}`,
+                      background: citationPoolStatus === 'error' ? '#FFF7F7' : '#F8FBF8',
+                      color: citationPoolStatus === 'error' ? '#9F3A3A' : 'var(--color-ink-2)',
+                      fontSize: 12,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {citationPoolStatus === 'preparing' ? <RefreshCw size={13} style={{ flexShrink: 0, marginTop: 2 }} /> : <BookOpen size={13} style={{ flexShrink: 0, marginTop: 2 }} />}
+                    <span>{citationPoolNote}</span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1075,7 +1192,7 @@ export default function Stage1() {
       </div>
       <ReferencePanel
         projectId={project.id}
-        stage="stage1"
+        stage="stage3"
         open={showReferences}
         onClose={() => setShowReferences(false)}
       />

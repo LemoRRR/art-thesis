@@ -23,13 +23,14 @@ router.get('/project/:projectId', async (req: AuthRequest, res) => {
 
 router.post('/project/:projectId', async (req: AuthRequest, res) => {
   const db = createUserClient(req.accessToken!)
-  const { description, sections_snapshot } = req.body
+  const { description, sections_snapshot = [], outline_snapshot = null } = req.body
   const { data, error } = await db
     .from('versions')
     .insert({
       project_id: req.params.projectId,
       description,
       sections_snapshot,
+      outline_snapshot,
     })
     .select()
     .single()

@@ -10,7 +10,8 @@ export interface AuthUser {
   }
 }
 
-const AUTH_REQUIRED = import.meta.env.PROD || import.meta.env.VITE_AUTH_REQUIRED === 'true'
+const META_ENV = import.meta.env ?? {}
+const AUTH_REQUIRED = META_ENV.PROD || META_ENV.VITE_AUTH_REQUIRED === 'true'
 const LOCAL_TOKEN_PREFIX = 'dev-local-demo-token-'
 
 export const auth = {

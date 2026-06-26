@@ -7,6 +7,7 @@ import {
   outlinesAPI,
   projectsAPI,
   referencesAPI,
+  researchPackagesAPI,
   sectionsAPI,
   styleProfilesAPI,
   versionsAPI,
@@ -488,12 +489,35 @@ export interface CitationChapterEvidence {
   keyPoints: CitationEvidencePoint[]
 }
 
+export interface CitationGoal {
+  targetFinalCitationCount: number
+  minAcceptableCitationCount: number
+  maxCitationCount: number
+  firstDraftCitationCount: number
+  usableSourceCount: number
+}
+
+export interface CitationChapterPlan {
+  sectionTitle: string
+  targetCitationCount: number
+  firstDraftCitationCount: number
+  theorySourceIds: string[]
+  literatureSourceIds: string[]
+  methodSourceIds: string[]
+  caseSourceIds: string[]
+  mustUseSourceIds: string[]
+  avoidSourceIds: string[]
+  writingGuidance: string
+}
+
 export interface CitationEvidencePack {
+  citationGoal?: CitationGoal
   theoryConcepts: CitationEvidencePoint[]
   literatureReview: CitationEvidencePoint[]
   methodSupport: CitationEvidencePoint[]
   caseEvidence: CitationEvidencePoint[]
   chapterEvidence: CitationChapterEvidence[]
+  chapterCitationPlans?: CitationChapterPlan[]
   rejectedSourceIds: string[]
   cautions: string[]
   summary: string
@@ -519,6 +543,7 @@ interface DraftSnapshots {
   outlines: Outline[]
   versions: VersionSnapshot[]
   references: ReferenceSelection[]
+  researchPackages: ResearchContentPackage[]
 }
 
 const uid = (prefix?: string) => {
@@ -708,6 +733,32 @@ function fromApiVersion(row: any): VersionSnapshot {
     timestamp: toTime(row.created_at),
     description: row.description ?? '',
     sections: row.sections_snapshot ?? [],
+    outline: row.outline_snapshot ?? undefined,
+  }
+}
+
+function fromApiResearchPackage(row: any): ResearchContentPackage | null {
+  const pkg = row?.package_json
+  if (!pkg || typeof pkg !== 'object') return null
+  const createdAt = toTime(row.created_at)
+  const updatedAt = toTime(row.updated_at)
+  return {
+    ...(pkg as ResearchContentPackage),
+    id: row.id ?? (pkg as ResearchContentPackage).id,
+    projectId: row.project_id ?? (pkg as ResearchContentPackage).projectId,
+    chapterId: row.chapter_id ?? (pkg as ResearchContentPackage).chapterId,
+    createdAt: Number((pkg as ResearchContentPackage).createdAt) || createdAt,
+    updatedAt: Number((pkg as ResearchContentPackage).updatedAt) || updatedAt,
+    versions: Array.isArray((pkg as ResearchContentPackage).versions)
+      ? (pkg as ResearchContentPackage).versions.slice(0, 10)
+      : [],
+  }
+}
+
+function trimResearchPackageVersions(pkg: ResearchContentPackage): ResearchContentPackage {
+  return {
+    ...pkg,
+    versions: (pkg.versions ?? []).slice(0, 10),
   }
 }
 
@@ -764,6 +815,7 @@ function normalizeLocalIdsForRemote() {
   const versions = read<VersionSnapshot[]>(KEYS.VERSIONS) ?? []
   const refs = read<ReferenceSelection[]>(KEYS.REFERENCES) ?? []
   const styleProfiles = read<StyleProfile[]>(KEYS.STYLE_PROFILES) ?? []
+  const researchPackages = read<ResearchContentPackage[]>(KEYS.RESEARCH_PACKAGES) ?? []
 
   const projectIdMap = new Map(projects.map(project => [project.id, ensureUuid(project.id)]))
   const libraryIdMap = new Map(libraryItems.map(item => [item.id, ensureUuid(item.id)]))
@@ -812,6 +864,12 @@ function normalizeLocalIdsForRemote() {
     libraryItemIds: ref.libraryItemIds.map(mapLibraryId),
     sectionIds: ref.sectionIds.map(mapSectionId),
   }))
+  const nextResearchPackages = researchPackages.map(pkg => ({
+    ...pkg,
+    id: ensureUuid(pkg.id),
+    projectId: mapProjectId(pkg.projectId)!,
+    chapterId: pkg.chapterId ? mapSectionId(pkg.chapterId) : pkg.chapterId,
+  }))
 
   write(KEYS.PROJECTS, nextProjects)
   write(KEYS.LIBRARY, nextLibrary)
@@ -821,13 +879,14 @@ function normalizeLocalIdsForRemote() {
   write(KEYS.CHAT, nextChats)
   write(KEYS.VERSIONS, nextVersions)
   write(KEYS.REFERENCES, nextRefs)
+  write(KEYS.RESEARCH_PACKAGES, nextResearchPackages)
 
   const activeId = read<string>(KEYS.ACTIVE_PROJECT)
   if (activeId && projectIdMap.has(activeId)) {
     write(KEYS.ACTIVE_PROJECT, projectIdMap.get(activeId))
   }
 
-  return { projects: nextProjects, libraryItems: nextLibrary, styleProfiles: nextStyleProfiles, sections: nextSections, outlines: nextOutlines, chats: nextChats, versions: nextVersions, refs: nextRefs }
+  return { projects: nextProjects, libraryItems: nextLibrary, styleProfiles: nextStyleProfiles, sections: nextSections, outlines: nextOutlines, chats: nextChats, versions: nextVersions, refs: nextRefs, researchPackages: nextResearchPackages }
 }
 
 async function pushLocalDataToRemote() {
@@ -858,7 +917,12 @@ async function pushLocalDataToRemote() {
       await versionsAPI.create(project.id, {
         description: snapshot.description,
         sections_snapshot: snapshot.sections,
+        outline_snapshot: snapshot.outline,
       })
+    }
+
+    for (const pkg of local.researchPackages.filter(item => item.projectId === project.id)) {
+      await researchPackagesAPI.save(trimResearchPackageVersions(pkg))
     }
   }
 }
@@ -873,6 +937,7 @@ export async function syncRemoteData(options: { projectIds?: string[] } = {}): P
   const localChatsBeforeSync = read<ChatMessage[]>(KEYS.CHAT) ?? []
   const localVersionsBeforeSync = read<VersionSnapshot[]>(KEYS.VERSIONS) ?? []
   const localRefsBeforeSync = read<ReferenceSelection[]>(KEYS.REFERENCES) ?? []
+  const localResearchPackagesBeforeSync = read<ResearchContentPackage[]>(KEYS.RESEARCH_PACKAGES) ?? []
   const remoteProjects = ((await projectsAPI.list()) as any[]).map(fromApiProject)
   if (remoteProjects.length === 0) {
     await pushLocalDataToRemote()
@@ -889,10 +954,11 @@ export async function syncRemoteData(options: { projectIds?: string[] } = {}): P
     libraryAPI.list().then(rows => (rows as any[]).map(fromApiLibraryItem)),
     styleProfilesAPI.list().then(rows => (rows as any[]).map(fromApiStyleProfile)),
     Promise.all(projectsToHydrate.map(async project => {
-      const [sections, outline, versions, chatGroups, refs] = await Promise.all([
+      const [sections, outline, versions, researchPackages, chatGroups, refs] = await Promise.all([
         sectionsAPI.listByProject(project.id).then(rows => (rows as any[]).map(fromApiSection)),
         outlinesAPI.getByProject(project.id).then(fromApiOutline),
         versionsAPI.listByProject(project.id).then(rows => (rows as any[]).map(fromApiVersion)),
+        researchPackagesAPI.listByProject(project.id).then(rows => (rows as any[]).map(fromApiResearchPackage).filter((pkg): pkg is ResearchContentPackage => pkg !== null)),
         Promise.all(STAGES.map(stage =>
           chatAPI.listByProjectStage(project.id, stage).then(rows => (rows as any[]).map(fromApiChatMessage))
         )),
@@ -909,6 +975,7 @@ export async function syncRemoteData(options: { projectIds?: string[] } = {}): P
           : localSectionsBeforeSync.filter(section => section.projectId === project.id),
         outline,
         versions,
+        researchPackages,
         chats: chatGroups.flat(),
         refs: refs.filter((item): item is ReferenceSelection => item !== null),
       }
@@ -945,6 +1012,7 @@ export async function syncRemoteData(options: { projectIds?: string[] } = {}): P
   write(KEYS.SECTIONS, mergeById(localSectionsBeforeSync, mergedSections))
   write(KEYS.OUTLINE, protectedOutlines)
   write(KEYS.VERSIONS, mergeById(localVersionsBeforeSync, projectPayloads.flatMap(item => item.versions)))
+  write(KEYS.RESEARCH_PACKAGES, mergeById(localResearchPackagesBeforeSync, projectPayloads.flatMap(item => item.researchPackages)))
   write(KEYS.CHAT, mergeById(localChatsBeforeSync, projectPayloads.flatMap(item => item.chats)))
   write(KEYS.REFERENCES, mergeById(localRefsBeforeSync, projectPayloads.flatMap(item => item.refs)))
 
@@ -1164,6 +1232,7 @@ export const versionStore = {
       remoteTask(() => versionsAPI.create(projectId, {
         description,
         sections_snapshot: snap.sections,
+        outline_snapshot: snap.outline,
       }))
     }
   },
@@ -1178,6 +1247,11 @@ export const versionStore = {
       outline:     { ...outline, sections: renumberOutlineSnapshot(outline.sections), updatedAt: Date.now() },
     }
     write(KEYS.VERSIONS, [snap, ...all].slice(0, 30))
+    remoteTask(() => versionsAPI.create(outline.projectId, {
+      description,
+      sections_snapshot: snap.sections,
+      outline_snapshot: snap.outline,
+    }))
   },
   restore: (snapshot: VersionSnapshot, projectId?: string) => {
     if (projectId && snapshot.outline) {
@@ -1341,7 +1415,7 @@ function withPackageVersion(pkg: ResearchContentPackage, trigger: ResearchVersio
         snapshot: packageSnapshot(pkg),
       },
       ...pkg.versions,
-    ].slice(0, 30),
+    ].slice(0, 10),
   }
 }
 
@@ -1369,6 +1443,7 @@ export const researchPackageStore = {
     }
     const versioned = withPackageVersion(next, '首次生成')
     researchPackageStore.save([versioned, ...researchPackageStore.getAll()])
+    remoteTask(() => researchPackagesAPI.save(versioned))
     return versioned
   },
   update: (id: string, patch: Partial<ResearchContentPackage>, trigger?: ResearchVersionTrigger) => {
@@ -1383,9 +1458,11 @@ export const researchPackageStore = {
         createdAt: pkg.createdAt,
         updatedAt: Date.now(),
       }
-      updated = trigger ? withPackageVersion(next, trigger) : next
+      updated = trimResearchPackageVersions(trigger ? withPackageVersion(next, trigger) : next)
       return updated
     }))
+    const updatedPackage = updated
+    if (updatedPackage) remoteTask(() => researchPackagesAPI.save(updatedPackage))
     return updated
   },
   markInserted: (id: string, componentIds: string[]) => {
@@ -1408,14 +1485,17 @@ export const researchPackageStore = {
           snapshot: packageSnapshot(pkg),
         },
         ...pkg.versions,
-      ].slice(0, 30),
+      ].slice(0, 10),
       updatedAt: Date.now(),
     }
-    researchPackageStore.save(researchPackageStore.getAll().map(item => item.id === id ? restored : item))
-    return restored
+    const nextRestored = trimResearchPackageVersions(restored)
+    researchPackageStore.save(researchPackageStore.getAll().map(item => item.id === id ? nextRestored : item))
+    remoteTask(() => researchPackagesAPI.save(nextRestored))
+    return nextRestored
   },
   remove: (id: string) => {
     researchPackageStore.save(researchPackageStore.getAll().filter(pkg => pkg.id !== id))
+    remoteTask(() => researchPackagesAPI.delete(id))
   },
   clear: () => localStorage.removeItem(KEYS.RESEARCH_PACKAGES),
 }
@@ -1481,6 +1561,7 @@ function createDraftSnapshots(): DraftSnapshots {
     outlines: outlineStore.getAll(),
     versions: versionStore.getAll(),
     references: referenceStore.getAll(),
+    researchPackages: researchPackageStore.getAll(),
   }
 }
 

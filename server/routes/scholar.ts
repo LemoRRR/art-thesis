@@ -111,12 +111,35 @@ interface CitationChapterEvidence {
   keyPoints: CitationEvidencePoint[]
 }
 
+interface CitationGoal {
+  targetFinalCitationCount: number
+  minAcceptableCitationCount: number
+  maxCitationCount: number
+  firstDraftCitationCount: number
+  usableSourceCount: number
+}
+
+interface CitationChapterPlan {
+  sectionTitle: string
+  targetCitationCount: number
+  firstDraftCitationCount: number
+  theorySourceIds: string[]
+  literatureSourceIds: string[]
+  methodSourceIds: string[]
+  caseSourceIds: string[]
+  mustUseSourceIds: string[]
+  avoidSourceIds: string[]
+  writingGuidance: string
+}
+
 interface CitationEvidencePack {
+  citationGoal?: CitationGoal
   theoryConcepts: CitationEvidencePoint[]
   literatureReview: CitationEvidencePoint[]
   methodSupport: CitationEvidencePoint[]
   caseEvidence: CitationEvidencePoint[]
   chapterEvidence: CitationChapterEvidence[]
+  chapterCitationPlans?: CitationChapterPlan[]
   rejectedSourceIds: string[]
   cautions: string[]
   summary: string
@@ -180,7 +203,7 @@ function fallbackQueries(title: string, outline: string, researchObject = '') {
     .split('\n')
     .map(line => line.replace(/^[\s\d.、（()一二三四五六七八九十章节]+/, '').trim())
     .filter(Boolean)
-    .slice(0, 8)
+    .slice(0, 12)
   const seed = [title, researchObject, outlineHeadings.slice(0, 3).join(' ')].filter(Boolean).join(' ')
   const objectOrTitle = researchObject || title
   return Array.from(new Set([
@@ -191,7 +214,7 @@ function fallbackQueries(title: string, outline: string, researchObject = '') {
     `${title} literature review`,
     `${objectOrTitle} art aesthetics painting research`,
     ...outlineHeadings.slice(0, 4).map(heading => `${objectOrTitle} ${heading}`),
-  ].map(item => item.trim()).filter(Boolean))).slice(0, 8)
+  ].map(item => item.trim()).filter(Boolean))).slice(0, 12)
 }
 
 async function generateSearchQueries(title: string, outline: string, researchObject: string, academicLevel: string) {
@@ -216,7 +239,7 @@ async function generateSearchQueries(title: string, outline: string, researchObj
     const response = await callAIOnce(messages, 'gpt')
     const parsed = extractJsonObject(response)
     const queries = Array.isArray(parsed?.queries) ? parsed.queries.map(String).filter(Boolean) : []
-    return queries.length > 0 ? Array.from(new Set([...queries, ...fallbackQueries(title, outline, researchObject)])).slice(0, 8) : fallbackQueries(title, outline, researchObject)
+    return queries.length > 0 ? Array.from(new Set([...queries, ...fallbackQueries(title, outline, researchObject)])).slice(0, 12) : fallbackQueries(title, outline, researchObject)
   } catch {
     return fallbackQueries(title, outline, researchObject)
   }
@@ -229,7 +252,7 @@ async function selectSourcesWithAI(params: {
   academicLevel: string
   candidates: ScholarPaper[]
   limit: number
-}) {
+}): Promise<{ autoSources: ScholarPaper[]; auditNote: string }> {
   const candidateText = params.candidates.map((paper, index) => [
     `C${index + 1}. ${paper.title}`,
     paper.authors.length ? `作者：${paper.authors.join('、')}` : '',
@@ -260,8 +283,8 @@ async function selectSourcesWithAI(params: {
     const parsed = extractJsonObject(response)
     const selected = Array.isArray(parsed?.selected) ? parsed.selected : []
     const sourceByCandidateId = new Map(params.candidates.map((paper, index) => [`C${index + 1}`, paper]))
-    const autoSources = selected
-      .map(item => {
+    const autoSources: ScholarPaper[] = selected
+      .map<ScholarPaper | null>(item => {
         if (!item || typeof item !== 'object') return null
         const selection = item as Record<string, unknown>
         const source = sourceByCandidateId.get(String(selection.candidateId))
@@ -297,6 +320,67 @@ function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(item => String(item).trim()).filter(Boolean) : []
 }
 
+function citationGoal(input?: Partial<CitationGoal>): CitationGoal {
+  const targetFinalCitationCount = Math.min(Math.max(Number(input?.targetFinalCitationCount ?? 30), 15), 60)
+  const firstDraftCitationCount = Math.min(
+    Math.max(Number(input?.firstDraftCitationCount ?? Math.round(targetFinalCitationCount * 0.55)), 8),
+    targetFinalCitationCount
+  )
+  return {
+    targetFinalCitationCount,
+    minAcceptableCitationCount: Math.min(Math.max(Number(input?.minAcceptableCitationCount ?? 25), 10), targetFinalCitationCount),
+    maxCitationCount: Math.max(Number(input?.maxCitationCount ?? 40), targetFinalCitationCount),
+    firstDraftCitationCount,
+    usableSourceCount: Math.min(Math.max(Number(input?.usableSourceCount ?? 40), targetFinalCitationCount), 60),
+  }
+}
+
+function outlineChapterTitles(outline: string): string[] {
+  return outline
+    .split('\n')
+    .map(line => line.replace(/^[\s\d.、（）()一二三四五六七八九十章节篇部]+/, '').trim())
+    .filter(Boolean)
+    .filter(line => line.length <= 80)
+    .slice(0, 16)
+}
+
+function buildFallbackChapterPlans(
+  outline: string,
+  autoSources: ScholarPaper[],
+  goal: CitationGoal
+): CitationChapterPlan[] {
+  const titles = outlineChapterTitles(outline)
+  const sourceIds = autoSources.map(stableSourceId).filter(Boolean)
+  if (titles.length === 0) return []
+  const weights: number[] = titles.map((title, index) => {
+    if (/摘要|关键词|题目|目录|参考文献|致谢|附录/i.test(title)) return 0
+    if (/绪论|引言|文献|综述|理论|方法|模型/i.test(title)) return 2
+    return index === titles.length - 1 ? 1 : 1.5
+  })
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0) || 1
+
+  return titles.map((title, index) => {
+    const weight = weights[index] ?? 0
+    const targetCitationCount = weight === 0 ? 0 : Math.max(1, Math.round((goal.targetFinalCitationCount * weight) / totalWeight))
+    const firstDraftCitationCount = weight === 0 ? 0 : Math.max(1, Math.round((goal.firstDraftCitationCount * weight) / totalWeight))
+    const rotated = sourceIds.slice(index).concat(sourceIds.slice(0, index))
+    return {
+      sectionTitle: title,
+      targetCitationCount,
+      firstDraftCitationCount,
+      theorySourceIds: rotated.slice(0, 4),
+      literatureSourceIds: rotated.slice(2, 8),
+      methodSourceIds: /方法|模型|分析|评价|量化|统计|问卷|访谈/i.test(title) ? rotated.slice(0, 6) : [],
+      caseSourceIds: /案例|对象|分析|实践|作品|图像|设计/i.test(title) ? rotated.slice(4, 10) : [],
+      mustUseSourceIds: rotated.slice(0, Math.min(3, firstDraftCitationCount)),
+      avoidSourceIds: [],
+      writingGuidance: targetCitationCount > 0
+        ? `本章最终建议约 ${targetCitationCount} 处引用，第一版正文先稳定使用 ${firstDraftCitationCount} 处左右，优先放在理论定义、研究现状、方法依据和关键判断后。`
+        : '本部分不建议插入正文引用。',
+    }
+  })
+}
+
 function normalizeEvidencePoints(value: unknown, allowedIds: Set<string>): CitationEvidencePoint[] {
   if (!Array.isArray(value)) return []
   return value.slice(0, 12).map(item => {
@@ -310,9 +394,37 @@ function normalizeEvidencePoints(value: unknown, allowedIds: Set<string>): Citat
   }).filter(point => point.claim)
 }
 
+function normalizeCitationGoal(value: unknown): CitationGoal | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  return citationGoal(value as Partial<CitationGoal>)
+}
+
+function normalizeChapterPlans(value: unknown, allowedIds: Set<string>, fallbackPlans: CitationChapterPlan[]): CitationChapterPlan[] {
+  if (!Array.isArray(value)) return fallbackPlans
+  const plans = value.slice(0, 24).map(item => {
+    const raw = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+    const sectionTitle = String(raw.sectionTitle ?? raw.chapterTitle ?? '').trim().slice(0, 120)
+    if (!sectionTitle) return null
+    return {
+      sectionTitle,
+      targetCitationCount: Math.max(0, Math.min(12, Number(raw.targetCitationCount ?? 3))),
+      firstDraftCitationCount: Math.max(0, Math.min(6, Number(raw.firstDraftCitationCount ?? 2))),
+      theorySourceIds: normalizeStringArray(raw.theorySourceIds).filter(id => allowedIds.has(id)).slice(0, 8),
+      literatureSourceIds: normalizeStringArray(raw.literatureSourceIds).filter(id => allowedIds.has(id)).slice(0, 8),
+      methodSourceIds: normalizeStringArray(raw.methodSourceIds).filter(id => allowedIds.has(id)).slice(0, 8),
+      caseSourceIds: normalizeStringArray(raw.caseSourceIds).filter(id => allowedIds.has(id)).slice(0, 8),
+      mustUseSourceIds: normalizeStringArray(raw.mustUseSourceIds).filter(id => allowedIds.has(id)).slice(0, 6),
+      avoidSourceIds: normalizeStringArray(raw.avoidSourceIds).filter(id => allowedIds.has(id)).slice(0, 8),
+      writingGuidance: String(raw.writingGuidance ?? '').trim().slice(0, 360),
+    }
+  }).filter((item): item is CitationChapterPlan => Boolean(item))
+  return plans.length > 0 ? plans : fallbackPlans
+}
+
 function normalizeEvidencePack(value: unknown, allowedIds: Set<string>): CitationEvidencePack | null {
   if (!value || typeof value !== 'object') return null
   const raw = value as Record<string, unknown>
+  const normalizedGoal = normalizeCitationGoal(raw.citationGoal) ?? citationGoal()
   const chapterEvidence = Array.isArray(raw.chapterEvidence)
     ? raw.chapterEvidence.slice(0, 16).map(item => {
         const chapter = item && typeof item === 'object' ? item as Record<string, unknown> : {}
@@ -326,18 +438,21 @@ function normalizeEvidencePack(value: unknown, allowedIds: Set<string>): Citatio
     : []
 
   return {
+    citationGoal: normalizedGoal,
     theoryConcepts: normalizeEvidencePoints(raw.theoryConcepts, allowedIds),
     literatureReview: normalizeEvidencePoints(raw.literatureReview, allowedIds),
     methodSupport: normalizeEvidencePoints(raw.methodSupport, allowedIds),
     caseEvidence: normalizeEvidencePoints(raw.caseEvidence, allowedIds),
     chapterEvidence,
+    chapterCitationPlans: normalizeChapterPlans(raw.chapterCitationPlans, allowedIds, []),
     rejectedSourceIds: normalizeStringArray(raw.rejectedSourceIds).filter(id => allowedIds.has(id)).slice(0, 20),
     cautions: normalizeStringArray(raw.cautions).slice(0, 8),
     summary: String(raw.summary ?? '').trim().slice(0, 420),
   }
 }
 
-function fallbackEvidencePack(autoSources: ScholarPaper[], outline: string): CitationEvidencePack {
+function fallbackEvidencePack(autoSources: ScholarPaper[], outline: string, inputGoal?: Partial<CitationGoal>): CitationEvidencePack {
+  const goal = citationGoal(inputGoal)
   const sourceIds = autoSources.map(stableSourceId).filter(Boolean)
   const chapterTitles = outline
     .split('\n')
@@ -346,6 +461,7 @@ function fallbackEvidencePack(autoSources: ScholarPaper[], outline: string): Cit
     .slice(0, 8)
 
   return {
+    citationGoal: goal,
     theoryConcepts: autoSources.slice(0, 3).map(source => ({
       claim: source.abstract ? source.abstract.slice(0, 160) : `${source.title} 可作为概念、理论或研究背景参考。`,
       sourceIds: [stableSourceId(source)],
@@ -364,6 +480,7 @@ function fallbackEvidencePack(autoSources: ScholarPaper[], outline: string): Cit
       writingPlan: '结合本章标题选择相关文献，先交代已有研究，再落到论文对象分析。',
       keyPoints: [],
     })),
+    chapterCitationPlans: buildFallbackChapterPlans(outline, autoSources, goal),
     rejectedSourceIds: [],
     cautions: ['部分开放文献只有题录或摘要信息，正式提交前建议人工核对原文、页码与参考文献格式。'],
     summary: autoSources.length
@@ -378,8 +495,9 @@ async function buildEvidencePackWithAI(params: {
   researchObject: string
   academicLevel: string
   autoSources: ScholarPaper[]
+  citationGoal: CitationGoal
 }): Promise<CitationEvidencePack> {
-  if (params.autoSources.length === 0) return fallbackEvidencePack([], params.outline)
+  if (params.autoSources.length === 0) return fallbackEvidencePack([], params.outline, params.citationGoal)
   const allowedIds = new Set(params.autoSources.map(stableSourceId).filter(Boolean))
   const sourceText = params.autoSources.map((source, index) => [
     `S${index + 1}`,
@@ -429,9 +547,18 @@ ${sourceText}`,
   try {
     const response = await callAIOnce(messages, 'gpt')
     const parsed = extractJsonObject(response)
-    return normalizeEvidencePack(parsed, allowedIds) ?? fallbackEvidencePack(params.autoSources, params.outline)
+    const normalized = normalizeEvidencePack(parsed, allowedIds)
+    return normalized
+      ? {
+          ...normalized,
+          citationGoal: normalized.citationGoal ?? params.citationGoal,
+          chapterCitationPlans: normalized.chapterCitationPlans?.length
+            ? normalized.chapterCitationPlans
+            : buildFallbackChapterPlans(params.outline, params.autoSources, params.citationGoal),
+        }
+      : fallbackEvidencePack(params.autoSources, params.outline, params.citationGoal)
   } catch {
-    return fallbackEvidencePack(params.autoSources, params.outline)
+    return fallbackEvidencePack(params.autoSources, params.outline, params.citationGoal)
   }
 }
 
@@ -519,7 +646,12 @@ router.post('/prepare', requireAuth, async (req, res) => {
   const outline = typeof req.body.outline === 'string' ? req.body.outline.trim() : ''
   const researchObject = typeof req.body.researchObject === 'string' ? req.body.researchObject.trim() : ''
   const academicLevel = typeof req.body.academicLevel === 'string' ? req.body.academicLevel.trim() : ''
-  const limit = Math.min(Math.max(Number(req.body.limit ?? 12), 3), 15)
+  const goal = citationGoal({
+    targetFinalCitationCount: Number(req.body.targetFinalCitationCount ?? 30),
+    firstDraftCitationCount: Number(req.body.firstDraftCitationCount ?? 16),
+    usableSourceCount: Number(req.body.limit ?? 40),
+  })
+  const limit = Math.min(Math.max(Number(req.body.limit ?? goal.usableSourceCount), 12), 50)
 
   if (!title && !outline) {
     res.status(400).json({ error: 'Missing title or outline' })
@@ -529,26 +661,26 @@ router.post('/prepare', requireAuth, async (req, res) => {
   const queries = await generateSearchQueries(title, outline, researchObject, academicLevel)
   const batches = await Promise.all(queries.map(async query => {
     try {
-      const openAlex = await searchOpenAlex(query, 10)
+      const openAlex = await searchOpenAlex(query, 12)
       if (openAlex.length > 0) return openAlex
-      return searchCrossref(query, 10)
+      return searchCrossref(query, 12)
     } catch {
       try {
-        return await searchCrossref(query, 10)
+        return await searchCrossref(query, 12)
       } catch {
         return []
       }
     }
   }))
 
-  const candidates = dedupePapers(interleavePaperBatches(batches)).slice(0, 50)
+  const candidates = dedupePapers(interleavePaperBatches(batches)).slice(0, 100)
   if (candidates.length === 0) {
     res.json({
       provider: 'OpenAlex/Crossref',
       queries,
       candidates: [],
       autoSources: [],
-      evidencePack: fallbackEvidencePack([], outline),
+      evidencePack: fallbackEvidencePack([], outline, goal),
       auditNote: '未检索到可靠候选文献，本次生成不会自动插入引用。',
     })
     return
@@ -568,6 +700,7 @@ router.post('/prepare', requireAuth, async (req, res) => {
     researchObject,
     academicLevel,
     autoSources,
+    citationGoal: goal,
   })
 
   res.json({

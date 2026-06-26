@@ -1,18 +1,24 @@
 import {
   AlignmentType,
+  BorderStyle,
   Document,
+  ExternalHyperlink,
   FootnoteReferenceRun,
   HeadingLevel,
   ImageRun,
   Packer,
   Paragraph,
+  Table,
+  TableCell,
+  TableRow,
   TextRun,
+  WidthType,
 } from 'docx'
 import { isFrontMatterTitle, stripAcademicTitlePrefix } from './academicFormat'
 import { cleanTitle, isDuplicateSectionTitle, parsePaperBlocks } from './documentFormat'
 import type { PaperEditorMark, PaperEditorNode } from './editorDocument'
 import { editorDocWithFootnoteMarks, isPaperEditorDoc, walkEditorText } from './editorDocument'
-import { getFootnotesForBlock, splitTextWithFootnotes } from './footnotes'
+import { cleanBibliographyNote, getFootnotesForBlock, splitTextWithFootnotes } from './footnotes'
 import { researchPackageStore, type DocSection, type ResearchPackageComponent } from './storage'
 
 const FONT = '宋体'
@@ -160,7 +166,82 @@ function createBodyParagraphFromEditorNode(node: PaperEditorNode) {
   })
 }
 
-function createResearchComponentParagraphs(component: ResearchPackageComponent) {
+type DocxBlock = Paragraph | Table
+
+function tableCell(text: string, bold = false, bottomBorder = false) {
+  return new TableCell({
+    margins: { top: 80, bottom: 80, left: 80, right: 80 },
+    borders: bottomBorder ? { bottom: { style: BorderStyle.SINGLE, size: 6, color: TEXT_COLOR } } : undefined,
+    children: [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun({ text, bold, font: FONT, size: 21 })],
+      }),
+    ],
+  })
+}
+
+function createResearchTableBlocksFromData(data: {
+  title?: unknown
+  columns?: unknown
+  columnLabels?: unknown
+  rows?: unknown
+  note?: unknown
+  truncated?: unknown
+  totalRows?: unknown
+}): DocxBlock[] {
+  const title = typeof data.title === 'string' ? data.title : ''
+  const columns = Array.isArray(data.columns) ? data.columns.filter((item): item is string => typeof item === 'string') : []
+  const labels = Array.isArray(data.columnLabels) ? data.columnLabels.filter((item): item is string => typeof item === 'string') : columns
+  const rows = Array.isArray(data.rows)
+    ? data.rows.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
+    : []
+  const note = typeof data.note === 'string' ? data.note : ''
+  if (!columns.length || !rows.length) return []
+
+  const noBorder = { style: BorderStyle.NIL, size: 0, color: 'FFFFFF' }
+  const lineBorder = { style: BorderStyle.SINGLE, size: 8, color: TEXT_COLOR }
+  const table = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: {
+      top: lineBorder,
+      bottom: lineBorder,
+      left: noBorder,
+      right: noBorder,
+      insideVertical: noBorder,
+      insideHorizontal: noBorder,
+    },
+    rows: [
+      new TableRow({
+        children: labels.map(label => tableCell(label, true, true)),
+        tableHeader: true,
+      }),
+      ...rows.map(row => new TableRow({
+        children: columns.map(column => tableCell(String(row[column] ?? ''))),
+      })),
+    ],
+  })
+
+  const blocks: DocxBlock[] = [
+    ...(title ? [new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 160, after: 80 },
+      children: [new TextRun({ text: title, bold: true, font: HEADING_FONT, size: 24 })],
+    })] : []),
+    table,
+  ]
+  const extra = data.truncated ? `（表内展示前 ${rows.length} 行，完整数据共 ${data.totalRows ?? rows.length} 行。）` : ''
+  if (note || extra) {
+    blocks.push(new Paragraph({
+      alignment: AlignmentType.LEFT,
+      spacing: { after: 120 },
+      children: [new TextRun({ text: `${note}${extra}`, font: FONT, size: 20 })],
+    }))
+  }
+  return blocks
+}
+
+function createResearchComponentParagraphs(component: ResearchPackageComponent): DocxBlock[] {
   const title = component.label ? `${component.label} ${component.title ?? ''}`.trim() : component.title
   const figureData = component.type === 'figure' && component.data && typeof component.data === 'object'
     ? (component.data as { dataUrl?: string; caption?: string })
@@ -184,6 +265,10 @@ function createResearchComponentParagraphs(component: ResearchPackageComponent) 
         children: [new TextRun({ text: component.content.trim(), font: FONT, size: 21 })],
       })] : []),
     ]
+  }
+  if ((component.type === 'statistics' || component.type === 'table') && component.data && typeof component.data === 'object') {
+    const tableBlocks = createResearchTableBlocksFromData(component.data as Record<string, unknown>)
+    if (tableBlocks.length) return tableBlocks
   }
   return [
     ...(title ? [new Paragraph({
@@ -234,9 +319,8 @@ function imageRunFromDataUrl(dataUrl: string, width = 460, height = 280) {
   })
 }
 
-function createResearchImageParagraphs(node: PaperEditorNode) {
+function createResearchImageParagraphs(node: PaperEditorNode): DocxBlock[] {
   const src = typeof node.attrs?.src === 'string' ? node.attrs.src : ''
-  const caption = typeof node.attrs?.caption === 'string' ? node.attrs.caption : ''
   if (!src.startsWith('data:image/')) return []
   return [
     new Paragraph({
@@ -244,15 +328,14 @@ function createResearchImageParagraphs(node: PaperEditorNode) {
       spacing: { before: 160, after: 100 },
       children: [imageRunFromDataUrl(src)],
     }),
-    ...(caption ? [new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 120 },
-      children: [new TextRun({ text: caption, font: FONT, size: 21 })],
-    })] : []),
   ]
 }
 
-function createResearchBlockParagraphs(node: PaperEditorNode) {
+function createResearchTableParagraphs(node: PaperEditorNode): DocxBlock[] {
+  return createResearchTableBlocksFromData(node.attrs ?? {})
+}
+
+function createResearchBlockParagraphs(node: PaperEditorNode): DocxBlock[] {
   const packageId = typeof node.attrs?.researchPackageId === 'string' ? node.attrs.researchPackageId : ''
   const pkg = packageId ? researchPackageStore.get(packageId) : null
   if (!pkg) return [createBodyParagraphFromEditorNode(node)]
@@ -304,16 +387,35 @@ function createFrontMatterBodyParagraph(text: string, english = false) {
 }
 
 function extractFrontMatterBlocks(content: string) {
-  const get = (label: string) => {
-    const match = content.match(new RegExp(`【${label}】([\\s\\S]*?)(?=\\n?【|$)`, 'i'))
-    return match?.[1]?.trim() ?? ''
+  const blocks = {
+    abstractZh: '',
+    keywordsZh: '',
+    abstractEn: '',
+    keywordsEn: '',
   }
-  return {
-    abstractZh: get('摘要'),
-    keywordsZh: get('关键词').replace(/^关键词[:：]\s*/, '').trim(),
-    abstractEn: get('Abstract'),
-    keywordsEn: get('Keywords').replace(/^Keywords[:：]\s*/i, '').trim(),
-  }
+  let current: keyof typeof blocks | '' = ''
+
+  content.split(/\n+/).forEach(raw => {
+    const text = raw.trim()
+    if (!text) return
+    const match = text.match(/^【?\s*(摘要|中文摘要|关键词|关键字|Abstract|Keywords?)\s*】?\s*[:：]?\s*(.*)$/i)
+    if (match) {
+      const label = match[1].toLowerCase()
+      current = label === 'abstract'
+        ? 'abstractEn'
+        : label.startsWith('keyword')
+          ? 'keywordsEn'
+          : label === '关键词' || label === '关键字'
+            ? 'keywordsZh'
+            : 'abstractZh'
+      const rest = match[2]?.trim()
+      if (rest) blocks[current] = [blocks[current], rest].filter(Boolean).join('\n')
+      return
+    }
+    if (current) blocks[current] = [blocks[current], text].filter(Boolean).join('\n')
+  })
+
+  return blocks
 }
 
 function createFrontMatterParagraphs(section: DocSection) {
@@ -389,6 +491,35 @@ function createFrontMatterParagraphs(section: DocSection) {
   return fallbackChildren.length > 0 ? fallbackChildren : [createFrontMatterHeading('摘要')]
 }
 
+function createFootnoteTextRuns(text: string) {
+  const runs: Array<TextRun | ExternalHyperlink> = []
+  const pattern = /(https?:\/\/[^\s，。；,;]+)/g
+  let cursor = 0
+  for (const match of text.matchAll(pattern)) {
+    const url = match[0]
+    const index = match.index ?? 0
+    if (index > cursor) {
+      runs.push(new TextRun({ text: text.slice(cursor, index), font: FONT, size: 20 }))
+    }
+    runs.push(new ExternalHyperlink({
+      link: url,
+      children: [
+        new TextRun({
+          text: url,
+          font: FONT,
+          size: 20,
+          style: 'Hyperlink',
+        }),
+      ],
+    }))
+    cursor = index + url.length
+  }
+  if (cursor < text.length) {
+    runs.push(new TextRun({ text: text.slice(cursor), font: FONT, size: 20 }))
+  }
+  return runs
+}
+
 function buildFootnotesMap(sections: DocSection[]) {
   const footnotes: Record<string, { children: Paragraph[] }> = {}
 
@@ -401,11 +532,7 @@ function buildFootnotesMap(sections: DocSection[]) {
             spacing: { after: 120 },
             children: [
               new FootnoteReferenceRun(footnote.number),
-              new TextRun({
-                text: ` ${footnote.noteText}`,
-                font: FONT,
-                size: 20,
-              }),
+              ...createFootnoteTextRuns(` ${cleanBibliographyNote(footnote.noteText)}`),
             ],
           }),
         ],
@@ -426,7 +553,7 @@ function isRepeatedHeading(
 }
 
 function buildDocChildren(title: string, sections: DocSection[]) {
-  const children: Paragraph[] = [createTitleParagraph(title)]
+  const children: DocxBlock[] = [createTitleParagraph(title)]
 
   sections.forEach(section => {
     if (isFrontMatterTitle(section.title)) {
@@ -449,6 +576,8 @@ function buildDocChildren(title: string, sections: DocSection[]) {
             children.push(createSubHeading(plainTextFromEditorNode(node), node.attrs?.level === 3 ? 3 : 2))
           } else if (node.type === 'researchImage') {
             children.push(...createResearchImageParagraphs(node))
+          } else if (node.type === 'researchTable') {
+            children.push(...createResearchTableParagraphs(node))
           } else if (node.type === 'researchBlock' || (node.type === 'paragraph' && node.attrs?.researchBlock)) {
             children.push(...createResearchBlockParagraphs(node))
           } else if (node.type === 'paragraph') {

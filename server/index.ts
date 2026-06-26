@@ -9,6 +9,7 @@ import libraryRouter from './routes/library.js'
 import outlinesRouter from './routes/outlines.js'
 import projectsRouter from './routes/projects.js'
 import referencesRouter from './routes/references.js'
+import researchPackagesRouter from './routes/researchPackages.js'
 import researchRouter from './routes/research.js'
 import scholarRouter from './routes/scholar.js'
 import sectionsRouter from './routes/sections.js'
@@ -53,6 +54,7 @@ app.use('/api/library', libraryRouter)
 app.use('/api/style-profiles', styleProfilesRouter)
 app.use('/api/chat', chatRouter)
 app.use('/api/references', referencesRouter)
+app.use('/api/research-packages', researchPackagesRouter)
 app.use('/api/research', researchRouter)
 app.use('/api/ai', aiRouter)
 app.use('/api/files', filesRouter)
