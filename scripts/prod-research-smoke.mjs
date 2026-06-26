@@ -164,6 +164,51 @@ function componentsFromAnalysis(analysis, scenario) {
   })
 }
 
+function pngDimensionsFromDataUrl(dataUrl) {
+  const value = String(dataUrl ?? '')
+  const match = /^data:image\/png;base64,(.+)$/.exec(value)
+  assert(match, 'figure is not a PNG data URL')
+  const buffer = Buffer.from(match[1], 'base64')
+  assert(buffer.length > 25 && buffer.toString('ascii', 1, 4) === 'PNG', 'figure data is not a valid PNG')
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20),
+    colorType: buffer[25],
+    bytes: buffer.length,
+  }
+}
+
+function assertPaperReadyComponents(analysis, components, scenario) {
+  const tables = analysis.tables ?? []
+  const figures = analysis.figures ?? []
+  const methodCount = components.filter(component => component.type === 'method').length
+  const tableCount = components.filter(component => component.type === 'statistics' || component.type === 'table').length
+  const figureCount = components.filter(component => component.type === 'figure').length
+  const beforeCount = components.filter(component => component.type === 'analysis' && String(component.title ?? '').endsWith(': before')).length
+  const afterCount = components.filter(component => component.type === 'analysis' && String(component.title ?? '').endsWith(': after')).length
+  const narrativeText = components
+    .filter(component => component.type === 'analysis' || component.type === 'method')
+    .map(component => String(component.content ?? ''))
+    .join('\n')
+
+  assert(methodCount >= 1, 'paper-ready method narrative is missing')
+  assert(tableCount >= scenario.minTables, `paper-ready table components are missing: ${tableCount}`)
+  assert(figureCount >= scenario.minFigures, `paper-ready figure components are missing: ${figureCount}`)
+  assert(beforeCount >= tables.length + figures.length, `not every production table/figure has a before paragraph: ${beforeCount}`)
+  assert(afterCount >= tables.length + figures.length, `not every production table/figure has an after paragraph: ${afterCount}`)
+  assert(/由表|由图|结果显示|可知|说明|表明/.test(narrativeText), 'paper-ready narrative lacks academic result interpretation wording')
+
+  for (const table of tables) {
+    assert((table.columns ?? []).length <= 8, `${table.title} has too many displayed columns`)
+  }
+  for (const figure of figures) {
+    const dimensions = pngDimensionsFromDataUrl(figure.dataUrl)
+    assert(dimensions.width >= 900, `${figure.title} source PNG width is too low: ${dimensions.width}`)
+    assert(dimensions.height >= 250, `${figure.title} source PNG height is too low: ${dimensions.height}`)
+    assert(dimensions.colorType !== 4 && dimensions.colorType !== 6, `${figure.title} source PNG still has alpha`)
+  }
+}
+
 async function inspectDocx(buffer) {
   const zip = await JSZip.loadAsync(buffer)
   const documentXml = await zip.file('word/document.xml')?.async('string')
@@ -246,6 +291,7 @@ async function main() {
 
     assert(plan.plan?.method === scenario.method, `production plan method is wrong: ${plan.plan?.method}`)
     scenario.assertAnalysis(analysis)
+    assertPaperReadyComponents(analysis, components, scenario)
 
     const sections = scenario.sections
     const writePlan = await post('/api/research/write-plan', {
