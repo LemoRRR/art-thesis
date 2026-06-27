@@ -530,7 +530,7 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
     efa,
     tables,
     figures: await buildGenericQuantFigures(descriptive, correlations, anova, efa, cronbachAlpha),
-    methodText: '本次分析基于问卷数据的变量结构和研究方案，依次开展描述性统计、信度检验、相关分析、组间差异检验及探索性因子分析，用于呈现样本特征、测量可靠性和变量关系。',
+    methodText: '本研究采用描述性统计、Cronbach α 信度检验、Pearson 相关分析、单因素方差分析及探索性因子分析等定量研究方法，对问卷数据进行计算与检验。该方法路径用于呈现样本特征、测量可靠性、变量关系、组间差异和潜在因子结构，并为后续结果解释与研究讨论提供统计依据。',
     analysisText: strongest
       ? `相关分析显示，${strongest.x} 与 ${strongest.y} 的相关系数为 r=${strongest.r}。论文写作时应结合研究假设、变量含义和显著性检验进一步解释。`
       : '本次分析已完成基础统计计算。论文写作时应围绕表格中的均值、标准差、相关系数或组间差异进行谨慎解释。',
