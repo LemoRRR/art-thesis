@@ -171,6 +171,10 @@ function assertResearchOutputQuality(analysis, components) {
     if (figure.id === 'figure_entropy_weights') {
       assert(dimensions.height >= 520, `${figure.title} is too short for a paper-ready Word figure: ${dimensions.height}`)
     }
+    if (figure.id === 'figure_kano_entropy_priority') {
+      assert(dimensions.width >= 2000, `${figure.title} source image is too narrow for Word export: ${dimensions.width}`)
+      assert(dimensions.height >= 900, `${figure.title} source image is too compressed for a paper-ready ranking chart: ${dimensions.height}`)
+    }
   }
   assertPaperNarratives({ assert, components, tables, figures, label: 'KANO entropy' })
   const narrativeComponents = components.filter(component => component.type === 'analysis')
@@ -438,7 +442,7 @@ async function main() {
     assert(docx.cellWidthCount > 0, 'DOCX 表格缺少单元格宽度，可能在 Word 中自动撑爆')
     assert(docx.imageCount >= 4, `DOCX 图片数量不足：${docx.imageCount}`)
     assert(docx.imageExtentCount >= 4, `DOCX 图片缺少 Word 显示尺寸：${docx.imageExtentCount}`)
-    assert(docx.minImageExtent.cx >= 3000000 && docx.minImageExtent.cy >= 2400000, `DOCX 图片显示尺寸过小：${JSON.stringify(docx.minImageExtent)}`)
+    assert(docx.minImageExtent.cx >= 5000000 && docx.minImageExtent.cy >= 2400000, `DOCX 图片显示尺寸过小：${JSON.stringify(docx.minImageExtent)}`)
     assert(docx.tableCaptionCount >= 3, `DOCX 表题数量不足：${docx.tableCaptionCount}`)
     assert(docx.figureCaptionCount >= 4, `DOCX 图题数量不足：${docx.figureCaptionCount}`)
     assert(docx.badTerms.length === 0, `DOCX 出现不应展示的内部/乱码词：${docx.badTerms.join('、')}`)
