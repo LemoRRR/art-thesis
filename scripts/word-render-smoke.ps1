@@ -1,6 +1,8 @@
 param(
   [string]$DocxPath = "..\outputs\ich_kano_entropy\prod-research-smoke.docx",
-  [string]$OutputDir = "..\outputs\ich_kano_entropy\word-render-smoke"
+  [string]$OutputDir = "..\outputs\ich_kano_entropy\word-render-smoke",
+  [int]$MinPages = 1,
+  [double]$MinPageVariance = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,6 +69,9 @@ if (!(Wait-Job $wordJob -Timeout 120)) {
 $wordResult = Receive-Job $wordJob
 Remove-Job $wordJob -Force -ErrorAction SilentlyContinue
 $pageCount = [int]($wordResult | Select-Object -First 1).pageCount
+if ($pageCount -lt $MinPages) {
+  throw "Word page count is too low: expected at least $MinPages, got $pageCount"
+}
 
 if (!(Test-Path $pdf) -or ((Get-Item $pdf).Length -le 0)) {
   throw "Word did not create a valid PDF: $pdf"
@@ -106,6 +111,7 @@ from PIL import Image, ImageStat
 
 out_dir = sys.argv[1]
 expected_pages = int(sys.argv[2])
+min_variance = float(sys.argv[3])
 paths = sorted(glob.glob(os.path.join(out_dir, "page-*.png")))
 if not paths:
     raise SystemExit("No rendered PNG pages were created")
@@ -126,6 +132,8 @@ for path in paths:
             raise SystemExit(f"Rendered page is too small: {path} {width}x{height}")
         if variance < 1 and not nonwhite:
             raise SystemExit(f"Rendered page appears blank: {path}")
+        if variance < min_variance:
+            raise SystemExit(f"Rendered page has too little visual content: {path} variance={variance:.2f}, min={min_variance}")
         pages.append({
             "path": path,
             "width": width,
@@ -136,7 +144,7 @@ for path in paths:
 print(json.dumps({"ok": True, "pageCount": len(pages), "pages": pages}, ensure_ascii=False, indent=2))
 '@ | Set-Content -Path $checkScript -Encoding UTF8
 
-$renderCheck = & $python $checkScript $outDir $pageCount
+$renderCheck = & $python $checkScript $outDir $pageCount $MinPageVariance
 if ($LASTEXITCODE -ne 0) {
   throw "Rendered page check failed"
 }
