@@ -27,6 +27,13 @@ function withTimeout(promise, label, timeoutMs = 10_000) {
   ])
 }
 
+async function closeBrowserQuietly(browser, label = 'browser.close') {
+  if (!browser) return
+  await withTimeout(browser.close(), label, 10_000).catch(error => {
+    console.warn(`[prod-stage3-research-e2e] ${label} skipped: ${error instanceof Error ? error.message : String(error)}`)
+  })
+}
+
 function loadPlaywright() {
   const candidates = [
     'playwright',
@@ -383,7 +390,7 @@ async function main() {
       docxInspection,
     }, null, 2))
 
-    await withTimeout(browser.close(), 'browser.close')
+    await closeBrowserQuietly(browser)
     browser = null
   } catch (error) {
     if (page) {
@@ -403,7 +410,7 @@ async function main() {
     }
     throw error
   } finally {
-    if (browser) await withTimeout(browser.close(), 'browser.close', 10_000).catch(() => null)
+    if (browser) await closeBrowserQuietly(browser)
     await withTimeout(cleanup({ token, projectId, sectionIds, packageIds }), 'cleanup', 20_000).catch(error => {
       console.warn(`[prod-stage3-research-e2e] cleanup skipped: ${error instanceof Error ? error.message : String(error)}`)
     })
