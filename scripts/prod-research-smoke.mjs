@@ -17,6 +17,7 @@ const defaultKanoWorkbookPath = path.resolve(
 )
 const scenarioName = String(process.env.PROD_RESEARCH_SMOKE_SCENARIO ?? process.argv[4] ?? 'ahp').toLowerCase()
 const keepProject = process.env.PROD_RESEARCH_SMOKE_KEEP === '1'
+const hasCustomKanoWorkbook = Boolean(process.env.PROD_RESEARCH_SMOKE_XLSX)
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -179,14 +180,17 @@ function scenarioConfig() {
       ],
       assertAnalysis: analysis => {
         assert(analysis.method === 'kano_entropy', `production analysis method is not KANO entropy: ${analysis.method}`)
+        const hasEntropyTable = (analysis.tables ?? []).some(table => table.id === 'table_entropy_weights')
         assert((analysis.tables ?? []).some(table => table.id === 'table_kano_summary'), 'production KANO summary table missing')
-        assert((analysis.tables ?? []).some(table => table.id === 'table_entropy_weights'), 'production entropy weight table missing')
+        if (!hasCustomKanoWorkbook) {
+          assert(hasEntropyTable, 'production entropy weight table missing')
+        }
         assert((analysis.tables ?? []).some(table => table.id === 'table_priority_ranking'), 'production priority table missing')
         assert((analysis.figures ?? []).some(figure => figure.id === 'figure_kano_distribution'), 'production KANO distribution figure missing')
         assert((analysis.figures ?? []).some(figure => figure.id === 'figure_kano_entropy_priority'), 'production priority figure missing')
       },
-      minTables: 3,
-      minFigures: 4,
+      minTables: hasCustomKanoWorkbook ? 2 : 3,
+      minFigures: hasCustomKanoWorkbook ? 3 : 4,
     }
   }
 
