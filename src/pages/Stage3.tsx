@@ -11,6 +11,7 @@ import TopBar from '../components/TopBar'
 import { callDoubao, callGPT, type Message } from '../lib/ai'
 import { outlinesAPI, researchAPI, scholarAPI, type ScholarPaper } from '../lib/api'
 import { formatAcademicOutlineText, formatAcademicOutlineTitle, formatAcademicSectionContentWithOutline, isFrontMatterTitle } from '../lib/academicFormat'
+import { applyCitationPatchesToSections } from '../lib/citationPatches'
 import {
   finalizeSectionWithCitations,
   formatChapterEvidenceForPrompt,
@@ -2493,53 +2494,18 @@ export default function Stage3() {
 
   const applyCitationPatches = (patches: CitationPatchDraft[]) => {
     if (patches.length === 0) return
-    let appliedCount = 0
-    let nextSections = sections
 
-    patches.forEach(patch => {
-      nextSections = nextSections.map(section => {
-        if (section.id !== patch.sectionId) return section
-        if (isFrontMatterTitle(section.title) || /^(?:关键词|关键字|目录|参考文献|致谢|附录|题目|标题|论文题目)$/i.test(section.title.trim())) return section
-        const anchorText = patch.revisedText?.trim() || patch.originalText
-        const alreadyExists = (section.footnotes ?? []).some(footnote =>
-          (footnote.anchorText === patch.originalText || footnote.anchorText === anchorText) &&
-          footnote.noteText === patch.source.noteText
-        )
-        if (alreadyExists) return section
-
-        const nextContent = section.content.includes(patch.originalText)
-          ? section.content.replace(patch.originalText, anchorText)
-          : section.content
-        const blocks = parsePaperBlocks(nextContent)
-        const blockIndex = blocks.findIndex(block => block.type === 'paragraph' && block.text.includes(anchorText))
-        if (blockIndex < 0) return section
-
-        const start = blocks[blockIndex].text.indexOf(anchorText)
-        if (start < 0) return section
-
-        const footnote = createFootnote(nextSections, {
-          blockIndex,
-          start,
-          end: start + anchorText.length,
-          anchorText,
-          noteText: patch.source.noteText,
-        })
-        appliedCount += 1
-        return {
-          ...section,
-          content: nextContent,
-          footnotes: [...(section.footnotes ?? []), footnote],
-          editorDoc: paperTextToEditorDoc(nextContent),
-          lastModified: Date.now(),
-        }
-      })
+    const { sections: nextSections, appliedCount } = applyCitationPatchesToSections(sections, patches, {
+      shouldSkipSection: section =>
+        isFrontMatterTitle(section.title) ||
+        /^(?:\u5173\u952e\u8bcd|\u5173\u952e\u5b57|\u76ee\u5f55|\u53c2\u8003\u6587\u732e|\u81f4\u8c22|\u9644\u5f55|\u9898\u76ee|\u6807\u9898|\u8bba\u6587\u9898\u76ee)$/i.test(section.title.trim()),
     })
 
     setSections(persistSections(nextSections, appliedCount > 0 ? `引用增强：应用 ${appliedCount} 条引用建议` : undefined))
 
     setCitationAuditNote(appliedCount > 0
       ? `引用增强已应用 ${appliedCount} 条建议。可在正文中点击脚注继续编辑。`
-      : '引用增强未找到可写入的位置：可能是正文已经被修改，建议重新扫描引用点。'
+      : '引用增强未找到可写入的位置：可能是正文已被修改，建议重新扫描引用点。'
     )
   }
 

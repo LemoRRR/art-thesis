@@ -92,6 +92,47 @@ function assertProfessionalFigureMetadata(figure, dimensions) {
   assert(dimensions.bytes >= 12_000, `${figure.title} PNG is suspiciously small: ${dimensions.bytes} bytes`)
 }
 
+async function inspectPngPixels(buffer, name) {
+  const { default: sharp } = await import('sharp')
+  const image = sharp(buffer)
+  const metadata = await image.metadata()
+  assert(metadata.width >= 1000, `DOCX PNG width is too low: ${name}`)
+  assert(metadata.height >= 360, `DOCX PNG height is too low: ${name}`)
+  const { data, info } = await image
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true })
+  const channels = info.channels
+  const pixel = (x, y) => {
+    const offset = (y * info.width + x) * channels
+    return [data[offset], data[offset + 1], data[offset + 2]]
+  }
+  const luminance = ([red, green, blue]) => 0.2126 * red + 0.7152 * green + 0.0722 * blue
+  const corners = [
+    pixel(0, 0),
+    pixel(info.width - 1, 0),
+    pixel(0, info.height - 1),
+    pixel(info.width - 1, info.height - 1),
+  ]
+  assert(
+    corners.every(value => luminance(value) >= 245),
+    `DOCX PNG corners must stay white for thesis charts: ${name}`
+  )
+  const edgeSamples = []
+  const sampleStepX = Math.max(1, Math.floor(info.width / 36))
+  const sampleStepY = Math.max(1, Math.floor(info.height / 24))
+  for (let x = 0; x < info.width; x += sampleStepX) {
+    edgeSamples.push(pixel(x, 0), pixel(x, info.height - 1))
+  }
+  for (let y = 0; y < info.height; y += sampleStepY) {
+    edgeSamples.push(pixel(0, y), pixel(info.width - 1, y))
+  }
+  assert(
+    edgeSamples.every(value => luminance(value) >= 245),
+    `DOCX PNG edges must stay white for thesis charts: ${name}`
+  )
+}
+
 function assertResearchOutputQuality(analysis, components) {
   const tables = analysis.tables ?? []
   const figures = analysis.figures ?? []
@@ -153,6 +194,7 @@ async function inspectDocx(buffer) {
       assert(mediaBuffer.toString('ascii', 1, 4) === 'PNG', `DOCX image is not a valid PNG: ${name}`)
       const colorType = mediaBuffer[25]
       assert(colorType !== 4 && colorType !== 6, `DOCX PNG image must be flattened without alpha: ${name}`)
+      await inspectPngPixels(mediaBuffer, name)
       mediaChecks.push({ name, colorType, bytes: mediaBuffer.length })
     }
   }
