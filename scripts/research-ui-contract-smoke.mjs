@@ -48,6 +48,8 @@ for (const contract of contracts) {
 }
 
 const researchCenterSource = read('src/pages/ResearchCenter.tsx')
+const stage3Source = read('src/pages/Stage3.tsx')
+const referencePanelSource = read('src/components/ReferencePanel.tsx')
 assert(researchCenterSource.includes('const hasDraftContent = useMemo'), 'ResearchCenter must compute whether a full draft exists')
 assert(
   researchCenterSource.includes('if (!hasDraftContent && !isAssetPage)'),
@@ -61,10 +63,19 @@ assert(
   researchCenterSource.indexOf('if (!hasDraftContent && !isAssetPage)') < researchCenterSource.indexOf('if (isAssetPage)'),
   'ResearchCenter draft guard should run before the asset-page branch'
 )
+assert(
+  stage3Source.includes('citationEnhanceAutoStartKey') && stage3Source.includes('autoStartEnhancementKey={citationEnhanceAutoStartKey}'),
+  'Stage3 citation calibration should open the reference panel and auto-start enhancement'
+)
+assert(
+  referencePanelSource.includes('autoStartEnhancementKey') && referencePanelSource.includes('scanCitationPoints()'),
+  'ReferencePanel must support auto-starting citation enhancement'
+)
 
 console.log(JSON.stringify({
   ok: true,
   checkedFiles: contracts.length,
   checkedTestIds: contracts.reduce((sum, item) => sum + item.ids.length, 0),
   checkedResearchGuard: true,
+  checkedCitationAutoStart: true,
 }, null, 2))

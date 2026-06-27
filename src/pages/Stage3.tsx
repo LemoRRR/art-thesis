@@ -1019,6 +1019,7 @@ export default function Stage3() {
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [showReferences, setShowReferences] = useState(false)
+  const [citationEnhanceAutoStartKey, setCitationEnhanceAutoStartKey] = useState(0)
   const [showResearchDrawer, setShowResearchDrawer] = useState(false)
   const [researchReferenceAssetIds, setResearchReferenceAssetIds] = useState<string[]>([])
   const [isGeneratingFull, setIsGeneratingFull] = useState(false)
@@ -3297,6 +3298,7 @@ export default function Stage3() {
                     onClick={() => {
                       setShowReferences(true)
                       setShowResearchDrawer(false)
+                      setCitationEnhanceAutoStartKey(value => value + 1)
                     }}
                     style={{ border: '1px solid var(--color-accent)', background: '#fff', color: 'var(--color-accent)', borderRadius: 6, padding: '5px 9px', fontSize: 11, fontWeight: 750, cursor: 'pointer', fontFamily: 'var(--font-sans)', whiteSpace: 'nowrap', flexShrink: 0 }}
                   >
@@ -3318,6 +3320,7 @@ export default function Stage3() {
         onApplyCitationPatches={applyCitationPatches}
         onInsertEvidenceCard={insertEvidenceCardIntoCurrentSection}
         onUseEvidenceForRewrite={useEvidenceCardForRewrite}
+        autoStartEnhancementKey={citationEnhanceAutoStartKey}
       />
       <ResearchDrawer
         projectId={project.id}

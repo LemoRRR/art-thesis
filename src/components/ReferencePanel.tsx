@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AlertTriangle, BookMarked, BookOpen, Check, FileText, Layers, Lightbulb, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
 import {
@@ -67,6 +67,7 @@ interface ReferencePanelProps {
   onApplyCitationPatches?: (patches: CitationPatchDraft[]) => void
   onInsertEvidenceCard?: (evidence: EvidenceCardAction) => void
   onUseEvidenceForRewrite?: (evidence: EvidenceCardAction) => void
+  autoStartEnhancementKey?: number
 }
 
 interface ScholarCandidate extends ScholarPaper {
@@ -569,6 +570,7 @@ export default function ReferencePanel({
   onApplyCitationPatches,
   onInsertEvidenceCard,
   onUseEvidenceForRewrite,
+  autoStartEnhancementKey = 0,
 }: ReferencePanelProps) {
   const project = projectStore.ensure(projectId)
   const [selection, setSelection] = useState<ReferenceSelection>(() => referenceStore.get(projectId, stage))
@@ -585,6 +587,7 @@ export default function ReferencePanel({
   const [citationFormat, setCitationFormat] = useState<CitationFormat>('footnote')
   const [enhancementStatus, setEnhancementStatus] = useState<EnhancementStatus>('idle')
   const [enhancementStep, setEnhancementStep] = useState(0)
+  const lastAutoStartKeyRef = useRef(0)
   const showScholarSearch = stage === 'stage3'
 
   const libraryItems = libraryStore.getAll()
@@ -818,6 +821,18 @@ export default function ReferencePanel({
       progressTimers.forEach(timer => window.clearTimeout(timer))
     }
   }
+
+  useEffect(() => {
+    if (!open || autoStartEnhancementKey <= 0 || lastAutoStartKeyRef.current === autoStartEnhancementKey) return
+    lastAutoStartKeyRef.current = autoStartEnhancementKey
+    const timer = window.setTimeout(() => {
+      void scanCitationPoints()
+    }, 120)
+    return () => window.clearTimeout(timer)
+    // Intentionally token-driven: the latest click increments autoStartEnhancementKey,
+    // while scanCitationPoints reads the panel state active for that open cycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStartEnhancementKey, open])
 
   const saveAutoSourceToLibrary = (source: CitationEvidenceSource) => {
     const existing = libraryStore.getAll().find(item =>
