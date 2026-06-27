@@ -130,6 +130,73 @@ async function main() {
   assert((noSource.patches ?? []).length === 0, 'unreliable sources should not produce citation patches')
   assert(String(noSource.auditNote ?? '').length > 0, 'no-source response should explain why no patches were produced')
 
+  const unrelated = await requestJson('POST', '/api/references/enhance', {
+    sections,
+    sources: [
+      {
+        id: 'src_unrelated_planets',
+        title: 'Orbital Resonance in Exoplanetary Systems',
+        authors: ['Rivera Ana'],
+        year: 2020,
+        url: 'https://example.org/exoplanet-orbital-resonance',
+        abstract: 'This astronomy paper discusses orbital periods, planetary migration and resonance chains in extrasolar systems.',
+      },
+      {
+        id: 'src_unrelated_battery',
+        title: 'Lithium Battery Thermal Management Materials',
+        authors: ['Smith Alex'],
+        year: 2021,
+        doi: '10.0000/battery-thermal-materials',
+        abstract: 'This engineering paper studies heat transfer, phase-change materials and cooling channels for lithium battery packs.',
+      },
+    ],
+    minPatchCount: 2,
+  }, token)
+  assert(unrelated.ok === true, 'unrelated-source response should be ok')
+  assert((unrelated.patches ?? []).length === 0, 'reliable but unrelated sources should not produce citation patches')
+
+  const methodMismatch = await requestJson('POST', '/api/references/enhance', {
+    sections: [
+      {
+        id: 'method-kano',
+        title: 'Method grounding',
+        content: 'The KANO model is used to classify user requirements into must-be, one-dimensional and attractive categories before prioritizing design elements.',
+      },
+      {
+        id: 'method-entropy',
+        title: 'Weighting method',
+        content: 'Entropy weight method calculates objective indicator weights according to dispersion and is used to reduce subjective ranking bias.',
+      },
+    ],
+    sources: [
+      {
+        id: 'src_entropy_only',
+        title: 'Entropy Weight Method for Objective Indicator Weighting',
+        authors: ['Wang Li'],
+        year: 2021,
+        url: 'https://example.org/entropy-weight-method-only',
+        abstract: 'Entropy weight method calculates objective weights from indicator dispersion and supports ranking decisions.',
+      },
+      {
+        id: 'src_kano_only',
+        title: 'KANO Model and Customer Satisfaction Classification',
+        authors: ['Kano Noriaki'],
+        year: 1984,
+        doi: '10.0000/kano-model-only',
+        abstract: 'The KANO model classifies requirements into must-be, one-dimensional and attractive qualities.',
+      },
+    ],
+    minPatchCount: 2,
+    idealPatchCount: 2,
+  }, token)
+  assert(methodMismatch.ok === true, 'method-mismatch response should be ok')
+  assertPatchQuality(methodMismatch.patches ?? [], 2)
+  for (const patch of methodMismatch.patches ?? []) {
+    const text = String(patch.originalText ?? '')
+    if (/KANO/i.test(text)) assert(patch.source.id === 'src_kano_only', 'KANO claim should only bind to a KANO source')
+    if (/Entropy/i.test(text)) assert(patch.source.id === 'src_entropy_only', 'entropy claim should only bind to an entropy source')
+  }
+
   const enhanced = await requestJson('POST', '/api/references/enhance', {
     projectTitle: '非遗文创视觉元素魅力识别研究',
     researchObject: '非遗文创产品视觉元素与青年用户评价',
@@ -146,6 +213,8 @@ async function main() {
     ok: true,
     baseUrl,
     noSourcePatchCount: noSource.patches?.length ?? 0,
+    unrelatedPatchCount: unrelated.patches?.length ?? 0,
+    methodMismatchPatchCount: methodMismatch.patches?.length ?? 0,
     patchCount: enhanced.patches?.length ?? 0,
     auditNote: enhanced.auditNote,
     skipped: enhanced.skipped ?? [],
