@@ -139,9 +139,12 @@ function assertResearchOutputQuality(analysis, components) {
   const priorityTable = tables.find(table => table.id === 'table_priority_ranking')
   const entropyTable = tables.find(table => table.id === 'table_entropy_weights')
   assert(priorityTable, 'priority ranking table is missing')
-  assert(entropyTable, 'entropy weight table is missing')
+  const hasEntropyTable = Boolean(entropyTable)
+  const expectedPriorityColumns = hasEntropyTable
+    ? ['排名', '维度', 'KANO', 'Better', 'Worse', '熵权', '综合分']
+    : ['排名', '维度', 'KANO', 'Better', 'Worse']
   assert(
-    JSON.stringify(priorityTable.columns) === JSON.stringify(['排名', '维度', 'KANO', 'Better', 'Worse', '熵权', '综合分']),
+    JSON.stringify(priorityTable.columns) === JSON.stringify(expectedPriorityColumns),
     `priority ranking table columns are not paper-ready: ${JSON.stringify(priorityTable.columns)}`
   )
   const rawKanoCodes = new Set(['M', 'O', 'A', 'I', 'Q', 'R'])
@@ -155,10 +158,12 @@ function assertResearchOutputQuality(analysis, components) {
     priorityKanoValues.some(value => value.includes('型')),
     `priority ranking table should use Chinese KANO labels: ${priorityKanoValues.join(', ')}`
   )
-  assert(
-    JSON.stringify(entropyTable.columns) === JSON.stringify(['指标', '熵值', '差异', '权重(%)']),
-    `entropy weight table columns are not paper-ready: ${JSON.stringify(entropyTable.columns)}`
-  )
+  if (entropyTable) {
+    assert(
+      JSON.stringify(entropyTable.columns) === JSON.stringify(['指标', '熵值', '差异', '权重(%)']),
+      `entropy weight table columns are not paper-ready: ${JSON.stringify(entropyTable.columns)}`
+    )
+  }
   for (const table of tables) {
     assert((table.columns ?? []).length <= 7, `${table.title} has too many displayed columns`)
     assert(!(table.columns ?? []).includes('维度全称'), `${table.title} still exposes the long dimension column`)
@@ -341,9 +346,12 @@ async function main() {
     const placements = writePlan.plan?.placements ?? []
     const tableCount = analysis.tables?.length ?? 0
     const figureCount = analysis.figures?.length ?? 0
+    const hasEntropyTable = (analysis.tables ?? []).some(table => table.id === 'table_entropy_weights')
+    const expectedTableCount = hasEntropyTable ? 3 : 2
+    const expectedFigureCount = hasEntropyTable ? 4 : 3
     assert(plan.plan?.method === 'kano_entropy', '未识别为 KANO-熵权法分析')
-    assert(tableCount >= 3, `表格数量不足：${tableCount}`)
-    assert(figureCount >= 4, `图片数量不足：${figureCount}`)
+    assert(tableCount >= expectedTableCount, `表格数量不足：${tableCount}`)
+    assert(figureCount >= expectedFigureCount, `图片数量不足：${figureCount}`)
     assert(placements.some(item => item.role === 'method' && item.targetSectionId === 's3'), '方法组件未写入研究设计章节')
     assert(placements.some(item => item.role === 'result' && item.targetSectionId === 's4'), '结果组件未写入数据分析章节')
     assert(placements.some(item => item.role === 'discussion' && item.targetSectionId === 's5'), '讨论建议组件未写入优化策略/研究讨论章节')
@@ -381,7 +389,7 @@ async function main() {
     const resultPkg = {
       id: 'smoke-result',
       projectId: 'smoke',
-      title: 'KANO-熵权法分析结果',
+      title: hasEntropyTable ? 'KANO-熵权法分析结果' : 'KANO分析结果',
       components: components.filter(component => resultIds.has(component.id)),
       insertedComponentIds: [],
       createdAt: Date.now(),
@@ -465,14 +473,14 @@ async function main() {
     assert(docx.page.width === 11906 && docx.page.height === 16838, `DOCX 页面不是 A4 纵向：${JSON.stringify(docx.page)}`)
     assert(docx.page.marginLeft >= 1440 && docx.page.marginRight >= 1440, `DOCX 左右页边距过窄：${JSON.stringify(docx.page)}`)
     assert(docx.page.marginTop >= 1200 && docx.page.marginBottom >= 1200, `DOCX 上下页边距过窄：${JSON.stringify(docx.page)}`)
-    assert(docx.tableCount >= 3, `DOCX 表格数量不足：${docx.tableCount}`)
+    assert(docx.tableCount >= expectedTableCount, `DOCX 表格数量不足：${docx.tableCount}`)
     assert(docx.tableGridCount >= docx.tableCount, 'DOCX 表格缺少固定列宽网格，可能在 Word 中挤压变形')
     assert(docx.cellWidthCount > 0, 'DOCX 表格缺少单元格宽度，可能在 Word 中自动撑爆')
-    assert(docx.imageCount >= 4, `DOCX 图片数量不足：${docx.imageCount}`)
-    assert(docx.imageExtentCount >= 4, `DOCX 图片缺少 Word 显示尺寸：${docx.imageExtentCount}`)
+    assert(docx.imageCount >= expectedFigureCount, `DOCX 图片数量不足：${docx.imageCount}`)
+    assert(docx.imageExtentCount >= expectedFigureCount, `DOCX 图片缺少 Word 显示尺寸：${docx.imageExtentCount}`)
     assert(docx.minImageExtent.cx >= 5000000 && docx.minImageExtent.cy >= 2400000, `DOCX 图片显示尺寸过小：${JSON.stringify(docx.minImageExtent)}`)
-    assert(docx.tableCaptionCount >= 3, `DOCX 表题数量不足：${docx.tableCaptionCount}`)
-    assert(docx.figureCaptionCount >= 4, `DOCX 图题数量不足：${docx.figureCaptionCount}`)
+    assert(docx.tableCaptionCount >= expectedTableCount, `DOCX 表题数量不足：${docx.tableCaptionCount}`)
+    assert(docx.figureCaptionCount >= expectedFigureCount, `DOCX 图题数量不足：${docx.figureCaptionCount}`)
     assert(docx.bodyFootnoteReferenceCount >= 1, `DOCX 缺少正文脚注引用：${docx.bodyFootnoteReferenceCount}`)
     assert(docx.footnoteCount >= 1, `DOCX footnotes.xml 脚注数量不足：${docx.footnoteCount}`)
     assert(docx.hasFootnotesRelationship, 'DOCX 缺少 footnotes relationship')

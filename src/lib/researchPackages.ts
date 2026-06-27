@@ -127,10 +127,12 @@ function kanoTypeLabel(type: string) {
 function discussionTextForStructuredResult(result: StructuredResearchResult) {
   const method = normalizedResearchId(result.method)
   const priorityRows = tableRows(tableById(result, 'table_priority_ranking'))
+  const entropyRows = tableRows(tableById(result, 'table_entropy_weights'))
   const ahpRows = tableRows(tableById(result, 'table_ahp_weights'))
   const qualitativeRows = tableRows(tableById(result, 'table_theme_summary'))
 
   if (method === 'kano_entropy' || priorityRows.length > 0) {
+    const hasEntropyRows = entropyRows.length > 0
     const top = priorityRows.slice(0, 3)
     const topNames = top
       .map(row => rowText(row, ['维度', '设计维度', 'criterion', '指标']))
@@ -140,7 +142,9 @@ function discussionTextForStructuredResult(result: StructuredResearchResult) {
     const firstType = kanoTypeLabel(rowText(first, ['KANO', '主导KANO类型']))
     const firstScore = rowText(first, ['综合分', '耦合优先级总得分'])
     return [
-      `基于KANO属性与熵权耦合结果，后续讨论不宜只停留在数值排序，而应将排名靠前的维度转化为具体优化策略。${firstName}${firstType ? `属于${firstType}` : ''}${firstScore ? `，综合分为${firstScore}` : ''}，说明其既具有较强的需求识别意义，也适合作为论文策略建议部分的优先切入点。`,
+      hasEntropyRows
+        ? `基于KANO属性与熵权耦合结果，后续讨论不宜只停留在数值排序，而应将排名靠前的维度转化为具体优化策略。${firstName}${firstType ? `属于${firstType}` : ''}${firstScore ? `，综合分为${firstScore}` : ''}，说明其既具有较强的需求识别意义，也适合作为论文策略建议部分的优先切入点。`
+        : `基于KANO属性、Better/Worse系数与优先级排序结果，后续讨论不宜只停留在数值罗列，而应将排名靠前的维度转化为具体优化策略。${firstName}${firstType ? `属于${firstType}` : ''}，说明其既具有较强的需求识别意义，也适合作为论文策略建议部分的优先切入点。`,
       topNames.length
         ? `在策略展开时，可优先围绕${topNames.map(name => `“${name}”`).join('、')}提出分层优化建议：对必备型要素强调基础体验保障，对期望型要素强调持续改进，对魅力型要素强调差异化表达与传播亮点。`
         : '在策略展开时，应根据KANO类型区分基础保障、持续改进和差异化塑造，避免把所有维度写成同一种笼统建议。',
@@ -571,7 +575,7 @@ function displayKanoType(value: unknown) {
 }
 
 function numericResearchColumnDigits(column: string) {
-  if (['排名', 'N', '样本总量', '最终耦合优先级排名'].includes(column)) return 0
+  if (['排名', 'N', '样本总量', '最终耦合优先级排名', '最终优先级排名'].includes(column)) return 0
   if (['权重(%)', '权重占比(%)', 'weightPercent'].includes(column)) return 2
   if (['Better', 'Worse', '熵权', '综合分', '熵值', '差异', 'CI', 'CR', 'RI', 'lambdaMax'].includes(column)) return 3
   return null
@@ -579,6 +583,7 @@ function numericResearchColumnDigits(column: string) {
 
 function selectResearchTableColumns(columns: string[], title = '') {
   const rank = '\u6700\u7ec8\u8026\u5408\u4f18\u5148\u7ea7\u6392\u540d'
+  const finalRank = '\u6700\u7ec8\u4f18\u5148\u7ea7\u6392\u540d'
   const dimension = '\u8bbe\u8ba1\u7ef4\u5ea6'
   const sampleSize = '\u6837\u672c\u603b\u91cf'
   const kanoType = '\u4e3b\u5bfcKANO\u7c7b\u578b'
@@ -592,7 +597,7 @@ function selectResearchTableColumns(columns: string[], title = '') {
   const weight = '\u6743\u91cd\u5360\u6bd4(%)'
   const columnSet = new Set(columns)
   const preferred = title.includes('KANO') && (title.includes('\u8026\u5408') || title.includes('\u4f18\u5148\u7ea7'))
-    ? [rank, dimension, kanoType, better, worse, entropyScore, priorityScore]
+    ? [rank, finalRank, dimension, kanoType, better, worse, entropyScore, priorityScore]
     : title.includes('KANO')
       ? [dimension, sampleSize, kanoType, better, worse, rank]
       : title.includes('\u71b5\u6743')
@@ -650,7 +655,10 @@ function researchTableNote(component: ResearchPackageComponent) {
     return '注：数据质量判断用于提示后续统计分析的适用性，正式论文中可结合无效样本剔除规则进一步说明。'
   }
   if (id.includes('priority') || title.includes('优先级') || title.includes('耦合')) {
-    return '注：综合分由KANO属性、Better/Worse系数与熵权结果耦合得到，排名越靠前表示越应优先纳入设计优化与策略建议。'
+    if (title.includes('熵权') || title.includes('耦合')) {
+      return '注：综合分由KANO属性、Better/Worse系数与熵权结果耦合得到，排名越靠前表示越应优先纳入设计优化与策略建议。'
+    }
+    return '注：优先级排序综合KANO类型与Better/Worse系数，排名越靠前表示越应优先纳入设计优化与策略建议。'
   }
   if (id.includes('kano') || title.includes('kano')) {
     return '注：KANO类型包括必备型、期望型、魅力型、无差异型等；Better系数表示满意度提升作用，Worse系数绝对值表示缺失时导致不满意的程度。'

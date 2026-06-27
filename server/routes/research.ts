@@ -575,13 +575,22 @@ async function readWorkbookSheetArraysInNode(payload: Record<string, unknown>): 
 async function readKanoEntropyWorkbook(payload: Record<string, unknown>) {
   const tables = await readWorkbookTablesInNode(payload)
   if (!tables.length) return null
-  const summary = tables.find(table => table.name.includes('KANO') && table.name.includes('汇总'))
+  const summary = tables.find(table =>
+    (table.name.includes('KANO') && table.name.includes('汇总')) ||
+    table.name.includes('维度汇总')
+  )
   const weights = tables.find(table => table.name.includes('熵权'))
-  const priority = tables.find(table => table.name.includes('优先级') || table.columns.some(column => column.includes('最终耦合优先级排名')))
+  const priority = tables.find(table =>
+    table.name.includes('优先级') ||
+    table.columns.some(column => column.includes('最终耦合优先级排名'))
+  ) ?? (summary?.columns.some(column => column.includes('最终优先级排名')) ? summary : undefined)
   if (!summary || !priority) return null
   const priorityRows = priority.rows
     .filter(row => row['设计维度'] || row['维度全称'])
-    .sort((left, right) => Number(left['最终耦合优先级排名'] ?? 999) - Number(right['最终耦合优先级排名'] ?? 999))
+    .sort((left, right) =>
+      Number(left['最终耦合优先级排名'] ?? left['最终优先级排名'] ?? 999) -
+      Number(right['最终耦合优先级排名'] ?? right['最终优先级排名'] ?? 999)
+    )
   return {
     sheets: tables.map(table => table.name),
     summary,
@@ -982,7 +991,7 @@ ${items}
 <text x="58" y="472" class="small">本研究将熵权结果与KANO属性、Better/Worse系数耦合，以减少单一主观判断对排序的影响。</text>`)
 }
 
-async function makePriorityChartSvg(rows: Record<string, unknown>[]) {
+async function makePriorityChartSvg(rows: Record<string, unknown>[], hasEntropyWeights = true) {
   const displayRows = rows.slice(0, 12)
   const width = 1180
   const rowHeight = 64
@@ -994,11 +1003,14 @@ async function makePriorityChartSvg(rows: Record<string, unknown>[]) {
   const total = Math.max(displayRows.length, 1)
   const items = displayRows.map((row, index) => {
     const y = 178 + index * rowHeight
-    const rank = rowValue(row, '最终耦合优先级排名') || String(index + 1)
+    const rank = rowValue(row, '最终耦合优先级排名') || rowValue(row, '最终优先级排名') || String(index + 1)
     const rawName = rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`
     const name = shortLabel(rawName, 12)
     const type = rowValue(row, '主导KANO类型')
-    const score = maybeNumber(row['耦合优先级总得分']) ?? 0
+    const score = maybeNumber(row['耦合优先级总得分'])
+      ?? maybeNumber(row['熵权综合得分'])
+      ?? maybeNumber(row['Better系数(满意度提升)'])
+      ?? 0
     const priorityStrength = (total - index) / total
     const barWidth = Math.max(18, Math.round(priorityStrength * barMaxWidth))
     const barColor = index < 3 ? CHART_THEME.primaryDark : CHART_THEME.primaryMid
@@ -1008,16 +1020,16 @@ async function makePriorityChartSvg(rows: Record<string, unknown>[]) {
 <text x="236" y="${y}" font-size="18" fill="${CHART_THEME.inkSoft}">${escapeXml(type ? kanoTypeName(type) : '-')}</text>
 <rect x="${barX}" y="${y - 20}" width="${barMaxWidth}" height="24" fill="${CHART_THEME.track}"/>
 <rect x="${barX}" y="${y - 20}" width="${barWidth}" height="24" fill="${barColor}"/>
-<text x="${scoreX}" y="${y}" font-size="18" font-weight="700">${score.toFixed(3)}</text>
+<text x="${scoreX}" y="${y}" font-size="18" font-weight="700">${Number.isFinite(score) ? score.toFixed(3) : '-'}</text>
 <text x="${priorityX}" y="${y}" font-size="18" fill="${CHART_THEME.inkSoft}">优先级 ${index + 1}</text>`
   }).join('')
-  return svgDataUrl(width, height, `<text x="34" y="46" class="title">KANO-熵权耦合优先级排序</text>
-<text x="34" y="78" class="sub">条形表示按排序归一化后的优先级强度；综合分越低，表示越应优先纳入设计优化。</text>
+  return svgDataUrl(width, height, `<text x="34" y="46" class="title">${hasEntropyWeights ? 'KANO-熵权耦合优先级排序' : 'KANO优先级排序'}</text>
+<text x="34" y="78" class="sub">${hasEntropyWeights ? '条形表示按排序归一化后的优先级强度；综合分越低，表示越应优先纳入设计优化。' : '条形表示按最终优先级归一化后的强度，用于识别应优先讨论和优化的维度。'}</text>
 <text x="46" y="132" class="small">排名</text>
 <text x="94" y="132" class="small">维度</text>
 <text x="236" y="132" class="small">KANO</text>
 <text x="${barX}" y="132" class="small">优先级强度</text>
-<text x="${scoreX}" y="132" class="small">综合分</text>
+<text x="${scoreX}" y="132" class="small">${hasEntropyWeights ? '综合分' : 'Better'}</text>
 ${items}`)
 }
 
@@ -1424,11 +1436,12 @@ async function enrichQuantResult<T extends Record<string, unknown>>(result: T, p
 }
 
 async function makeKanoEntropyCharts(summaryRows: Record<string, unknown>[], weightRows: Record<string, unknown>[], priorityRows: Record<string, unknown>[]) {
+  const hasEntropyWeights = weightRows.length > 0
   const [stackedSvg, quadrantSvg, weightsSvg, prioritySvg] = await Promise.all([
     makeKanoStackedChartSvg(summaryRows),
     makeBetterWorseChartSvg(summaryRows),
     weightRows.length ? makeEntropyWeightChartSvg(weightRows) : Promise.resolve(''),
-    makePriorityChartSvg(priorityRows),
+    makePriorityChartSvg(priorityRows, hasEntropyWeights),
   ])
   const [stacked, quadrant, weights, priority] = await Promise.all([
     svgDataUrlToPngDataUrl(stackedSvg),
@@ -1457,8 +1470,10 @@ async function makeKanoEntropyCharts(summaryRows: Record<string, unknown>[], wei
     } : null,
     priority ? {
       id: 'figure_kano_entropy_priority',
-      title: '图4-4 KANO-熵权法耦合优先级排序图',
-      caption: '基于KANO属性分类、Better/Worse系数与熵权综合得分形成的非遗文创视觉创新维度优先级排序。',
+      title: hasEntropyWeights ? '图4-4 KANO-熵权法耦合优先级排序图' : '图4-3 KANO优先级排序图',
+      caption: hasEntropyWeights
+        ? '基于KANO属性分类、Better/Worse系数与熵权综合得分形成的非遗文创视觉创新维度优先级排序。'
+        : '基于KANO属性分类、Better/Worse系数与最终优先级排名形成的视觉创新维度优先级排序。',
       dataUrl: priority,
     } : null,
   ].filter((item): item is { id: string; title: string; caption: string; dataUrl: string } => Boolean(item))
@@ -1473,11 +1488,13 @@ async function buildKanoEntropyResult(payload: Record<string, unknown>, workbook
   const priorityRows = workbook.priority.rows
   const summaryRows = workbook.summary.rows
   const weightRows = workbook.weights?.rows ?? []
+  const hasEntropyWeights = weightRows.length > 0
   const top = priorityRows.slice(0, 5)
   const first = top[0]
   const charts = await makeKanoEntropyCharts(summaryRows, weightRows, priorityRows)
   const priorityColumnDefs = [
     ['最终耦合优先级排名', '排名'],
+    ['最终优先级排名', '排名'],
     ['设计维度', '维度'],
     ['主导KANO类型', 'KANO'],
     ['Better系数(满意度提升)', 'Better'],
@@ -1492,6 +1509,7 @@ async function buildKanoEntropyResult(payload: Record<string, unknown>, workbook
     ['Better系数(满意度提升)', 'Better'],
     ['Worse系数绝对值(不满降低)', 'Worse'],
     ['最终耦合优先级排名', '排名'],
+    ['最终优先级排名', '排名'],
   ] as const
   const weightColumnDefs = [
     ['评价指标', '指标'],
@@ -1515,8 +1533,14 @@ async function buildKanoEntropyResult(payload: Record<string, unknown>, workbook
   const weightTable = projectTable(weightRows, weightColumnDefs, workbook.weights?.columns)
   const priorityTable = projectTable(priorityRows, priorityColumnDefs, workbook.priority.columns)
   const analysisText = [
-    `本次共纳入 ${rowValue(summaryRows[0] ?? {}, '样本总量') || '100'} 份有效问卷，围绕 ${subjectLabel}的 ${priorityRows.length} 个评价维度进行 KANO 分类，并进一步引入熵权法计算综合优先级。`,
-    first ? `耦合排序结果显示，排名第一的维度为“${rowValue(first, '设计维度')}”，其主导 KANO 类型为 ${kanoTypeName(rowValue(first, '主导KANO类型'))}，耦合优先级总得分为 ${formatResearchNumber(first['耦合优先级总得分'], 3)}，说明该维度可作为后续结果讨论和优化建议的重点。` : '',
+    hasEntropyWeights
+      ? `本次共纳入 ${rowValue(summaryRows[0] ?? {}, '样本总量') || '100'} 份有效问卷，围绕 ${subjectLabel}的 ${priorityRows.length} 个评价维度进行 KANO 分类，并进一步引入熵权法计算综合优先级。`
+      : `本次共纳入 ${rowValue(summaryRows[0] ?? {}, '样本总量') || '100'} 份有效问卷，围绕 ${subjectLabel}的 ${priorityRows.length} 个评价维度进行 KANO 分类，并结合 Better/Worse 系数与最终优先级排名识别后续优化重点。`,
+    first ? (
+      hasEntropyWeights
+        ? `耦合排序结果显示，排名第一的维度为“${rowValue(first, '设计维度')}”，其主导 KANO 类型为 ${kanoTypeName(rowValue(first, '主导KANO类型'))}，耦合优先级总得分为 ${formatResearchNumber(first['耦合优先级总得分'], 3)}，说明该维度可作为后续结果讨论和优化建议的重点。`
+        : `KANO 排序结果显示，排名第一的维度为“${rowValue(first, '设计维度')}”，其主导 KANO 类型为 ${kanoTypeName(rowValue(first, '主导KANO类型'))}，Better 系数为 ${formatResearchNumber(first['Better系数(满意度提升)'], 3)}，Worse 系数绝对值为 ${formatResearchNumber(first['Worse系数绝对值(不满降低)'], 3)}，说明该维度既是结果解释也是后续优化建议的重点。`
+    ) : '',
     top.length ? `前五位优先优化维度依次为：${top.map(row => `“${rowValue(row, '设计维度')}”`).join('、')}。论文写作时可结合研究问题，将其分别纳入用户需求属性识别、评价维度排序和优化策略提出等部分展开。` : '',
   ].filter(Boolean).join('\n')
 
@@ -1535,10 +1559,12 @@ async function buildKanoEntropyResult(payload: Record<string, unknown>, workbook
     tables: [
       { id: 'table_kano_summary', title: 'KANO维度汇总统计', rows: summaryTable.rows, columns: summaryTable.columns },
       ...(weightRows.length ? [{ id: 'table_entropy_weights', title: '熵权法权重计算', rows: weightTable.rows, columns: weightTable.columns }] : []),
-      { id: 'table_priority_ranking', title: 'KANO-熵权法耦合优先级排序', rows: priorityTable.rows, columns: priorityTable.columns },
+      { id: 'table_priority_ranking', title: hasEntropyWeights ? 'KANO-熵权法耦合优先级排序' : 'KANO优先级排序', rows: priorityTable.rows, columns: priorityTable.columns },
     ],
     figures: charts,
-    methodText: `本研究采用 KANO 模型识别${subjectLabel}相关评价维度的需求属性，先根据正向题与反向题组合判定各维度的必备型、期望型、魅力型、无差异型等类型，再计算 Better 系数与 Worse 系数；随后引入熵权法对满意度提升、不满意降低等指标进行客观赋权，最终形成耦合优先级排序，用于支持后续结果分析与优化策略提出。`,
+    methodText: hasEntropyWeights
+      ? `本研究采用 KANO 模型识别${subjectLabel}相关评价维度的需求属性，先根据正向题与反向题组合判定各维度的必备型、期望型、魅力型、无差异型等类型，再计算 Better 系数与 Worse 系数；随后引入熵权法对满意度提升、不满意降低等指标进行客观赋权，最终形成耦合优先级排序，用于支持后续结果分析与优化策略提出。`
+      : `本研究采用 KANO 模型识别${subjectLabel}相关评价维度的需求属性，先根据正向题与反向题组合判定各维度的必备型、期望型、魅力型、无差异型等类型，再计算 Better 系数与 Worse 系数，并结合最终优先级排名确定后续结果分析与优化策略提出的重点。`,
     analysisText,
     cautions: [],
     plainText: [
@@ -1548,7 +1574,7 @@ async function buildKanoEntropyResult(payload: Record<string, unknown>, workbook
       weightRows.length ? '【熵权法权重计算】' : '',
       weightRows.length ? tableContent(weightTable.rows, weightTable.columns) : '',
       '',
-      '【KANO-熵权法耦合优先级排序】',
+      hasEntropyWeights ? '【KANO-熵权法耦合优先级排序】' : '【KANO优先级排序】',
       tableContent(priorityTable.rows, priorityTable.columns),
     ].filter(Boolean).join('\n'),
     workbookSheets: workbook.sheets,
@@ -1561,26 +1587,37 @@ async function buildKanoEntropyPlan(payload: Record<string, unknown>) {
   if (!workbook) return null
   const priorityRows = workbook.priority.rows
   const top = priorityRows.slice(0, 3).map(row => rowValue(row, '设计维度')).filter(Boolean)
+  const hasEntropyWeights = (workbook.weights?.rows ?? []).length > 0
   return {
     workbook,
     response: {
       ok: true,
       plan: {
-        purpose: '基于已收集问卷数据完成 KANO-熵权法耦合模型分析，并生成可插入论文结果章节的统计表、排序图和分析文字。',
+        purpose: hasEntropyWeights
+          ? '基于已收集问卷数据完成 KANO-熵权法耦合模型分析，并生成可插入论文结果章节的统计表、排序图和分析文字。'
+          : '基于已收集问卷数据完成 KANO 模型分析，并生成可插入论文结果章节的统计表、排序图和分析文字。',
         method: 'kano_entropy',
         methods: ['kano_entropy'],
-        reason: `当前问卷数据已具备 KANO 需求分类、熵权法权重和耦合优先级排序所需结果，适合据此生成论文结果章节中的统计表、图示和分析文字。${top.length ? `当前优先级靠前维度包括：${top.join('、')}。` : ''}`,
+        reason: hasEntropyWeights
+          ? `当前问卷数据已具备 KANO 需求分类、熵权法权重和耦合优先级排序所需结果，适合据此生成论文结果章节中的统计表、图示和分析文字。${top.length ? `当前优先级靠前维度包括：${top.join('、')}。` : ''}`
+          : `当前问卷数据已具备 KANO 需求分类、Better/Worse 系数和最终优先级排序结果，适合据此生成论文结果章节中的统计表、图示和分析文字。${top.length ? `当前优先级靠前维度包括：${top.join('、')}。` : ''}`,
         variables: priorityRows.map((row, index) => ({
           role: index === 0 ? 'dependent' : 'item',
           name: rowValue(row, '设计维度') || `维度${index + 1}`,
           column: rowValue(row, '设计维度') || `维度${index + 1}`,
           confidence: 0.92,
-          note: `${kanoTypeName(rowValue(row, '主导KANO类型'))}，耦合优先级排名 ${rowValue(row, '最终耦合优先级排名') || index + 1}`,
+          note: `${kanoTypeName(rowValue(row, '主导KANO类型'))}，优先级排名 ${rowValue(row, '最终耦合优先级排名') || rowValue(row, '最终优先级排名') || index + 1}`,
         })),
-        formula: 'KANO分类 → Better/Worse系数 → 熵权法客观赋权 → 耦合优先级总得分与排序。',
+        formula: hasEntropyWeights
+          ? 'KANO分类 → Better/Worse系数 → 熵权法客观赋权 → 耦合优先级总得分与排序。'
+          : 'KANO分类 → Better/Worse系数 → 最终优先级排名。',
         requiredColumns: workbook.priority.columns,
         outputs: ['method', 'figure', 'statistics', 'analysis'],
-        limitations: ['本轮分析基于当前问卷数据形成 KANO 与熵权结果；若需要进一步复核，可结合原始答卷编码规则重新核算。'],
+        limitations: [
+          hasEntropyWeights
+            ? '本轮分析基于当前问卷数据形成 KANO 与熵权结果；若需要进一步复核，可结合原始答卷编码规则重新核算。'
+            : '本轮分析基于当前问卷数据形成 KANO 分类与优先级排序；若需要进一步复核，可结合原始答卷编码规则重新核算。',
+        ],
         toolCalls: [{ tool: 'kano_entropy', columns: workbook.priority.columns }],
         needsVariableConfirmation: false,
       },
@@ -1911,6 +1948,7 @@ function deterministicKanoEntropyAnalysisText(result: Record<string, unknown>, f
   const summaryRows = tableRowsById(result, 'table_kano_summary')
   const weightRows = tableRowsById(result, 'table_entropy_weights')
   const priorityRows = sortedKanoPriorityRows(tableRowsById(result, 'table_priority_ranking'))
+  const hasEntropyWeights = weightRows.length > 0
   if (!summaryRows.length && !priorityRows.length) return fallbackText
 
   const sampleSize = rowValue(summaryRows[0] ?? {}, 'N') || rowValue(summaryRows[0] ?? {}, '样本总量') || result.sampleSize
@@ -1922,15 +1960,19 @@ function deterministicKanoEntropyAnalysisText(result: Record<string, unknown>, f
   const topNames = top.map(row => rowValue(row, '维度') || rowValue(row, '设计维度')).filter(Boolean)
 
   return [
-    `本次分析基于${sampleSize ? ` ${sampleSize} 份有效样本` : '上传问卷数据'}开展 KANO-熵权法耦合评价。系统先依据各维度的正反向题项判定 KANO 属性，并计算 Better 系数与 Worse 系数；随后采用熵权法对评价指标进行客观赋权，最终以耦合优先级排序确定后续论文讨论和优化建议的重点。`,
+    hasEntropyWeights
+      ? `本次分析基于${sampleSize ? ` ${sampleSize} 份有效样本` : '上传问卷数据'}开展 KANO-熵权法耦合评价。系统先依据各维度的正反向题项判定 KANO 属性，并计算 Better 系数与 Worse 系数；随后采用熵权法对评价指标进行客观赋权，最终以耦合优先级排序确定后续论文讨论和优化建议的重点。`
+      : `本次分析基于${sampleSize ? ` ${sampleSize} 份有效样本` : '上传问卷数据'}开展 KANO 需求属性评价。系统先依据各维度的正反向题项判定 KANO 属性，并计算 Better 系数与 Worse 系数，最终结合优先级排序确定后续论文讨论和优化建议的重点。`,
     summaryRows.length
-      ? `由 KANO 维度汇总结果可知，${rowValue(topWorse ?? {}, '维度') || 'Worse系数较高的维度'}的 Worse 系数相对较高，说明该维度缺失时更容易引发受访者不满意；${rowValue(topBetter ?? {}, '维度') || 'Better系数较高的维度'}的 Better 系数相对较高，说明其对满意度提升具有较强作用。需要注意的是，Better 或 Worse 单项系数只能反映局部需求特征，最终优化顺序仍应以耦合优先级排序为准。`
+      ? `由 KANO 维度汇总结果可知，${rowValue(topWorse ?? {}, '维度') || 'Worse系数较高的维度'}的 Worse 系数相对较高，说明该维度缺失时更容易引发受访者不满意；${rowValue(topBetter ?? {}, '维度') || 'Better系数较高的维度'}的 Better 系数相对较高，说明其对满意度提升具有较强作用。需要注意的是，Better 或 Worse 单项系数只能反映局部需求特征，最终优化顺序仍应以${hasEntropyWeights ? '耦合优先级排序' : 'KANO优先级排序'}为准。`
       : '',
     weightRows.length
       ? `熵权法结果显示，${rowValue(topWeight ?? {}, '指标') || '权重最高的指标'}的权重最高，权重为 ${rowValue(topWeight ?? {}, '权重(%)') || '-'}%。这说明该指标在区分不同评价维度优先级时具有更强作用，因此在综合排序解释中应优先纳入该权重结构，而不是直接以原始系数大小判断结论。`
       : '',
     first
-      ? `综合排序结果显示，排名第一的维度为“${rowValue(first, '维度') || '-'}”，其 KANO 类型为 ${kanoTypeName(rowValue(first, 'KANO'))}，综合分为 ${rowValue(first, '综合分') || '-'}。${topNames.length ? `前五位优先优化维度依次为：${topNames.map(name => `“${name}”`).join('、')}。` : ''}因此，论文结果章节应围绕这些排名靠前的维度展开解释，并在讨论或策略建议部分进一步转化为设计优化路径。`
+      ? hasEntropyWeights
+        ? `综合排序结果显示，排名第一的维度为“${rowValue(first, '维度') || '-'}”，其 KANO 类型为 ${kanoTypeName(rowValue(first, 'KANO'))}，综合分为 ${rowValue(first, '综合分') || '-'}。${topNames.length ? `前五位优先优化维度依次为：${topNames.map(name => `“${name}”`).join('、')}。` : ''}因此，论文结果章节应围绕这些排名靠前的维度展开解释，并在讨论或策略建议部分进一步转化为设计优化路径。`
+        : `KANO优先级排序结果显示，排名第一的维度为“${rowValue(first, '维度') || '-'}”，其 KANO 类型为 ${kanoTypeName(rowValue(first, 'KANO'))}。${topNames.length ? `前五位优先优化维度依次为：${topNames.map(name => `“${name}”`).join('、')}。` : ''}因此，论文结果章节应围绕这些排名靠前的维度展开解释，并在讨论或策略建议部分进一步转化为设计优化路径。`
       : '',
   ].filter(Boolean).join('\n')
 }
@@ -2057,6 +2099,7 @@ function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
   const summaryRows = tableRowsById(result, 'table_kano_summary')
   const weightRows = tableRowsById(result, 'table_entropy_weights')
   const priorityRows = sortedKanoPriorityRows(tableRowsById(result, 'table_priority_ranking'))
+  const hasEntropyWeights = weightRows.length > 0
   const topPriority = priorityRows[0] ?? null
   const topBetter = maxRowByNumber(summaryRows, 'Better')
   const topWorse = maxRowByNumber(summaryRows, 'Worse')
@@ -2072,7 +2115,7 @@ function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
       componentId: 'table_kano_summary',
       title: 'KANO维度汇总统计',
       beforeText: '表4-1用于汇总各评价维度的KANO属性、Better系数、Worse系数及优先级排名，为后续识别用户需求属性和优化重点提供基础数据。',
-      afterText: `由表4-1可知，${rowValue(topWorse ?? {}, '维度') || 'Worse系数较高的维度'}的Worse系数相对较高，说明该类维度缺失时更容易引发不满意；${rowValue(topBetter ?? {}, '维度') || 'Better系数较高的维度'}的Better系数相对较高，说明其对满意度提升具有较强作用。该结果需要与耦合优先级排序共同判断，而不能仅依据单一系数下结论。`,
+      afterText: `由表4-1可知，${rowValue(topWorse ?? {}, '维度') || 'Worse系数较高的维度'}的Worse系数相对较高，说明该类维度缺失时更容易引发不满意；${rowValue(topBetter ?? {}, '维度') || 'Better系数较高的维度'}的Better系数相对较高，说明其对满意度提升具有较强作用。该结果需要与${hasEntropyWeights ? '耦合优先级排序' : '最终优先级排序'}共同判断，而不能仅依据单一系数下结论。`,
     })
   }
 
@@ -2088,9 +2131,13 @@ function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
   if (priorityRows.length) {
     narratives.push({
       componentId: 'table_priority_ranking',
-      title: 'KANO-熵权法耦合优先级排序',
-      beforeText: '表4-3综合KANO属性、Better/Worse系数和熵权结果，对各评价维度进行耦合优先级排序，用于确定论文讨论和策略建议的重点顺序。',
-      afterText: `由表4-3可知，排名第一的维度为“${rowValue(topPriority ?? {}, '维度') || '-'}”，其KANO类型为${kanoTypeName(rowValue(topPriority ?? {}, 'KANO'))}，综合分为${rowValue(topPriority ?? {}, '综合分') || '-'}。这表明该维度应优先进入后续设计优化和策略建议，而不是简单以单项Better系数或综合分高低替代排序结论。`,
+      title: hasEntropyWeights ? 'KANO-熵权法耦合优先级排序' : 'KANO优先级排序',
+      beforeText: hasEntropyWeights
+        ? '表4-3综合KANO属性、Better/Worse系数和熵权结果，对各评价维度进行耦合优先级排序，用于确定论文讨论和策略建议的重点顺序。'
+        : '表4-3综合KANO属性、Better/Worse系数和最终优先级排名，对各评价维度进行优先级排序，用于确定论文讨论和策略建议的重点顺序。',
+      afterText: hasEntropyWeights
+        ? `由表4-3可知，排名第一的维度为“${rowValue(topPriority ?? {}, '维度') || '-'}”，其KANO类型为${kanoTypeName(rowValue(topPriority ?? {}, 'KANO'))}，综合分为${rowValue(topPriority ?? {}, '综合分') || '-'}。这表明该维度应优先进入后续设计优化和策略建议，而不是简单以单项Better系数或综合分高低替代排序结论。`
+        : `由表4-3可知，排名第一的维度为“${rowValue(topPriority ?? {}, '维度') || '-'}”，其KANO类型为${kanoTypeName(rowValue(topPriority ?? {}, 'KANO'))}。这表明该维度应优先进入后续设计优化和策略建议，而不是简单以单项Better或Worse系数高低替代排序结论。`,
     })
   }
 
@@ -2121,8 +2168,10 @@ function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
   if (priorityRows.length) {
     narratives.push({
       componentId: 'figure_kano_entropy_priority',
-      title: 'KANO-熵权法耦合优先级排序图',
-      beforeText: '为将KANO属性识别与熵权结果转化为更直观的优化顺序，本文绘制耦合优先级排序图，以呈现各评价维度进入后续设计策略的先后次序。',
+      title: hasEntropyWeights ? 'KANO-熵权法耦合优先级排序图' : 'KANO优先级排序图',
+      beforeText: hasEntropyWeights
+        ? '为将KANO属性识别与熵权结果转化为更直观的优化顺序，本文绘制耦合优先级排序图，以呈现各评价维度进入后续设计策略的先后次序。'
+        : '为将KANO属性识别和Better/Worse系数结果转化为更直观的优化顺序，本文绘制优先级排序图，以呈现各评价维度进入后续设计策略的先后次序。',
       afterText: `图4-4显示，${topPriorityNames.length ? `优先级靠前的维度包括${topPriorityNames.map(name => `“${name}”`).join('、')}` : `排名第一的维度为“${rowValue(topPriority ?? {}, '维度') || '-'}”`}。这说明论文后续讨论应围绕高优先级维度展开，将数据结果转化为具体的设计优化方向和策略建议。`,
     })
   }

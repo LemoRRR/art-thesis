@@ -238,6 +238,7 @@ function safeTableBool(value: unknown): boolean {
 
 function compactResearchTableColumns(columns: string[], title = '') {
   const rank = '\u6700\u7ec8\u8026\u5408\u4f18\u5148\u7ea7\u6392\u540d'
+  const finalRank = '\u6700\u7ec8\u4f18\u5148\u7ea7\u6392\u540d'
   const dimension = '\u8bbe\u8ba1\u7ef4\u5ea6'
   const sampleSize = '\u6837\u672c\u603b\u91cf'
   const kanoType = '\u4e3b\u5bfcKANO\u7c7b\u578b'
@@ -247,7 +248,7 @@ function compactResearchTableColumns(columns: string[], title = '') {
   const priorityScore = '\u8026\u5408\u4f18\u5148\u7ea7\u603b\u5f97\u5206'
   const columnSet = new Set(columns)
   const preferred = title.includes('KANO') && (title.includes('\u8026\u5408') || title.includes('\u4f18\u5148\u7ea7'))
-    ? [rank, dimension, kanoType, better, worse, entropyScore, priorityScore]
+    ? [rank, finalRank, dimension, kanoType, better, worse, entropyScore, priorityScore]
     : title.includes('KANO')
       ? [dimension, sampleSize, kanoType, better, worse, rank]
       : []
@@ -268,7 +269,7 @@ function researchTableCellText(column: string, value: unknown) {
     }
     return map[rawText] ?? rawText
   }
-  const digits = ['\u6392\u540d', 'N', '\u6837\u672c\u603b\u91cf', '\u6700\u7ec8\u8026\u5408\u4f18\u5148\u7ea7\u6392\u540d'].includes(column)
+  const digits = ['\u6392\u540d', 'N', '\u6837\u672c\u603b\u91cf', '\u6700\u7ec8\u8026\u5408\u4f18\u5148\u7ea7\u6392\u540d', '\u6700\u7ec8\u4f18\u5148\u7ea7\u6392\u540d'].includes(column)
     ? 0
     : ['\u6743\u91cd(%)', '\u6743\u91cd\u5360\u6bd4(%)'].includes(column)
       ? 2
