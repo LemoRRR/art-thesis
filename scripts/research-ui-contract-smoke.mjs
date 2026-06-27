@@ -13,6 +13,10 @@ function read(file) {
 
 const contracts = [
   {
+    file: 'src/pages/ProjectHome.tsx',
+    ids: ['project-research-entry'],
+  },
+  {
     file: 'src/pages/Stage3.tsx',
     ids: ['stage3-open-research'],
   },
@@ -48,8 +52,18 @@ for (const contract of contracts) {
 }
 
 const researchCenterSource = read('src/pages/ResearchCenter.tsx')
+const projectHomeSource = read('src/pages/ProjectHome.tsx')
 const stage3Source = read('src/pages/Stage3.tsx')
 const referencePanelSource = read('src/components/ReferencePanel.tsx')
+assert(projectHomeSource.includes('const hasDraftContent = sections.some'), 'ProjectHome must compute whether a full draft exists before routing to research')
+assert(
+  projectHomeSource.includes("hasDraftContent ? 'research' : 'stage3'"),
+  'ProjectHome research entry must send users to Stage3 until a full draft exists'
+)
+assert(
+  projectHomeSource.includes('请先进入文章生成，生成或确认全文初稿后再做研究计算'),
+  'ProjectHome research entry is missing the workflow guidance message'
+)
 assert(researchCenterSource.includes('const hasDraftContent = useMemo'), 'ResearchCenter must compute whether a full draft exists')
 assert(
   researchCenterSource.includes('if (!hasDraftContent && !isAssetPage)'),
@@ -76,6 +90,7 @@ console.log(JSON.stringify({
   ok: true,
   checkedFiles: contracts.length,
   checkedTestIds: contracts.reduce((sum, item) => sum + item.ids.length, 0),
+  checkedProjectHomeResearchGate: true,
   checkedResearchGuard: true,
   checkedCitationAutoStart: true,
 }, null, 2))

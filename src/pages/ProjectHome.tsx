@@ -142,6 +142,7 @@ export default function ProjectHome() {
                 </button>
               ))}
               <button
+                data-testid="project-research-entry"
                 onClick={() => navigate(`/projects/${project.id}/${hasDraftContent ? 'research' : 'stage3'}`)}
                 style={{
                   border: `1.5px solid ${hasDraftContent ? 'var(--color-border)' : '#FFD8A8'}`,
