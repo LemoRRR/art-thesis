@@ -758,17 +758,41 @@ function calculateAhpMatrix(input: AhpMatrix) {
 
 const CHART_THEME = {
   background: '#fffdf8',
-  ink: '#1f3328',
-  inkSoft: '#53645a',
-  muted: '#6d756f',
-  rule: '#d8e2d6',
-  grid: '#e7eee4',
-  track: '#dfeadc',
-  primary: '#2f7d4b',
-  primaryDark: '#1f6b45',
-  primaryMid: '#6ba46f',
+  panel: '#ffffff',
+  band: '#f7faf6',
+  ink: '#1f2f2a',
+  inkSoft: '#4f625b',
+  muted: '#6a746f',
+  rule: '#d9e0dc',
+  grid: '#e8eeeb',
+  track: '#e5ece8',
+  primary: '#2f6f4e',
+  primaryDark: '#1f5b40',
+  primaryMid: '#6f9d7b',
+  secondary: '#466f96',
+  secondaryMid: '#7d9fbd',
   warm: '#9a5b4f',
-  warmTrack: '#eadfda',
+  warmMid: '#c08a62',
+  warmTrack: '#eee4dd',
+  caution: '#b8913f',
+  danger: '#ae5248',
+}
+
+const CHART_PALETTE = [
+  CHART_THEME.primary,
+  CHART_THEME.secondary,
+  CHART_THEME.warmMid,
+  CHART_THEME.primaryMid,
+  CHART_THEME.secondaryMid,
+  CHART_THEME.caution,
+]
+
+function chartSeriesColor(index: number) {
+  return CHART_PALETTE[index % CHART_PALETTE.length]
+}
+
+function chartBand(index: number) {
+  return index % 2 === 0 ? CHART_THEME.band : CHART_THEME.panel
 }
 
 function escapeXml(value: unknown) {
@@ -781,13 +805,13 @@ function escapeXml(value: unknown) {
 
 function svgDataUrl(width: number, height: number, body: string) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-<rect width="100%" height="100%" fill="#fffdf8"/>
+<rect width="100%" height="100%" fill="${CHART_THEME.background}"/>
 <style>
-text{font-family:'Noto Sans CJK SC','Microsoft YaHei',Arial,sans-serif;fill:#1f3328}
-.title{font-size:28px;font-weight:700;fill:#234234}
-.sub{font-size:16px;fill:#6d756f}
-.small{font-size:13px;fill:#53645a}
-.axis{font-size:16px;fill:#24382d}
+text{font-family:'Noto Sans CJK SC','Microsoft YaHei',Arial,sans-serif;fill:${CHART_THEME.ink}}
+.title{font-size:28px;font-weight:700;fill:${CHART_THEME.ink}}
+.sub{font-size:16px;fill:${CHART_THEME.muted}}
+.small{font-size:13px;fill:${CHART_THEME.inkSoft}}
+.axis{font-size:16px;fill:${CHART_THEME.ink}}
 </style>
 ${body}
 </svg>`
@@ -839,11 +863,11 @@ async function svgDataUrlToPngDataUrl(dataUrl: string) {
 
 async function makeKanoStackedChartSvg(rows: Record<string, unknown>[]) {
   const types = [
-    { code: 'M', label: '必备', parts: ['M_', '占比'], color: '#2f6f4e' },
-    { code: 'O', label: '期望', parts: ['O_', '占比'], color: '#5d9a65' },
-    { code: 'A', label: '魅力', parts: ['A_', '占比'], color: '#94bd77' },
-    { code: 'I', label: '无差异', parts: ['I_', '占比'], color: '#d5e5c8' },
-    { code: 'Q/R', label: '可疑/反向', parts: ['Q_', '占比'], color: '#c9b06f' },
+    { code: 'M', label: '必备', parts: ['M_', '占比'], color: CHART_THEME.primaryDark },
+    { code: 'O', label: '期望', parts: ['O_', '占比'], color: CHART_THEME.primaryMid },
+    { code: 'A', label: '魅力', parts: ['A_', '占比'], color: CHART_THEME.secondary },
+    { code: 'I', label: '无差异', parts: ['I_', '占比'], color: CHART_THEME.secondaryMid },
+    { code: 'Q/R', label: '可疑/反向', parts: ['Q_', '占比'], color: CHART_THEME.caution },
   ]
   const legend = types.map((type, index) => {
     const x = 570 + index * 104
@@ -863,7 +887,7 @@ async function makeKanoStackedChartSvg(rows: Record<string, unknown>[]) {
       return rect
     }).join('')
     return `<text x="42" y="${y + 17}" font-size="15" font-weight="700">${escapeXml(label)}</text>
-${segments}<rect x="250" y="${y}" width="700" height="24" fill="none" stroke="#d9e2d6"/>
+${segments}<rect x="250" y="${y}" width="700" height="24" fill="none" stroke="${CHART_THEME.rule}"/>
 <text x="988" y="${y + 17}" class="small">主导类型：${escapeXml(kanoTypeName(rowTextByParts(row, ['主导', 'KANO'], '-')))}</text>`
   }).join('')
   return svgDataUrl(1180, 680, `<text x="34" y="46" class="title">KANO需求类型分布</text>
@@ -882,16 +906,16 @@ async function makeBetterWorseChartSvg(rows: Record<string, unknown>[]) {
     const y = top + size - Math.min(1, Math.max(0, worse)) * size
     const labelDy = y > top + size - 34 ? -18 - (index % 4) * 12 : -8
     const label = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 5)
-    return `<circle cx="${x}" cy="${y}" r="${index < 3 ? 8 : 6}" fill="${index < 3 ? '#1f6b45' : '#6ba46f'}"/>
+    return `<circle cx="${x}" cy="${y}" r="${index < 3 ? 8 : 6}" fill="${index < 3 ? CHART_THEME.primaryDark : CHART_THEME.primaryMid}"/>
 ${index < 6 || worse > 0.1 ? `<text x="${x + 9}" y="${y + labelDy}" font-size="13" font-weight="700">${escapeXml(label)}</text>` : ''}`
   }).join('')
   return svgDataUrl(1120, 760, `<text x="34" y="46" class="title">Better-Worse系数矩阵</text>
 <text x="34" y="76" class="sub">横轴为Better满意提升系数，纵轴为Worse不满降低系数绝对值。</text>
-<rect x="${left + size / 2}" y="${top}" width="${size / 2}" height="${size / 2}" fill="#eef6ed"/>
-<rect x="${left}" y="${top + size / 2}" width="${size / 2}" height="${size / 2}" fill="#f7fbf5"/>
-<rect x="${left}" y="${top}" width="${size}" height="${size}" fill="none" stroke="#c9d6c7"/>
-<line x1="${left + size / 2}" y1="${top}" x2="${left + size / 2}" y2="${top + size}" stroke="#c9d6c7"/>
-<line x1="${left}" y1="${top + size / 2}" x2="${left + size}" y2="${top + size / 2}" stroke="#c9d6c7"/>
+<rect x="${left + size / 2}" y="${top}" width="${size / 2}" height="${size / 2}" fill="${CHART_THEME.track}"/>
+<rect x="${left}" y="${top + size / 2}" width="${size / 2}" height="${size / 2}" fill="${CHART_THEME.band}"/>
+<rect x="${left}" y="${top}" width="${size}" height="${size}" fill="none" stroke="${CHART_THEME.rule}"/>
+<line x1="${left + size / 2}" y1="${top}" x2="${left + size / 2}" y2="${top + size}" stroke="${CHART_THEME.rule}"/>
+<line x1="${left}" y1="${top + size / 2}" x2="${left + size}" y2="${top + size / 2}" stroke="${CHART_THEME.rule}"/>
 ${points}
 <text x="${left + 190}" y="${top + size + 44}" class="axis">Better满意提升系数</text>
 <text transform="translate(28 ${top + 360}) rotate(-90)" class="axis">Worse不满降低系数绝对值</text>
@@ -911,8 +935,8 @@ async function makeEntropyWeightChartSvg(rows: Record<string, unknown>[]) {
     const width = Math.round((weight / maxWeight) * 640)
     const label = shortLabel(rowValue(row, '指标') || rowValue(row, '指标名称') || rowValue(row, '评价指标') || `指标${index + 1}`, 18)
     return `<text x="46" y="${y + 18}" font-size="16" font-weight="700">${escapeXml(label)}</text>
-<rect x="360" y="${y}" width="660" height="24" fill="#dfeadc"/>
-<rect x="360" y="${y}" width="${width}" height="24" fill="#2f7d4b"/>
+<rect x="360" y="${y}" width="660" height="24" fill="${CHART_THEME.track}"/>
+<rect x="360" y="${y}" width="${width}" height="24" fill="${index < 3 ? CHART_THEME.primary : CHART_THEME.primaryMid}"/>
 <text x="1040" y="${y + 18}" font-size="15">${weight.toFixed(2)}%</text>`
   }).join('')
   return svgDataUrl(1180, 430, `<text x="34" y="46" class="title">熵权指标权重分布</text>
@@ -938,11 +962,11 @@ async function makePriorityChartSvg(rows: Record<string, unknown>[]) {
     const score = maybeNumber(row['耦合优先级总得分']) ?? 0
     const priorityStrength = (total - index) / total
     const barWidth = Math.max(18, Math.round(priorityStrength * barMaxWidth))
-    return `<rect x="24" y="${y - 26}" width="${width - 48}" height="${rowHeight - 6}" fill="${index % 2 === 0 ? '#f5faf2' : '#ffffff'}"/>
+    return `<rect x="24" y="${y - 26}" width="${width - 48}" height="${rowHeight - 6}" fill="${chartBand(index)}"/>
 <text x="42" y="${y}" font-size="17" font-weight="700">排序 ${escapeXml(rank)}</text>
 <text x="126" y="${y}" font-size="16">${escapeXml(name)}</text>
-<rect x="${barX}" y="${y - 17}" width="${barMaxWidth}" height="18" fill="#dfeadc"/>
-<rect x="${barX}" y="${y - 17}" width="${barWidth}" height="18" fill="${index < 3 ? '#1f7a4c' : '#6ba46f'}"/>
+<rect x="${barX}" y="${y - 17}" width="${barMaxWidth}" height="18" fill="${CHART_THEME.track}"/>
+<rect x="${barX}" y="${y - 17}" width="${barWidth}" height="18" fill="${index < 3 ? CHART_THEME.primaryDark : CHART_THEME.primaryMid}"/>
 <text x="${metaX}" y="${y}" font-size="15">KANO：${escapeXml(type ? kanoTypeName(type) : '-')}   综合分：${score.toFixed(3)}</text>`
   }).join('')
   return svgDataUrl(width, height, `<text x="34" y="46" class="title">KANO-熵权耦合优先级排序</text>
@@ -1035,8 +1059,8 @@ async function makeDescriptiveMeanFigure(descriptive: Record<string, unknown>[])
     const value = Number(row.mean) || 0
     const widthValue = Math.max(4, Math.round((Math.abs(value) / max) * barWidth))
     return `<text x="42" y="${y + 17}" font-size="14" font-weight="700">${escapeXml(shortLabel(row.variable, 18))}</text>
-<rect x="${barX}" y="${y}" width="${barWidth}" height="22" fill="#e5eddf"/>
-<rect x="${barX}" y="${y}" width="${widthValue}" height="22" fill="#2f7d4b"/>
+<rect x="${barX}" y="${y}" width="${barWidth}" height="22" fill="${CHART_THEME.track}"/>
+<rect x="${barX}" y="${y}" width="${widthValue}" height="22" fill="${CHART_THEME.primary}"/>
 <text x="815" y="${y + 16}" font-size="13">M=${escapeXml(row.mean ?? '-')}  SD=${escapeXml(row.sd ?? '-')}</text>`
   }).join('')
   return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">主要变量均值分布</text>
@@ -1067,7 +1091,7 @@ async function makeCorrelationHeatmapFigure(correlations: Record<string, unknown
   const color = (r: number) => {
     const intensity = Math.min(1, Math.abs(r))
     const alpha = 0.18 + intensity * 0.72
-    const base = r >= 0 ? [47, 125, 75] : [174, 82, 72]
+    const base = r >= 0 ? [47, 111, 78] : [174, 82, 72]
     const bg = [255, 253, 248]
     const mixed = base.map((channel, index) => Math.round(channel * alpha + bg[index] * (1 - alpha)))
     return r >= 0
@@ -1080,7 +1104,7 @@ async function makeCorrelationHeatmapFigure(correlations: Record<string, unknown
     const r = rowName === colName ? 1 : valueMap.get(`${rowName}|||${colName}`) ?? 0
     const x = left + colIndex * cell
     const y = top + rowIndex * cell
-    return `<rect x="${x}" y="${y}" width="${cell - 2}" height="${cell - 2}" fill="${color(r)}" stroke="#ffffff"/>
+    return `<rect x="${x}" y="${y}" width="${cell - 2}" height="${cell - 2}" fill="${color(r)}" stroke="${CHART_THEME.panel}"/>
 <text x="${x + cell / 2}" y="${y + 31}" font-size="11" text-anchor="middle">${r.toFixed(2)}</text>`
   })).join('')
   return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">变量相关系数热力图</text>
@@ -1101,8 +1125,8 @@ async function makeAnovaFigure(anova: Record<string, unknown>[]) {
     const f = Number(row.f) || 0
     const widthValue = Math.max(4, Math.round((f / max) * 560))
     return `<text x="42" y="${y + 17}" font-size="14" font-weight="700">${escapeXml(shortLabel(row.variable, 18))}</text>
-<rect x="230" y="${y}" width="580" height="22" fill="#eadfda"/>
-<rect x="230" y="${y}" width="${widthValue}" height="22" fill="#9a5b4f"/>
+<rect x="230" y="${y}" width="580" height="22" fill="${CHART_THEME.warmTrack}"/>
+<rect x="230" y="${y}" width="${widthValue}" height="22" fill="${CHART_THEME.warm}"/>
 <text x="830" y="${y + 16}" font-size="13">F=${escapeXml(row.f ?? '-')}  ${row.p ? `p=${escapeXml(row.p)}` : 'p未报'}</text>`
   }).join('')
   return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">组间差异检验结果</text>
@@ -1128,9 +1152,9 @@ async function makeReliabilityFigure(cronbachAlpha: Record<string, unknown> | nu
   return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">量表信度分析</text>
 <text x="34" y="76" class="sub">Cronbach α 用于衡量量表题项内部一致性。</text>
 <text x="${left}" y="${top - 18}" font-size="18" font-weight="700">α=${alpha.toFixed(3)}（${escapeXml(level)}）</text>
-<rect x="${left}" y="${top}" width="${barWidth}" height="34" fill="#eadfda"/>
-<rect x="${left}" y="${top}" width="${filled}" height="34" fill="${alpha >= 0.7 ? '#2f7d4b' : '#9a5b4f'}"/>
-<line x1="${left + barWidth * 0.7}" y1="${top - 8}" x2="${left + barWidth * 0.7}" y2="${top + 48}" stroke="#5f5b52" stroke-dasharray="4 4"/>
+<rect x="${left}" y="${top}" width="${barWidth}" height="34" fill="${CHART_THEME.warmTrack}"/>
+<rect x="${left}" y="${top}" width="${filled}" height="34" fill="${alpha >= 0.7 ? CHART_THEME.primary : CHART_THEME.warm}"/>
+<line x1="${left + barWidth * 0.7}" y1="${top - 8}" x2="${left + barWidth * 0.7}" y2="${top + 48}" stroke="${CHART_THEME.inkSoft}" stroke-dasharray="4 4"/>
 <text x="${left}" y="${top + 68}" class="small">0</text>
 <text x="${left + barWidth * 0.7}" y="${top + 68}" class="small" text-anchor="middle">0.70</text>
 <text x="${left + barWidth}" y="${top + 68}" class="small" text-anchor="end">1.00</text>
@@ -1151,7 +1175,7 @@ async function makeEfaLoadingFigure(efa: Record<string, unknown> | null | undefi
       const value = Number(row[key]) || 0
       const widthValue = Math.max(3, Math.round((Math.abs(value) / max) * 150))
       const x = 230 + factorIndex * 205
-      const color = factorIndex === 0 ? '#2f7d4b' : factorIndex === 1 ? '#566c86' : '#9a5b4f'
+      const color = chartSeriesColor(factorIndex)
       return `<rect x="${x}" y="${y + factorIndex * 8}" width="${widthValue}" height="7" fill="${color}"/>
 <text x="${x + 156}" y="${y + 7 + factorIndex * 8}" font-size="11">${escapeXml(key.replace('_', ' '))}: ${value.toFixed(2)}</text>`
     }).join('')
@@ -1175,14 +1199,14 @@ async function makeAhpWeightFigure(rows: Record<string, unknown>[]) {
   const chartHeight = Math.max(1, items.length) * rowHeight - 12
   const grid = [0, axisMax * 0.25, axisMax * 0.5, axisMax * 0.75, axisMax].map(value => {
     const x = left + (value / axisMax) * chartWidth
-    return `<line x1="${x}" y1="${top - 18}" x2="${x}" y2="${top - 18 + chartHeight}" stroke="#e7eee4"/>
+    return `<line x1="${x}" y1="${top - 18}" x2="${x}" y2="${top - 18 + chartHeight}" stroke="${CHART_THEME.grid}"/>
 <text x="${x - 14}" y="${top + chartHeight + 4}" class="small">${Math.round(value)}%</text>`
   }).join('')
   const bars = items.map((row, index) => {
     const y = top + index * rowHeight
     const weight = Number(row.weightPercent) || 0
     const barWidth = Math.max(5, Math.round((weight / axisMax) * chartWidth))
-    return `<rect x="28" y="${y - 20}" width="${width - 56}" height="${rowHeight - 10}" fill="${index % 2 === 0 ? '#f7fbf5' : '#ffffff'}"/>
+    return `<rect x="28" y="${y - 20}" width="${width - 56}" height="${rowHeight - 10}" fill="${chartBand(index)}"/>
 <text x="42" y="${y + 16}" font-size="13" font-weight="700" fill="${index < 3 ? CHART_THEME.primaryDark : CHART_THEME.inkSoft}">第${escapeXml(row.rank ?? index + 1)}位</text>
 <text x="118" y="${y + 16}" font-size="17" font-weight="700">${escapeXml(shortLabel(row.criterion, 18))}</text>
 <rect x="${left}" y="${y}" width="${chartWidth}" height="24" fill="${CHART_THEME.track}"/>
@@ -1191,7 +1215,7 @@ async function makeAhpWeightFigure(rows: Record<string, unknown>[]) {
   }).join('')
   return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">AHP指标权重排序图</text>
 <text x="34" y="76" class="sub">依据判断矩阵计算得到的指标权重及排序。</text>
-<rect x="${left}" y="${top - 18}" width="${chartWidth}" height="${chartHeight}" fill="#ffffff" stroke="${CHART_THEME.rule}"/>
+<rect x="${left}" y="${top - 18}" width="${chartWidth}" height="${chartHeight}" fill="${CHART_THEME.panel}" stroke="${CHART_THEME.rule}"/>
 ${grid}${bars}
 <text x="${left + 258}" y="${height - 50}" class="small">权重占比（%）</text>
 <text x="42" y="${height - 22}" class="small">注：权重越高，表示该指标在目标评价中的相对重要性越强；排序用于识别论文讨论中的重点影响因素。</text>`))
@@ -1208,7 +1232,7 @@ async function makeAhpConsistencyFigure(rows: Record<string, unknown>[]) {
   const chartHeight = Math.max(1, items.length) * rowHeight - 12
   const grid = [0, 0.05, 0.1, 0.15, 0.2].map(value => {
     const x = left + (value / 0.2) * chartWidth
-    return `<line x1="${x}" y1="${top - 20}" x2="${x}" y2="${top - 20 + chartHeight}" stroke="#e7eee4"/>
+    return `<line x1="${x}" y1="${top - 20}" x2="${x}" y2="${top - 20 + chartHeight}" stroke="${CHART_THEME.grid}"/>
 <text x="${x - 14}" y="${top + chartHeight + 6}" class="small">${value.toFixed(2)}</text>`
   }).join('')
   const thresholdX = left + chartWidth * 0.5
@@ -1217,7 +1241,7 @@ async function makeAhpConsistencyFigure(rows: Record<string, unknown>[]) {
     const cr = Number(row.CR) || 0
     const passed = cr < 0.1
     const barWidth = Math.min(chartWidth, Math.max(4, Math.round((cr / 0.2) * chartWidth)))
-    return `<rect x="28" y="${y - 22}" width="${width - 56}" height="${rowHeight - 10}" fill="${index % 2 === 0 ? '#f7fbf5' : '#ffffff'}"/>
+    return `<rect x="28" y="${y - 22}" width="${width - 56}" height="${rowHeight - 10}" fill="${chartBand(index)}"/>
 <text x="42" y="${y + 18}" font-size="16" font-weight="700">${escapeXml(shortLabel(row.matrix, 18))}</text>
 <rect x="${left}" y="${y}" width="${chartWidth}" height="24" fill="${CHART_THEME.warmTrack}"/>
 <rect x="${left}" y="${y}" width="${barWidth}" height="24" fill="${passed ? CHART_THEME.primary : CHART_THEME.warm}"/>
@@ -1226,7 +1250,7 @@ async function makeAhpConsistencyFigure(rows: Record<string, unknown>[]) {
   }).join('')
   return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">AHP一致性检验结果</text>
 <text x="34" y="76" class="sub">CR &lt; 0.10 通常表示判断矩阵一致性可接受。</text>
-<rect x="${left}" y="${top - 20}" width="${chartWidth}" height="${chartHeight}" fill="#ffffff" stroke="${CHART_THEME.rule}"/>
+<rect x="${left}" y="${top - 20}" width="${chartWidth}" height="${chartHeight}" fill="${CHART_THEME.panel}" stroke="${CHART_THEME.rule}"/>
 ${grid}
 <line x1="${thresholdX}" y1="${top - 28}" x2="${thresholdX}" y2="${top + chartHeight - 8}" stroke="${CHART_THEME.warm}" stroke-dasharray="6 5"/>
 <text x="${thresholdX + 8}" y="${top - 32}" font-size="13" font-weight="700" fill="${CHART_THEME.warm}">CR=0.10</text>
@@ -2533,8 +2557,8 @@ async function makeThemeFrequencyFigure(rows: Record<string, unknown>[]) {
     const count = Number(row.count) || 0
     const barWidth = Math.max(8, Math.round((count / max) * 560))
     return `<text x="42" y="${y + 18}" font-size="15" font-weight="700">${escapeXml(shortLabel(row.theme, 14))}</text>
-<rect x="210" y="${y}" width="580" height="24" fill="#dfeadc"/>
-<rect x="210" y="${y}" width="${barWidth}" height="24" fill="#2f7d4b"/>
+<rect x="210" y="${y}" width="580" height="24" fill="${CHART_THEME.track}"/>
+<rect x="210" y="${y}" width="${barWidth}" height="24" fill="${CHART_THEME.primary}"/>
 <text x="812" y="${y + 18}" font-size="14">${count} 条</text>`
   }).join('')
   return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">定性主题频次分布</text>

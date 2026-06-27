@@ -168,10 +168,33 @@ async function inspectDownloadedDocx(filePath) {
 
   const media = Object.keys(zip.files).filter(name => name.startsWith('word/media/') && !name.endsWith('/'))
   assert(media.length >= 3, `DOCX should contain at least 3 generated figures, got ${media.length}`)
+  const pngChecks = []
+  for (const name of media) {
+    const mediaBuffer = await zip.file(name)?.async('nodebuffer')
+    assert(mediaBuffer && mediaBuffer.length > 25, `DOCX image is empty: ${name}`)
+    if (!name.toLowerCase().endsWith('.png')) continue
+    assert(mediaBuffer.toString('ascii', 1, 4) === 'PNG', `DOCX image is not a valid PNG: ${name}`)
+    const width = mediaBuffer.readUInt32BE(16)
+    const height = mediaBuffer.readUInt32BE(20)
+    const colorType = mediaBuffer[25]
+    assert(width >= 900, `DOCX PNG width is too low: ${name} ${width}`)
+    assert(height >= 250, `DOCX PNG height is too low: ${name} ${height}`)
+    assert(colorType !== 4 && colorType !== 6, `DOCX PNG image must be flattened without alpha: ${name}`)
+    pngChecks.push({ name, width, height, colorType })
+  }
+  assert(pngChecks.length >= 3, `DOCX should contain at least 3 validated PNG figures, got ${pngChecks.length}`)
   return {
     tableCaptions: (text.match(/表4[-—-]\d+/g) ?? []).length,
     figureCaptions: (text.match(/图4[-—-]\d+/g) ?? []).length,
     mediaCount: media.length,
+    validatedPngCount: pngChecks.length,
+    minImagePixels: pngChecks.reduce(
+      (min, item) => ({
+        width: Math.min(min.width, item.width),
+        height: Math.min(min.height, item.height),
+      }),
+      { width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY }
+    ),
   }
 }
 
