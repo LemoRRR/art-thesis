@@ -508,9 +508,9 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
     ...descriptive.map(row => `${row.variable}: n=${row.n}, M=${row.mean}, SD=${row.sd}, min=${row.min}, max=${row.max}`),
     cronbachAlpha ? `\n【信度分析】\nCronbach's alpha=${cronbachAlpha.alpha}，题项数=${cronbachAlpha.items.length}，有效样本=${cronbachAlpha.n}。` : '',
     correlations.length ? '\n【相关分析】' : '',
-    ...correlations.slice(0, 12).map(row => `${row.x} 与 ${row.y}: r=${row.r}, p=${row.p ?? '未计算'}`),
+    ...correlations.slice(0, 12).map(row => `${displayVariableName(row.x, '变量X')}与${displayVariableName(row.y, '变量Y')}: r=${row.r}${pValueText(row.p)}`),
     anova.length ? '\n【方差分析】' : '',
-    ...anova.map(row => `${row.group} 分组下 ${row.variable}: F=${row.f}, p=${row.p ?? '未计算'}`),
+    ...anova.map(row => `${displayVariableName(row.group, '分组变量')}分组下${displayVariableName(row.variable, '目标变量')}: F=${row.f}${pValueText(row.p)}`),
     efa ? '\n【探索性因子分析】' : '',
     ...(efa ? arrayRecords(efa.loadings).slice(0, 12).map(row => `${row.variable}: ${Object.keys(row).filter(key => key.startsWith('factor_')).map(key => `${key}=${row[key]}`).join('，')}`) : []),
   ].filter(Boolean)
@@ -593,6 +593,20 @@ async function readKanoEntropyWorkbook(payload: Record<string, unknown>) {
 function rowValue(row: Record<string, unknown>, key: string) {
   const value = row[key]
   return value === null || value === undefined ? '' : String(value)
+}
+
+function displayVariableName(value: unknown, fallback = '相关变量') {
+  return String(value ?? '').trim().replace(/\s+/g, '') || fallback
+}
+
+function pValueText(value: unknown) {
+  const text = String(value ?? '').trim()
+  if (!text || text === '未计算' || text === '未报告' || text === '-' || text.toLowerCase() === 'nan') return ''
+  return `，p=${text}`
+}
+
+function significanceCaveat(value: unknown) {
+  return pValueText(value) ? '' : '当前轻量计算未报告显著性水平，正式论文中建议结合完整统计软件输出进一步复核。'
 }
 
 function maybeNumber(value: unknown) {
@@ -1089,7 +1103,7 @@ async function makeAnovaFigure(anova: Record<string, unknown>[]) {
     return `<text x="42" y="${y + 17}" font-size="14" font-weight="700">${escapeXml(shortLabel(row.variable, 18))}</text>
 <rect x="230" y="${y}" width="580" height="22" fill="#eadfda"/>
 <rect x="230" y="${y}" width="${widthValue}" height="22" fill="#9a5b4f"/>
-<text x="830" y="${y + 16}" font-size="13">F=${escapeXml(row.f ?? '-')}  p=${escapeXml(row.p ?? '未计算')}</text>`
+<text x="830" y="${y + 16}" font-size="13">F=${escapeXml(row.f ?? '-')}  ${row.p ? `p=${escapeXml(row.p)}` : 'p未报'}</text>`
   }).join('')
   return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">组间差异检验结果</text>
 <text x="34" y="76" class="sub">分组比较中的方差分析 F 统计量。</text>
@@ -1944,10 +1958,10 @@ function deterministicQuantAnalysisText(result: Record<string, unknown>, fallbac
       ? `信度分析结果显示，Cronbach's alpha 为 ${rowValue(alpha, 'alpha') || '-'}，题项数为 ${rowValue(alpha, 'items') || '-' }。该结果可用于判断量表内部一致性；若 alpha 较低，应在论文中提示量表题项仍需复核。`
       : '',
     strongestCorrelation
-      ? `相关分析中，${rowValue(strongestCorrelation, 'x') || '变量X'}与${rowValue(strongestCorrelation, 'y') || '变量Y'}的相关系数为 r=${rowValue(strongestCorrelation, 'r') || '-'}，p=${rowValue(strongestCorrelation, 'p') || '未计算'}。该结果应结合研究假设判断其方向和强度，不能在缺少显著性或理论支撑时扩大解释为因果关系。`
+      ? `相关分析中，${displayVariableName(rowValue(strongestCorrelation, 'x'), '变量X')}与${displayVariableName(rowValue(strongestCorrelation, 'y'), '变量Y')}的相关系数为 r=${rowValue(strongestCorrelation, 'r') || '-'}${pValueText(rowValue(strongestCorrelation, 'p'))}。${significanceCaveat(rowValue(strongestCorrelation, 'p'))}该结果应结合研究假设判断其方向和强度，不能在缺少显著性或理论支撑时扩大解释为因果关系。`
       : '',
     firstAnova
-      ? `方差分析结果显示，分组变量 ${rowValue(firstAnova, 'group') || '-'} 在 ${rowValue(firstAnova, 'variable') || '-'} 上的检验结果为 F=${rowValue(firstAnova, 'f') || '-'}，p=${rowValue(firstAnova, 'p') || '未计算'}。论文中可据此讨论不同群体是否存在差异，但应保留对样本量和组别均衡性的说明。`
+      ? `方差分析结果显示，不同${displayVariableName(rowValue(firstAnova, 'group'), '分组变量')}群体在${displayVariableName(rowValue(firstAnova, 'variable'), '目标变量')}上的检验结果为 F=${rowValue(firstAnova, 'f') || '-'}${pValueText(rowValue(firstAnova, 'p'))}。${significanceCaveat(rowValue(firstAnova, 'p'))}论文中可据此讨论不同群体是否存在差异，但应保留对样本量和组别均衡性的说明。`
       : '',
     efaRows.length
       ? `探索性因子分析输出了 ${factorColumns.length || '若干'} 个潜在因子载荷。写作时应结合载荷较高的题项归属解释潜在维度结构，并在正式论文中结合旋转结果、KMO/Bartlett 检验或理论维度进一步复核。`
@@ -2102,12 +2116,12 @@ function quantComponentNarratives(result: Record<string, unknown>) {
       componentId: 'table_correlation',
       title: '相关分析表',
       beforeText: '为考察主要变量之间的线性关联，本文采用 Pearson 相关分析，并结合相关系数方向与强度判断变量之间的关系特征。',
-      afterText: `相关分析结果显示，${rowValue(strongestCorrelation ?? {}, 'x') || '变量X'}与${rowValue(strongestCorrelation ?? {}, 'y') || '变量Y'}之间的相关系数为 r=${rowValue(strongestCorrelation ?? {}, 'r') || '-'}。该结果可用于说明变量之间的关联程度，但不宜直接解释为因果关系。`,
+      afterText: `相关分析结果显示，${displayVariableName(rowValue(strongestCorrelation ?? {}, 'x'), '变量X')}与${displayVariableName(rowValue(strongestCorrelation ?? {}, 'y'), '变量Y')}之间的相关系数为 r=${rowValue(strongestCorrelation ?? {}, 'r') || '-'}${pValueText(rowValue(strongestCorrelation ?? {}, 'p'))}。${significanceCaveat(rowValue(strongestCorrelation ?? {}, 'p'))}该结果可用于说明变量之间的关联程度，但不宜直接解释为因果关系。`,
     }, {
       componentId: 'figure_correlation_heatmap',
       title: '相关系数热力图',
       beforeText: '为直观呈现变量之间相关关系的整体结构，本文绘制相关系数热力图，以便识别相关程度较强的变量组合。',
-      afterText: `热力图显示，${rowValue(strongestCorrelation ?? {}, 'x') || '部分变量'}与${rowValue(strongestCorrelation ?? {}, 'y') || '相关变量'}之间存在相对更强的相关关系。该发现可作为后续讨论变量联动机制的依据，但仍需结合理论假设和显著性结果进行解释。`,
+      afterText: `热力图显示，${displayVariableName(rowValue(strongestCorrelation ?? {}, 'x'), '部分变量')}与${displayVariableName(rowValue(strongestCorrelation ?? {}, 'y'), '相关变量')}之间存在相对更强的相关关系。该发现可作为后续讨论变量联动机制的依据，但仍需结合理论假设和显著性结果进行解释。`,
     })
   }
   if (anovaRows.length) {
@@ -2115,7 +2129,7 @@ function quantComponentNarratives(result: Record<string, unknown>) {
       componentId: 'table_anova',
       title: '单因素方差分析表',
       beforeText: '为检验不同分组样本在核心变量上的评价差异，本文进一步采用单因素方差分析，对组间差异进行统计比较。',
-      afterText: `方差分析结果显示，分组变量 ${rowValue(firstAnova, 'group') || '-'} 在 ${rowValue(firstAnova, 'variable') || '-'} 上的检验结果为 F=${rowValue(firstAnova, 'f') || '-'}，p=${rowValue(firstAnova, 'p') || '未计算'}。该结果可用于判断不同群体是否存在差异，但需结合样本量和组别分布谨慎解释。`,
+      afterText: `方差分析结果显示，不同${displayVariableName(rowValue(firstAnova, 'group'), '分组变量')}群体在${displayVariableName(rowValue(firstAnova, 'variable'), '目标变量')}上的检验结果为 F=${rowValue(firstAnova, 'f') || '-'}${pValueText(rowValue(firstAnova, 'p'))}。${significanceCaveat(rowValue(firstAnova, 'p'))}该结果可用于判断不同群体是否存在差异，但需结合样本量和组别分布谨慎解释。`,
     }, {
       componentId: 'figure_anova_f',
       title: '组间差异检验图',
@@ -2360,8 +2374,8 @@ function fallbackResearchInterpretation(result: Record<string, unknown>, payload
   const analysisParts = [
     alpha ? `信度结果显示，Cronbach's alpha 为 ${alpha.alpha ?? '待复核'}，可作为判断量表内部一致性的依据。` : '',
     firstDesc ? `描述统计方面，${firstDesc.variable ?? '核心变量'} 的均值为 ${firstDesc.mean ?? '-'}，标准差为 ${firstDesc.sd ?? '-'}，说明样本在该指标上呈现出一定的集中趋势与离散程度。` : '',
-    strongest ? `相关分析中，${strongest.x ?? '变量X'} 与 ${strongest.y ?? '变量Y'} 的相关系数为 r=${strongest.r ?? '-'}，p=${strongest.p ?? '未计算'}，可在论文中结合研究假设进一步判断其方向、强度与显著性。` : '',
-    firstAnova ? `方差分析结果显示，分组变量 ${firstAnova.group ?? 'group'} 在 ${firstAnova.variable ?? '目标变量'} 上的检验结果为 F=${firstAnova.f ?? '-'}，p=${firstAnova.p ?? '未计算'}，可用于讨论不同群体之间是否存在差异。` : '',
+    strongest ? `相关分析中，${displayVariableName(strongest.x, '变量X')}与${displayVariableName(strongest.y, '变量Y')}的相关系数为 r=${strongest.r ?? '-'}${pValueText(strongest.p)}。${significanceCaveat(strongest.p)}论文中应结合研究假设进一步判断其方向、强度与解释边界。` : '',
+    firstAnova ? `方差分析结果显示，不同${displayVariableName(firstAnova.group, '分组变量')}群体在${displayVariableName(firstAnova.variable, '目标变量')}上的检验结果为 F=${firstAnova.f ?? '-'}${pValueText(firstAnova.p)}。${significanceCaveat(firstAnova.p)}该结果可用于讨论不同群体之间是否存在差异。` : '',
     efa ? `探索性因子分析近似结果提取了 ${efa.factors ?? '-'} 个潜在因子；载荷表中，${firstLoading?.variable ?? '首个题项'} 在主要因子上的载荷可作为题项归属判断的初步依据，正式论文中应结合旋转结果和理论维度复核。` : '',
     !firstDesc && !strongest && !firstAnova && !alpha && !efa ? '系统已完成基础计算。论文写作时应以统计表中的实际系数、均值、p 值或分类结果为依据，避免加入数据中不存在的结论。' : '',
   ].filter(Boolean)

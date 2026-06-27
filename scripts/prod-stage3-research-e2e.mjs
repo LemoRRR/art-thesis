@@ -164,6 +164,7 @@ async function inspectDownloadedDocx(filePath) {
   assertCaptionSequence(text, '表', 4)
   assertCaptionSequence(text, '图', 3)
   assert(!/table_data_quality|table_descriptive|figure_descriptive_means|research_component/.test(text), 'DOCX leaked internal research ids')
+  assert(!/未计算|p=未/.test(text), 'DOCX contains unpolished significance placeholders')
 
   const media = Object.keys(zip.files).filter(name => name.startsWith('word/media/') && !name.endsWith('/'))
   assert(media.length >= 3, `DOCX should contain at least 3 generated figures, got ${media.length}`)
