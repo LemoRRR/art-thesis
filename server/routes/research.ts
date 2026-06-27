@@ -808,10 +808,10 @@ function svgDataUrl(width: number, height: number, body: string) {
 <rect width="100%" height="100%" fill="${CHART_THEME.background}"/>
 <style>
 text{font-family:'Noto Sans CJK SC','Microsoft YaHei',Arial,sans-serif;fill:${CHART_THEME.ink}}
-.title{font-size:28px;font-weight:700;fill:${CHART_THEME.ink}}
-.sub{font-size:16px;fill:${CHART_THEME.muted}}
-.small{font-size:13px;fill:${CHART_THEME.inkSoft}}
-.axis{font-size:16px;fill:${CHART_THEME.ink}}
+.title{font-size:30px;font-weight:700;fill:${CHART_THEME.ink}}
+.sub{font-size:18px;fill:${CHART_THEME.muted}}
+.small{font-size:15px;fill:${CHART_THEME.inkSoft}}
+.axis{font-size:18px;fill:${CHART_THEME.ink}}
 </style>
 ${body}
 </svg>`
