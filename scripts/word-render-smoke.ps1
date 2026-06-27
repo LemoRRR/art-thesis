@@ -107,7 +107,7 @@ import glob
 import json
 import os
 import sys
-from PIL import Image, ImageStat
+from PIL import Image, ImageDraw, ImageStat
 
 out_dir = sys.argv[1]
 expected_pages = int(sys.argv[2])
@@ -119,9 +119,11 @@ if expected_pages and len(paths) != expected_pages:
     raise SystemExit(f"Rendered page count mismatch: expected {expected_pages}, got {len(paths)}")
 
 pages = []
+images = []
 for path in paths:
     with Image.open(path) as image:
         rgb = image.convert("RGB")
+        images.append((path, rgb.copy()))
         stat = ImageStat.Stat(rgb)
         extrema = rgb.getextrema()
         width, height = rgb.size
@@ -170,7 +172,29 @@ for path in paths:
             "saturatedRatio": round(float(saturated_ratio), 3),
         })
 
-print(json.dumps({"ok": True, "pageCount": len(pages), "pages": pages}, ensure_ascii=False, indent=2))
+thumb_w = 360
+thumbs = []
+for idx, (path, image) in enumerate(images, 1):
+    scale = thumb_w / max(1, image.width)
+    thumb = image.resize((thumb_w, int(image.height * scale)))
+    canvas = Image.new("RGB", (thumb.width, thumb.height + 32), "white")
+    canvas.paste(thumb, (0, 32))
+    draw = ImageDraw.Draw(canvas)
+    draw.text((8, 8), f"Page {idx}", fill=(0, 0, 0))
+    thumbs.append(canvas)
+
+contact_sheet = ""
+if thumbs:
+    cols = 2 if len(thumbs) > 1 else 1
+    row_h = max(thumb.height for thumb in thumbs)
+    rows = (len(thumbs) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * thumb_w, rows * row_h), (245, 245, 245))
+    for idx, thumb in enumerate(thumbs):
+        sheet.paste(thumb, ((idx % cols) * thumb_w, (idx // cols) * row_h))
+    contact_sheet = os.path.join(out_dir, "contact-sheet.png")
+    sheet.save(contact_sheet)
+
+print(json.dumps({"ok": True, "pageCount": len(pages), "contactSheet": contact_sheet, "pages": pages}, ensure_ascii=False, indent=2))
 '@ | Set-Content -Path $checkScript -Encoding UTF8
 
 $renderCheck = & $python $checkScript $outDir $pageCount $MinPageVariance

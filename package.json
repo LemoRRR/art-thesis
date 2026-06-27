@@ -22,6 +22,7 @@
     "smoke:research-ui-contract": "node scripts/research-ui-contract-smoke.mjs",
     "smoke:word-render": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/word-render-smoke.ps1",
     "smoke:research-word-render": "npm run smoke:research-chain && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/word-render-smoke.ps1 -DocxPath ../outputs/ich_kano_entropy/research-chain-smoke.docx -OutputDir ../outputs/ich_kano_entropy/word-render-research-chain-smoke -MinPages 4 -MinPageVariance 500",
+    "smoke:prod-stage3-research-word-render": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prod-stage3-research-word-render-smoke.ps1",
     "smoke:bundle-size": "node scripts/bundle-size-smoke.mjs",
     "smoke:citation-docx": "tsx scripts/citation-docx-smoke.mjs",
     "smoke:citation-patch-docx": "tsx scripts/citation-patch-docx-smoke.mjs",
