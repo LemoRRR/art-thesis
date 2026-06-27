@@ -757,25 +757,25 @@ function calculateAhpMatrix(input: AhpMatrix) {
 }
 
 const CHART_THEME = {
-  background: '#fffdf8',
+  background: '#ffffff',
   panel: '#ffffff',
-  band: '#f7faf6',
-  ink: '#1f2f2a',
-  inkSoft: '#4f625b',
-  muted: '#6a746f',
-  rule: '#d9e0dc',
-  grid: '#e8eeeb',
-  track: '#e5ece8',
-  primary: '#2f6f4e',
-  primaryDark: '#1f5b40',
-  primaryMid: '#6f9d7b',
-  secondary: '#466f96',
-  secondaryMid: '#7d9fbd',
-  warm: '#9a5b4f',
-  warmMid: '#c08a62',
-  warmTrack: '#eee4dd',
-  caution: '#b8913f',
-  danger: '#ae5248',
+  band: '#f7f8f7',
+  ink: '#1f2a26',
+  inkSoft: '#4b5a55',
+  muted: '#69746f',
+  rule: '#d6ddd9',
+  grid: '#e9eeeb',
+  track: '#ecefed',
+  primary: '#2f6b4f',
+  primaryDark: '#214f3c',
+  primaryMid: '#78a289',
+  secondary: '#3f668c',
+  secondaryMid: '#86a5bf',
+  warm: '#9a5f55',
+  warmMid: '#b9825f',
+  warmTrack: '#f0e7e1',
+  caution: '#a9823a',
+  danger: '#aa554d',
 }
 
 const CHART_PALETTE = [
@@ -808,10 +808,11 @@ function svgDataUrl(width: number, height: number, body: string) {
 <rect width="100%" height="100%" fill="${CHART_THEME.background}"/>
 <style>
 text{font-family:'Noto Sans CJK SC','Microsoft YaHei',Arial,sans-serif;fill:${CHART_THEME.ink}}
-.title{font-size:38px;font-weight:700;fill:${CHART_THEME.ink}}
-.sub{font-size:23px;fill:${CHART_THEME.muted}}
-.small{font-size:20px;fill:${CHART_THEME.inkSoft}}
-.axis{font-size:23px;fill:${CHART_THEME.ink}}
+.title{font-size:32px;font-weight:700;fill:${CHART_THEME.ink}}
+.sub{font-size:19px;fill:${CHART_THEME.muted}}
+.small{font-size:16px;fill:${CHART_THEME.inkSoft}}
+.axis{font-size:19px;fill:${CHART_THEME.ink}}
+.caption{font-size:15px;fill:${CHART_THEME.muted}}
 </style>
 ${body}
 </svg>`
