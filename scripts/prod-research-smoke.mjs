@@ -166,6 +166,7 @@ function scenarioConfig() {
     const kanoOnlyMode = hasCustomKanoWorkbook
     return {
       name: 'kano_entropy',
+      kanoOnlyMode,
       title: kanoOnlyMode ? 'Production KANO research smoke test' : 'Production KANO entropy research smoke test',
       fileName: kanoOnlyMode ? 'prod-kano-smoke.xlsx' : 'prod-kano-entropy-smoke.xlsx',
       base64: makeKanoWorkbookBase64(),
@@ -294,6 +295,7 @@ function scenarioConfig() {
       },
       minTables: requiredTables.length,
       minFigures: 1,
+      forbiddenDocxTerms: ['originalText', 'openCode', 'axialCategory', 'evidenceExcerpt', 'writingUse'],
       internalLeakPattern: /table_open_coding|table_axial_coding|table_theme_summary|table_evidence_excerpt|figure_theme_frequency|research_component/g,
     }
   }
@@ -491,7 +493,7 @@ async function inspectDocx(buffer, sections, scenario) {
   const suspiciousQuestionRuns = text.match(/\?{4,}/g) ?? []
   const hasEntropyTable = /熵权法权重计算/.test(text)
   const falseEntropyTerms = hasEntropyTable ? [] : ['熵权', '耦合'].filter(term => text.includes(term))
-  const impossibleFigureRefs = hasEntropyTable ? [] : (text.match(/图4-4/g) ?? [])
+  const impossibleFigureRefs = scenario.kanoOnlyMode && !hasEntropyTable ? (text.match(/图4-4/g) ?? []) : []
   return {
     page: {
       width: pageSize ? Number(pageSize[1]) : 0,
@@ -515,6 +517,7 @@ async function inspectDocx(buffer, sections, scenario) {
     ),
     imageExtentCount: (documentXml.match(/<wp:extent\b/g) ?? []).length,
     internalLeakCount: ((documentXml.match(scenario.internalLeakPattern ?? /table_ahp_|figure_ahp_|research_component/g) ?? []).length),
+    forbiddenDocxTerms: (scenario.forbiddenDocxTerms ?? []).filter(term => text.includes(term)),
     suspiciousQuestionRuns,
     falseEntropyTerms,
     impossibleFigureRefs,
@@ -651,6 +654,7 @@ async function main() {
     assert(docx.minImagePixels.width >= 900 && docx.minImagePixels.height >= 250, `DOCX image pixels are too small: ${JSON.stringify(docx.minImagePixels)}`)
     assert(docx.imageExtentCount >= scenario.minFigures, `DOCX images are missing display extents: ${docx.imageExtentCount}`)
     assert(docx.internalLeakCount === 0, `DOCX leaked internal ids: ${docx.internalLeakCount}`)
+    assert(docx.forbiddenDocxTerms.length === 0, `DOCX leaked backend column names: ${docx.forbiddenDocxTerms.join(', ')}`)
     assert(docx.suspiciousQuestionRuns.length === 0, `DOCX contains suspicious question-mark text: ${docx.suspiciousQuestionRuns.join(', ')}`)
     assert(docx.falseEntropyTerms.length === 0, `KANO-only DOCX should not mention entropy/coupling: ${docx.falseEntropyTerms.join(', ')}`)
     assert(docx.impossibleFigureRefs.length === 0, `KANO-only DOCX references a missing figure number: ${docx.impossibleFigureRefs.join(', ')}`)

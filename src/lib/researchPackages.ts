@@ -517,6 +517,8 @@ const RESEARCH_TABLE_COLUMN_LABELS: Record<string, string> = {
   efaSuitable: '因子分析',
   correlationSuitable: '相关分析',
   anovaSuitable: '方差分析',
+  id: '编号',
+  originalText: '原文摘录',
   openCode: '开放编码',
   axialCategory: '主轴范畴',
   evidenceExcerpt: '典型证据',
@@ -596,17 +598,17 @@ function selectResearchTableColumns(columns: string[], title = '') {
   const diff = '\u5dee\u5f02\u7cfb\u6570'
   const weight = '\u6743\u91cd\u5360\u6bd4(%)'
   const columnSet = new Set(columns)
-  const preferred = title.includes('KANO') && (title.includes('\u8026\u5408') || title.includes('\u4f18\u5148\u7ea7'))
-    ? [rank, finalRank, dimension, kanoType, better, worse, entropyScore, priorityScore]
-    : title.includes('KANO')
-      ? [dimension, sampleSize, kanoType, better, worse, rank]
-      : title.includes('\u71b5\u6743')
-        ? [indicator, entropy, diff, weight]
-        : title.includes('AHP') && title.includes('一致性')
-          ? ['matrix', 'n', 'lambdaMax', 'CI', 'RI', 'CR', 'consistency']
-          : title.includes('AHP')
-            ? ['matrix', 'criterion', 'weight', 'weightPercent', 'rank']
-            : []
+  let preferred: string[] = []
+  if (title.includes('开放编码')) preferred = ['id', 'evidenceExcerpt', 'openCode', 'axialCategory']
+  else if (title.includes('主轴编码')) preferred = ['axialCategory', 'includedOpenCodes', 'evidenceCount', 'conceptualMeaning']
+  else if (title.includes('主题归纳')) preferred = ['theme', 'axialCategory', 'count', 'evidence']
+  else if (title.includes('典型证据')) preferred = ['theme', 'evidenceExcerpt', 'writingUse']
+  else if (title.includes('KANO') && (title.includes('\u8026\u5408') || title.includes('\u4f18\u5148\u7ea7'))) {
+    preferred = [rank, finalRank, dimension, kanoType, better, worse, entropyScore, priorityScore]
+  } else if (title.includes('KANO')) preferred = [dimension, sampleSize, kanoType, better, worse, rank]
+  else if (title.includes('\u71b5\u6743')) preferred = [indicator, entropy, diff, weight]
+  else if (title.includes('AHP') && title.includes('一致性')) preferred = ['matrix', 'n', 'lambdaMax', 'CI', 'RI', 'CR', 'consistency']
+  else if (title.includes('AHP')) preferred = ['matrix', 'criterion', 'weight', 'weightPercent', 'rank']
   if (!preferred.length) return columns.slice(0, 7)
   const selected = preferred.filter(column => columnSet.has(column))
   const minimumUsefulSelection = Math.min(3, preferred.length)
@@ -628,7 +630,9 @@ function formatResearchTableValue(column: string, value: unknown) {
     const numeric = Number(text)
     if (Number.isFinite(numeric)) return numeric.toFixed(digits)
   }
-  const maxLength = column === '\u7ef4\u5ea6\u5168\u79f0' ? 18 : column === '\u8bbe\u8ba1\u7ef4\u5ea6' ? 8 : 28
+  const maxLength = ['originalText', 'evidenceExcerpt', 'evidence', 'conceptualMeaning', 'writingUse', 'memo'].includes(column)
+    ? 42
+    : column === '\u7ef4\u5ea6\u5168\u79f0' ? 18 : column === '\u8bbe\u8ba1\u7ef4\u5ea6' ? 8 : 28
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
 }
 
