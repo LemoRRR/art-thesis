@@ -899,15 +899,46 @@ async function makeBetterWorseChartSvg(rows: Record<string, unknown>[]) {
   const left = 100
   const top = 118
   const size = 570
-  const points = rows.slice(0, 12).map((row, index) => {
+  const chartRows = rows.slice(0, 12).map((row, index) => {
     const better = rowMetric(row, ['Better'])
     const worse = rowMetric(row, ['Worse'])
-    const x = left + Math.min(1, Math.max(0, better)) * size
-    const y = top + size - Math.min(1, Math.max(0, worse)) * size
-    const labelDy = y > top + size - 34 ? -18 - (index % 4) * 12 : -8
-    const label = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 5)
-    return `<circle cx="${x}" cy="${y}" r="${index < 3 ? 9 : 7}" fill="${index < 3 ? CHART_THEME.primaryDark : CHART_THEME.primaryMid}"/>
-${index < 6 || worse > 0.1 ? `<text x="${x + 12}" y="${y + labelDy}" font-size="16" font-weight="700">${escapeXml(label)}</text>` : ''}`
+    return {
+      index,
+      better,
+      worse,
+      x: left + Math.min(1, Math.max(0, better)) * size,
+      y: top + size - Math.min(1, Math.max(0, worse)) * size,
+      label: shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 5),
+    }
+  })
+  const selectedLabels = new Set(
+    chartRows
+      .slice()
+      .sort((a, b) => (b.worse + b.better * 0.72) - (a.worse + a.better * 0.72))
+      .slice(0, 7)
+      .map(item => item.index)
+  )
+  const rawLabelSlots = chartRows
+    .filter(item => selectedLabels.has(item.index))
+    .sort((a, b) => a.y - b.y)
+    .map((item, order) => {
+      const rightSide = item.x < left + size * 0.68
+      const labelX = Math.min(left + size - 92, Math.max(left + 12, item.x + (rightSide ? 14 : -72)))
+      const baseY = item.y < top + 28 ? item.y + 26 : item.y > top + size - 30 ? item.y - 18 : item.y - 10
+      return { ...item, labelX, labelY: Math.min(top + size - 16, Math.max(top + 22, baseY + (order % 3) * 5)) }
+    })
+  const labelSlots = rawLabelSlots.reduce<typeof rawLabelSlots>((acc, item) => {
+    const previous = acc[acc.length - 1]
+    if (!previous) return [...acc, item]
+    const tooClose = Math.abs(item.labelY - previous.labelY) < 22 && Math.abs(item.labelX - previous.labelX) < 170
+    return [...acc, tooClose ? { ...item, labelY: Math.min(top + size - 16, previous.labelY + 22) } : item]
+  }, [])
+  const labels = labelSlots.map(item => `<text x="${item.labelX}" y="${item.labelY}" font-size="16" font-weight="700">${escapeXml(item.label)}</text>`).join('')
+  const points = chartRows.map((item) => {
+    const radius = selectedLabels.has(item.index) ? 8 : 6
+    const fill = selectedLabels.has(item.index) ? CHART_THEME.primaryDark : CHART_THEME.primaryMid
+    const opacity = selectedLabels.has(item.index) ? 1 : 0.62
+    return `<circle cx="${item.x}" cy="${item.y}" r="${radius}" fill="${fill}" opacity="${opacity}"/>`
   }).join('')
   return svgDataUrl(1120, 780, `<text x="34" y="48" class="title">Better-Worse系数矩阵</text>
 <text x="34" y="76" class="sub">横轴为Better满意提升系数，纵轴为Worse不满降低系数绝对值。</text>
@@ -917,14 +948,15 @@ ${index < 6 || worse > 0.1 ? `<text x="${x + 12}" y="${y + labelDy}" font-size="
 <line x1="${left + size / 2}" y1="${top}" x2="${left + size / 2}" y2="${top + size}" stroke="${CHART_THEME.rule}"/>
 <line x1="${left}" y1="${top + size / 2}" x2="${left + size}" y2="${top + size / 2}" stroke="${CHART_THEME.rule}"/>
 ${points}
+${labels}
 <text x="${left + 190}" y="${top + size + 44}" class="axis">Better满意提升系数</text>
 <text transform="translate(28 ${top + 360}) rotate(-90)" class="axis">Worse不满降低系数绝对值</text>
-<text x="710" y="184" class="small">图中点标签为评价维度简称。</text>
+<text x="710" y="184" class="small">图中仅标注关键评价维度简称。</text>
 <text x="710" y="216" class="small">完整数值见KANO维度汇总表。</text>
 <text x="710" y="248" class="small">右上区域表示满意提升与不满风险均较高，</text>
 <text x="710" y="280" class="small">可作为优先优化对象。</text>
-<text x="710" y="328" class="small">低不满风险维度未全部标注，</text>
-<text x="710" y="360" class="small">以避免标签遮挡。</text>`)
+<text x="710" y="328" class="small">低风险点采用弱化显示，</text>
+<text x="710" y="360" class="small">避免零值聚集区遮挡阅读。</text>`)
 }
 
 async function makeEntropyWeightChartSvg(rows: Record<string, unknown>[]) {

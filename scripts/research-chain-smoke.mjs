@@ -137,7 +137,20 @@ function assertResearchOutputQuality(analysis, components) {
   assert(afterCount >= tables.length + figures.length, `not every table/figure has an after paragraph: ${afterCount}`)
   const narrativeText = narrativeComponents.map(component => component.content ?? '').join('\n')
   assert(!narrativeText.includes('用于辅助说明数据中的主要分布特征'), 'figure narrative still uses generic fallback wording')
+  assert(!/系统识别到|上传工作簿|当前工作簿|独立报告|研究包/.test(narrativeText), 'research narrative leaks workflow/tool wording instead of thesis prose')
   assert(narrativeText.includes('回应了研究中关于') || narrativeText.includes('转化为具体的设计优化方向'), 'figure narrative is not research-question oriented enough')
+  const missingNarrativeTargets = [...tables, ...figures]
+    .filter(item => {
+      const title = String(item.title ?? '')
+      return !narrativeComponents.some(component => String(component.title ?? '').startsWith(`${title}: before`))
+        || !narrativeComponents.some(component => String(component.title ?? '').startsWith(`${title}: after`))
+    })
+    .map(item => item.id ?? item.title)
+  assert(missingNarrativeTargets.length === 0, `some paper tables/figures are missing local thesis prose: ${missingNarrativeTargets.join(', ')}`)
+  const thinNarratives = narrativeComponents
+    .filter(component => String(component.content ?? '').replace(/\s/g, '').length < 35)
+    .map(component => component.title ?? component.id)
+  assert(thinNarratives.length === 0, `some table/figure narratives are too thin for thesis insertion: ${thinNarratives.join(', ')}`)
 }
 
 async function inspectDocx(buffer) {
