@@ -36,6 +36,7 @@ type CitationCandidate = {
 }
 
 const CLAIM_TYPES = new Set(['definition', 'literature', 'method', 'comparison', 'trend', 'assertion'])
+const MIN_CITATION_SUPPORT_SCORE = 0.12
 
 function clip(value: unknown, max = 2400) {
   const text = String(value ?? '').trim()
@@ -226,6 +227,16 @@ function normalizePatch(
   if (!originalText || !revisedText || !section.content.includes(originalText)) return null
   if (hasInlineCitationLeak(revisedText)) return null
   if (revisedText.length > Math.max(originalText.length * 3, 520)) return null
+  const sourceEvidence = [
+    source.title,
+    source.abstract,
+    source.relevanceReason,
+    source.noteText,
+    source.journal,
+    source.source,
+  ].filter(Boolean).join(' ')
+  const supportScore = citationSupportScore(`${originalText} ${revisedText}`, sourceEvidence)
+  if (supportScore < MIN_CITATION_SUPPORT_SCORE) return null
 
   const rawClaimType = String(row.claimType ?? row.enhancementType ?? 'assertion')
   const claimType = CLAIM_TYPES.has(rawClaimType) ? rawClaimType : 'assertion'
@@ -441,7 +452,7 @@ function fallbackCitationPatches(
           score: citationSupportScore(candidate.text, sourceEvidence),
         }
       })
-      .filter(item => item.score >= 0.02)
+      .filter(item => item.score >= MIN_CITATION_SUPPORT_SCORE)
       .sort((a, b) => b.score - a.score)[0]
     if (!best) continue
     const pairKey = `${candidate.id}:${best.source.id}`

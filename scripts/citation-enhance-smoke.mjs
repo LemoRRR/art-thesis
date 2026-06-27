@@ -90,6 +90,32 @@ async function main() {
     assert((noSource.patches ?? []).length === 0, 'unreliable sources should not produce citation patches')
     assert(String(noSource.auditNote ?? '').length > 0, 'no-source response should explain why no patches were produced')
 
+    const unrelated = await post(base, '/api/references/enhance', {
+      sections,
+      sources: [
+        {
+          id: 'src_unrelated_planets',
+          title: 'Orbital Resonance in Exoplanetary Systems',
+          authors: ['Rivera Ana'],
+          year: 2020,
+          url: 'https://example.org/exoplanet-orbital-resonance',
+          abstract: 'This astronomy paper discusses orbital periods, planetary migration and resonance chains in extrasolar systems.',
+        },
+        {
+          id: 'src_unrelated_battery',
+          title: 'Lithium Battery Thermal Management Materials',
+          authors: ['Smith Alex'],
+          year: 2021,
+          doi: '10.0000/battery-thermal-materials',
+          abstract: 'This engineering paper studies heat transfer, phase-change materials and cooling channels for lithium battery packs.',
+        },
+      ],
+      minPatchCount: 2,
+      fallbackOnly: true,
+    })
+    assert(unrelated.ok === true, 'unrelated-source response should be ok')
+    assert((unrelated.patches ?? []).length === 0, 'reliable but unrelated sources should not produce citation patches')
+
     const fallback = await post(base, '/api/references/enhance', {
       projectTitle: '非遗文创视觉元素魅力识别研究',
       sections,
@@ -107,6 +133,7 @@ async function main() {
     console.log(JSON.stringify({
       ok: true,
       noSourcePatchCount: noSource.patches?.length ?? 0,
+      unrelatedPatchCount: unrelated.patches?.length ?? 0,
       fallbackPatchCount: fallback.patches?.length ?? 0,
       sourceIds,
     }, null, 2))
