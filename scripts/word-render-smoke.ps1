@@ -128,17 +128,46 @@ for path in paths:
         # A blank all-white page has very small channel variance and white extrema.
         variance = sum(stat.var)
         nonwhite = any(channel[0] < 248 for channel in extrema)
+        total_samples = 0
+        white_samples = 0
+        dark_samples = 0
+        saturated_samples = 0
+        step_x = max(1, width // 120)
+        step_y = max(1, height // 160)
+        for y in range(0, height, step_y):
+            for x in range(0, width, step_x):
+                red, green, blue = rgb.getpixel((x, y))
+                total_samples += 1
+                luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+                if red > 245 and green > 245 and blue > 245:
+                    white_samples += 1
+                if luminance < 80:
+                    dark_samples += 1
+                if max(red, green, blue) - min(red, green, blue) > 90 and max(red, green, blue) > 140:
+                    saturated_samples += 1
+        white_ratio = white_samples / max(1, total_samples)
+        dark_ratio = dark_samples / max(1, total_samples)
+        saturated_ratio = saturated_samples / max(1, total_samples)
         if width < 900 or height < 1200:
             raise SystemExit(f"Rendered page is too small: {path} {width}x{height}")
         if variance < 1 and not nonwhite:
             raise SystemExit(f"Rendered page appears blank: {path}")
         if variance < min_variance:
             raise SystemExit(f"Rendered page has too little visual content: {path} variance={variance:.2f}, min={min_variance}")
+        if dark_ratio > 0.16:
+            raise SystemExit(f"Rendered page has too much dark visual noise: {path} dark_ratio={dark_ratio:.3f}")
+        if saturated_ratio > 0.12:
+            raise SystemExit(f"Rendered page has too much saturated visual noise: {path} saturated_ratio={saturated_ratio:.3f}")
+        if white_ratio < 0.45:
+            raise SystemExit(f"Rendered page white-space ratio is too low for a thesis page: {path} white_ratio={white_ratio:.3f}")
         pages.append({
             "path": path,
             "width": width,
             "height": height,
             "variance": round(float(variance), 2),
+            "whiteRatio": round(float(white_ratio), 3),
+            "darkRatio": round(float(dark_ratio), 3),
+            "saturatedRatio": round(float(saturated_ratio), 3),
         })
 
 print(json.dumps({"ok": True, "pageCount": len(pages), "pages": pages}, ensure_ascii=False, indent=2))

@@ -207,6 +207,22 @@ function assertResearchBridgeInsertion(pkg) {
   assert(merged.content.length > sourceDoc.content.length + 1, 'research insertion did not append package nodes after the bridge')
 }
 
+function paragraphNode(text) {
+  return {
+    type: 'paragraph',
+    content: [{ type: 'text', text }],
+  }
+}
+
+function thesisSectionDoc(introText, pkg, role) {
+  const sourceDoc = {
+    type: 'doc',
+    content: [paragraphNode(introText)],
+  }
+  const researchNodes = researchPackageToPaperNodes(pkg)
+  return mergeResearchNodesIntoDoc(sourceDoc, researchNodes, role)
+}
+
 async function inspectDocx(buffer) {
   const zip = await JSZip.loadAsync(buffer)
   const documentXml = await zip.file('word/document.xml')?.async('string')
@@ -262,6 +278,12 @@ async function inspectDocx(buffer) {
     tableCaptionCount: (text.match(/表4-/g) ?? []).length,
     figureCaptionCount: (text.match(/图4-/g) ?? []).length,
     badTerms,
+    hasExistingMethodProse: text.includes('\u672c\u7814\u7a76\u5728\u95ee\u5377\u6570\u636e\u57fa\u7840\u4e0a\u5efa\u7acb\u5206\u6790\u8def\u5f84'),
+    hasExistingResultProse: text.includes('\u672c\u8282\u9996\u5148\u5bf9\u7814\u7a76\u7ed3\u679c\u8fdb\u884c\u6982\u8ff0'),
+    hasExistingDiscussionProse: text.includes('\u4ee5\u4e0b\u8ba8\u8bba\u5c06\u56de\u5230\u7814\u7a76\u95ee\u9898\u672c\u8eab'),
+    hasMethodBridge: text.includes('\u5c06\u672c\u6b21\u7814\u7a76\u8ba1\u7b97\u7684\u65b9\u6cd5\u8def\u5f84\u4e0e\u6570\u636e\u5904\u7406\u8fc7\u7a0b\u8bf4\u660e\u5982\u4e0b'),
+    hasResultBridge: text.includes('\u672c\u6587\u5c06\u6838\u5fc3\u7ed3\u679c\u7eb3\u5165\u672c\u8282\u8fdb\u884c\u8bf4\u660e'),
+    hasDiscussionBridge: text.includes('\u8ba8\u8bba\u5176\u5bf9\u7814\u7a76\u95ee\u9898\u7684\u56de\u5e94'),
   }
 }
 
@@ -358,31 +380,46 @@ async function main() {
       updatedAt: Date.now(),
     }
     assertResearchBridgeInsertion(resultPkg)
+    const methodDoc = thesisSectionDoc(
+      '\u672c\u7814\u7a76\u5728\u95ee\u5377\u6570\u636e\u57fa\u7840\u4e0a\u5efa\u7acb\u5206\u6790\u8def\u5f84\uff0c\u4ee5\u4fdd\u8bc1\u540e\u7eed\u7ed3\u679c\u89e3\u91ca\u5177\u6709\u65b9\u6cd5\u4f9d\u636e\u3002',
+      methodPkg,
+      'method'
+    )
+    const resultDoc = thesisSectionDoc(
+      '\u672c\u8282\u9996\u5148\u5bf9\u7814\u7a76\u7ed3\u679c\u8fdb\u884c\u6982\u8ff0\uff0c\u518d\u56f4\u7ed5\u6838\u5fc3\u6307\u6807\u5c55\u5f00\u5177\u4f53\u5206\u6790\u3002',
+      resultPkg,
+      'result'
+    )
+    const discussionDoc = thesisSectionDoc(
+      '\u4ee5\u4e0b\u8ba8\u8bba\u5c06\u56de\u5230\u7814\u7a76\u95ee\u9898\u672c\u8eab\uff0c\u5e76\u5c06\u7edf\u8ba1\u7ed3\u679c\u8f6c\u5316\u4e3a\u8bbe\u8ba1\u4e0e\u4f20\u64ad\u4f18\u5316\u542f\u793a\u3002',
+      discussionPkg,
+      'discussion'
+    )
     const docSections = [
       {
         id: 's3',
         projectId: 'smoke',
-        title: '三、研究设计与数据来源',
-        content: '',
-        editorDoc: { type: 'doc', content: researchPackageToPaperNodes(methodPkg) },
+        title: '???????????',
+        content: paperDocText(methodDoc),
+        editorDoc: methodDoc,
         status: 'done',
         order: 3,
       },
       {
         id: 's4',
         projectId: 'smoke',
-        title: '四、数据分析与研究结果',
-        content: '',
-        editorDoc: { type: 'doc', content: researchPackageToPaperNodes(resultPkg) },
+        title: '???????????',
+        content: paperDocText(resultDoc),
+        editorDoc: resultDoc,
         status: 'done',
         order: 4,
       },
       {
         id: 's5',
         projectId: 'smoke',
-        title: '五、优化策略与研究讨论',
-        content: '',
-        editorDoc: { type: 'doc', content: researchPackageToPaperNodes(discussionPkg) },
+        title: '???????????',
+        content: paperDocText(discussionDoc),
+        editorDoc: discussionDoc,
         status: 'done',
         order: 5,
       },
@@ -405,6 +442,8 @@ async function main() {
     assert(docx.tableCaptionCount >= 3, `DOCX 表题数量不足：${docx.tableCaptionCount}`)
     assert(docx.figureCaptionCount >= 4, `DOCX 图题数量不足：${docx.figureCaptionCount}`)
     assert(docx.badTerms.length === 0, `DOCX 出现不应展示的内部/乱码词：${docx.badTerms.join('、')}`)
+    assert(docx.hasExistingMethodProse && docx.hasExistingResultProse && docx.hasExistingDiscussionProse, 'DOCX should preserve existing thesis section prose before inserted research results')
+    assert(docx.hasMethodBridge && docx.hasResultBridge && docx.hasDiscussionBridge, 'DOCX should include thesis-style bridge prose for method, result, and discussion insertions')
 
     console.log(JSON.stringify({
       ok: true,
