@@ -984,33 +984,40 @@ ${items}
 
 async function makePriorityChartSvg(rows: Record<string, unknown>[]) {
   const displayRows = rows.slice(0, 12)
-  const width = 1320
-  const rowHeight = 46
-  const height = 136 + Math.max(1, displayRows.length) * rowHeight
-  const barX = 390
-  const barMaxWidth = 540
-  const metaX = 970
+  const width = 1180
+  const rowHeight = 64
+  const height = 184 + Math.max(1, displayRows.length) * rowHeight
+  const barX = 318
+  const barMaxWidth = 560
+  const scoreX = 908
+  const priorityX = 1038
   const total = Math.max(displayRows.length, 1)
   const items = displayRows.map((row, index) => {
-    const y = 132 + index * rowHeight
+    const y = 178 + index * rowHeight
     const rank = rowValue(row, '最终耦合优先级排名') || String(index + 1)
     const rawName = rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`
-    const name = shortLabel(rawName, 14)
+    const name = shortLabel(rawName, 12)
     const type = rowValue(row, '主导KANO类型')
     const score = maybeNumber(row['耦合优先级总得分']) ?? 0
     const priorityStrength = (total - index) / total
     const barWidth = Math.max(18, Math.round(priorityStrength * barMaxWidth))
-    return `<rect x="24" y="${y - 26}" width="${width - 48}" height="${rowHeight - 6}" fill="${chartBand(index)}"/>
-<text x="42" y="${y}" font-size="17" font-weight="700">排序 ${escapeXml(rank)}</text>
-<text x="126" y="${y}" font-size="16">${escapeXml(name)}</text>
-<rect x="${barX}" y="${y - 17}" width="${barMaxWidth}" height="18" fill="${CHART_THEME.track}"/>
-<rect x="${barX}" y="${y - 17}" width="${barWidth}" height="18" fill="${index < 3 ? CHART_THEME.primaryDark : CHART_THEME.primaryMid}"/>
-<text x="${metaX}" y="${y}" font-size="15">KANO：${escapeXml(type ? kanoTypeName(type) : '-')}   综合分：${score.toFixed(3)}</text>`
+    const barColor = index < 3 ? CHART_THEME.primaryDark : CHART_THEME.primaryMid
+    return `<rect x="24" y="${y - 38}" width="${width - 48}" height="${rowHeight - 8}" fill="${chartBand(index)}"/>
+<text x="46" y="${y}" font-size="21" font-weight="700">${escapeXml(rank)}</text>
+<text x="94" y="${y}" font-size="21" font-weight="700">${escapeXml(name)}</text>
+<text x="236" y="${y}" font-size="18" fill="${CHART_THEME.inkSoft}">${escapeXml(type ? kanoTypeName(type) : '-')}</text>
+<rect x="${barX}" y="${y - 20}" width="${barMaxWidth}" height="24" fill="${CHART_THEME.track}"/>
+<rect x="${barX}" y="${y - 20}" width="${barWidth}" height="24" fill="${barColor}"/>
+<text x="${scoreX}" y="${y}" font-size="18" font-weight="700">${score.toFixed(3)}</text>
+<text x="${priorityX}" y="${y}" font-size="18" fill="${CHART_THEME.inkSoft}">优先级 ${index + 1}</text>`
   }).join('')
   return svgDataUrl(width, height, `<text x="34" y="46" class="title">KANO-熵权耦合优先级排序</text>
-<text x="34" y="76" class="sub">条形表示按排序归一化后的优先级强度；综合分越低，表示越应优先纳入设计优化。</text>
-<text x="${barX}" y="104" class="small">优先级强度</text>
-<text x="${metaX}" y="104" class="small">KANO类型 / 综合分</text>
+<text x="34" y="78" class="sub">条形表示按排序归一化后的优先级强度；综合分越低，表示越应优先纳入设计优化。</text>
+<text x="46" y="132" class="small">排名</text>
+<text x="94" y="132" class="small">维度</text>
+<text x="236" y="132" class="small">KANO</text>
+<text x="${barX}" y="132" class="small">优先级强度</text>
+<text x="${scoreX}" y="132" class="small">综合分</text>
 ${items}`)
 }
 
