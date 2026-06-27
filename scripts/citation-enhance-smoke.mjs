@@ -1,6 +1,11 @@
 import express from 'express'
+import fs from 'node:fs'
+import path from 'node:path'
+import JSZip from 'jszip'
 import referencesRouter from '../server/routes/references.ts'
 import { listenOnSafePort } from './smoke-server.mjs'
+import { applyCitationPatchesToSections } from '../src/lib/citationPatches.ts'
+import { buildSectionsDocxBlob } from '../src/lib/docxExport.ts'
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -48,6 +53,44 @@ function assertPatchQuality(patches, expectedMin) {
   assert(sourceUseCounts.size >= Math.min(3, expectedMin), `citation patches used too few distinct sources: ${sourceUseCounts.size}`)
   const maxSourceReuse = Math.max(...sourceUseCounts.values())
   assert(maxSourceReuse <= Math.ceil(patches.length / 2), `one source is overused across citation patches: ${maxSourceReuse}/${patches.length}`)
+}
+
+function textFromXml(xml) {
+  return Array.from(xml.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g))
+    .map(match => match[1])
+    .join('')
+}
+
+async function inspectDocx(buffer) {
+  const zip = await JSZip.loadAsync(buffer)
+  const documentXml = await zip.file('word/document.xml')?.async('string')
+  const footnotesXml = await zip.file('word/footnotes.xml')?.async('string')
+  const relsXml = await zip.file('word/_rels/document.xml.rels')?.async('string')
+  const contentTypesXml = await zip.file('[Content_Types].xml')?.async('string')
+  assert(documentXml, 'enhanced citation DOCX is missing word/document.xml')
+  assert(footnotesXml, 'enhanced citation DOCX is missing word/footnotes.xml')
+  assert(relsXml, 'enhanced citation DOCX is missing document relationship file')
+  assert(contentTypesXml, 'enhanced citation DOCX is missing content types file')
+  return {
+    bodyText: textFromXml(documentXml),
+    footnoteText: textFromXml(footnotesXml),
+    bodyReferenceCount: (documentXml.match(/<w:footnoteReference\b/g) ?? []).length,
+    hasFootnotesRelationship: /Type="[^"]+\/footnotes"/.test(relsXml),
+    hasFootnotesContentType: /PartName="\/word\/footnotes\.xml"/.test(contentTypesXml),
+  }
+}
+
+function citationNoteText(source) {
+  const authors = Array.isArray(source?.authors) ? source.authors.join(', ') : ''
+  const year = source?.year ? ` (${source.year})` : ''
+  const title = source?.title ?? 'Untitled source'
+  const venue = source?.journal || source?.publisher || source?.provider || ''
+  const locator = source?.doi ? ` DOI: ${source.doi}` : source?.url ? ` ${source.url}` : ''
+  return [authors ? `${authors}${year}.` : '', title, venue, locator]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 async function main() {
@@ -189,12 +232,57 @@ async function main() {
       assert(sourceIds.includes(expected), `fallback citation patches did not include expected source: ${expected}`)
     }
 
+    const docSections = sections.map((section, index) => ({
+      id: section.id,
+      projectId: 'citation-enhance-smoke',
+      title: section.title,
+      content: section.content,
+      status: 'done',
+      lastModified: Date.now(),
+      order: index + 1,
+    }))
+    const citationPatchInputs = (fallback.patches ?? []).map(patch => ({
+      sectionId: patch.sectionId,
+      originalText: patch.originalText,
+      revisedText: patch.revisedText,
+      source: {
+        noteText: citationNoteText(patch.source),
+      },
+    }))
+    const applied = applyCitationPatchesToSections(docSections, citationPatchInputs, { now: () => 123456 })
+    assert(applied.appliedCount >= 3, `expected citation enhance patches to be applied to sections, got ${applied.appliedCount}`)
+    const citedSection = applied.sections.find(section => section.id === 's2')
+    assert(citedSection?.footnotes?.length >= 3, `expected enhanced section footnotes, got ${citedSection?.footnotes?.length ?? 0}`)
+    assert(
+      citedSection.footnotes.every(footnote => /Kano|Entropy|Intangible|Heritage|Visual|Shannon|Zhang/i.test(footnote.noteText)),
+      'enhanced footnotes do not preserve source identity'
+    )
+
+    const outputPath = path.resolve('../outputs/ich_kano_entropy/citation-enhance-docx-smoke.docx')
+    const blob = await buildSectionsDocxBlob('Citation enhance smoke', applied.sections)
+    const buffer = Buffer.from(await blob.arrayBuffer())
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true })
+    fs.writeFileSync(outputPath, buffer)
+    const docx = await inspectDocx(buffer)
+    assert(docx.bodyReferenceCount >= 3, `expected at least 3 Word footnote refs, got ${docx.bodyReferenceCount}`)
+    assert(docx.hasFootnotesRelationship, 'enhanced DOCX lacks footnotes relationship')
+    assert(docx.hasFootnotesContentType, 'enhanced DOCX lacks footnotes content type')
+    assert(!docx.bodyText.includes('{{cite:'), 'internal citation marker leaked into enhanced DOCX body')
+    assert(!/\[[0-9,\s]+\]/.test(docx.bodyText), 'plain bracket citation leaked into enhanced DOCX body')
+    assert(/Kano|Entropy|Intangible|Heritage|Visual|Shannon|Zhang/i.test(docx.footnoteText), 'enhanced DOCX footnotes lack source metadata')
+
     console.log(JSON.stringify({
       ok: true,
       noSourcePatchCount: noSource.patches?.length ?? 0,
       unrelatedPatchCount: unrelated.patches?.length ?? 0,
       fallbackPatchCount: fallback.patches?.length ?? 0,
       sourceIds,
+      docx: {
+        outputPath,
+        bodyReferenceCount: docx.bodyReferenceCount,
+        hasFootnotesRelationship: docx.hasFootnotesRelationship,
+        hasFootnotesContentType: docx.hasFootnotesContentType,
+      },
     }, null, 2))
   } finally {
     server.close()
