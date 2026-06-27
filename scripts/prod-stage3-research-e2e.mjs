@@ -18,6 +18,15 @@ function assert(condition, message) {
   if (!condition) throw new Error(message)
 }
 
+function withTimeout(promise, label, timeoutMs = 10_000) {
+  return Promise.race([
+    promise,
+    new Promise((_resolve, reject) => {
+      setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)
+    }),
+  ])
+}
+
 function loadPlaywright() {
   const candidates = [
     'playwright',
@@ -43,21 +52,33 @@ function loadPlaywright() {
   )
 }
 
-async function requestJson(method, route, body, token = '') {
-  const response = await fetch(`${baseUrl}${route}`, {
-    method,
-    headers: {
-      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
-  const text = await response.text()
-  const json = text ? JSON.parse(text) : null
-  if (!response.ok || json?.ok === false) {
-    throw new Error(`${method} ${route} ${response.status}: ${text.slice(0, 1200)}`)
+async function requestJson(method, route, body, token = '', timeoutMs = 60_000) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(`${baseUrl}${route}`, {
+      method,
+      signal: controller.signal,
+      headers: {
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+    const text = await response.text()
+    const json = text ? JSON.parse(text) : null
+    if (!response.ok || json?.ok === false) {
+      throw new Error(`${method} ${route} ${response.status}: ${text.slice(0, 1200)}`)
+    }
+    return json
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(`${method} ${route} timed out after ${timeoutMs}ms`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
   }
-  return json
 }
 
 function writeSurveyWorkbook(filePath) {
@@ -188,6 +209,7 @@ async function inspectDownloadedDocx(filePath) {
   assertCaptionSequence(text, '表', 4)
   assertCaptionSequence(text, '图', 3)
   assert(!/table_data_quality|table_descriptive|figure_descriptive_means|research_component/.test(text), 'DOCX leaked internal research ids')
+  assert(!/分析方法包括[^。]*(descriptive|cronbach_alpha|correlation|anova|efa|mediation_model_4)/i.test(text), 'DOCX leaked internal method ids in prose')
   assert(!/未计算|p=未/.test(text), 'DOCX contains unpolished significance placeholders')
 
   const media = Object.keys(zip.files).filter(name => name.startsWith('word/media/') && !name.endsWith('/'))
@@ -225,9 +247,9 @@ async function inspectDownloadedDocx(filePath) {
 async function cleanup({ token, projectId, sectionIds, packageIds }) {
   if (!token || keepProject) return
   await Promise.allSettled([
-    ...sectionIds.map(id => requestJson('DELETE', `/api/sections/${encodeURIComponent(id)}`, undefined, token)),
-    ...packageIds.map(id => requestJson('DELETE', `/api/research-packages/${encodeURIComponent(id)}`, undefined, token)),
-    requestJson('DELETE', `/api/projects/${encodeURIComponent(projectId)}`, undefined, token),
+    ...sectionIds.map(id => requestJson('DELETE', `/api/sections/${encodeURIComponent(id)}`, undefined, token, 10_000)),
+    ...packageIds.map(id => requestJson('DELETE', `/api/research-packages/${encodeURIComponent(id)}`, undefined, token, 10_000)),
+    requestJson('DELETE', `/api/projects/${encodeURIComponent(projectId)}`, undefined, token, 10_000),
   ])
 }
 
@@ -361,7 +383,7 @@ async function main() {
       docxInspection,
     }, null, 2))
 
-    await browser.close()
+    await withTimeout(browser.close(), 'browser.close')
     browser = null
   } catch (error) {
     if (page) {
@@ -381,12 +403,18 @@ async function main() {
     }
     throw error
   } finally {
-    if (browser) await browser.close().catch(() => null)
-    await cleanup({ token, projectId, sectionIds, packageIds })
+    if (browser) await withTimeout(browser.close(), 'browser.close', 10_000).catch(() => null)
+    await withTimeout(cleanup({ token, projectId, sectionIds, packageIds }), 'cleanup', 20_000).catch(error => {
+      console.warn(`[prod-stage3-research-e2e] cleanup skipped: ${error instanceof Error ? error.message : String(error)}`)
+    })
   }
 }
 
-main().catch(error => {
-  console.error(error)
-  process.exit(1)
-})
+main()
+  .then(() => {
+    process.exit(0)
+  })
+  .catch(error => {
+    console.error(error)
+    process.exit(1)
+  })

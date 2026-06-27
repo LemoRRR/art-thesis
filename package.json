@@ -16,6 +16,7 @@
     "smoke:prod-research-quant": "tsx scripts/prod-research-smoke.mjs https://paper-ai-tool.vercel.app ../outputs/ich_kano_entropy/prod-quant-research-smoke.docx quant",
     "smoke:prod-research-qual": "tsx scripts/prod-research-smoke.mjs https://paper-ai-tool.vercel.app ../outputs/ich_kano_entropy/prod-qual-research-smoke.docx qual",
     "smoke:prod-stage3-research-e2e": "node scripts/prod-stage3-research-e2e.mjs",
+    "smoke:local-stage3-research-e2e": "node scripts/local-stage3-research-e2e.mjs",
     "smoke:prod-stage3-generation-e2e": "node scripts/prod-stage3-generation-e2e.mjs",
     "smoke:prod-citation-enhance": "node scripts/prod-citation-enhance-smoke.mjs",
     "smoke:research-ui-contract": "node scripts/research-ui-contract-smoke.mjs",

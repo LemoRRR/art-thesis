@@ -28,10 +28,14 @@ const allowedOrigins = new Set([
   'http://127.0.0.1:5175',
 ])
 
+function isAllowedDevOrigin(origin: string) {
+  return process.env.NODE_ENV !== 'production' && /^http:\/\/(?:localhost|127\.0\.0\.1):\d+$/i.test(origin)
+}
+
 app.use(helmet())
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin) || origin.endsWith('.vercel.app')) {
+    if (!origin || allowedOrigins.has(origin) || isAllowedDevOrigin(origin) || origin.endsWith('.vercel.app')) {
       callback(null, true)
       return
     }

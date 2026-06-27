@@ -1977,9 +1977,21 @@ function deterministicQuantAnalysisText(result: Record<string, unknown>, fallbac
   const alpha = reliabilityRows[0]
   const firstAnova = anovaRows[0]
   const factorColumns = efaRows[0] ? Object.keys(efaRows[0]).filter(key => key.startsWith('factor_')) : []
+  const rawMethods = Array.isArray(result.methods)
+    ? result.methods.map(item => String(item))
+    : []
+  const methodSignal = [method, ...rawMethods].join(' ')
+  const methodLabels = [
+    descriptiveRows.length || /descriptive/.test(methodSignal) ? '描述性统计' : '',
+    reliabilityRows.length || /cronbach|alpha|reliability/.test(methodSignal) ? '信度分析' : '',
+    correlationRows.length || /correlation/.test(methodSignal) ? '相关分析' : '',
+    anovaRows.length || /anova/.test(methodSignal) ? '单因素方差分析' : '',
+    efaRows.length || /efa|factor/.test(methodSignal) ? '探索性因子分析' : '',
+  ].filter(Boolean)
+  const methodLabelText = methodLabels.length ? methodLabels.join('、') : '描述性统计及相关统计检验'
 
   return [
-    `本次定量分析基于 ${result.sampleSize || rowValue(qualityRows[0] ?? {}, 'sampleSize') || '上传'} 份样本开展，分析方法包括${method || '描述统计及相关统计检验'}。系统根据数据列类型和用户确认方案生成统计表与图示，用于支撑论文结果章节中的变量分布、信度、相关关系、组间差异或维度结构解释。`,
+    `本次定量分析基于 ${result.sampleSize || rowValue(qualityRows[0] ?? {}, 'sampleSize') || '上传'} 份样本开展，分析方法包括${methodLabelText}。系统根据数据列类型和用户确认方案生成统计表与图示，用于支撑论文结果章节中的变量分布、信度、相关关系、组间差异或维度结构解释。`,
     firstDesc
       ? `描述统计结果显示，${rowValue(firstDesc, 'variable') || '首个变量'}的均值为 ${rowValue(firstDesc, 'mean') || '-'}，标准差为 ${rowValue(firstDesc, 'sd') || '-'}，可用于判断样本在该指标上的总体水平和离散程度。正式写作时应结合研究对象解释均值高低的含义，而不是仅复述数字。`
       : '',
