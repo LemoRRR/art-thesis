@@ -6,6 +6,7 @@ import XLSX from 'xlsx'
 import researchRouter from '../server/routes/research.ts'
 import { buildSectionsDocxBlob } from '../src/lib/docxExport.ts'
 import { researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../src/lib/researchPackages.ts'
+import { assertPaperNarratives } from './research-smoke-assertions.mjs'
 import { idsByResolvedSection, listenOnSafePort } from './smoke-server.mjs'
 
 const outputPath = path.resolve(
@@ -144,13 +145,10 @@ function assertQuantQuality(analysis, components) {
   const methodCount = components.filter(component => component.type === 'method').length
   const tableCount = components.filter(component => component.type === 'statistics').length
   const figureCount = components.filter(component => component.type === 'figure').length
-  const beforeCount = components.filter(component => component.type === 'analysis' && String(component.title ?? '').endsWith(': before')).length
-  const afterCount = components.filter(component => component.type === 'analysis' && String(component.title ?? '').endsWith(': after')).length
   assert(methodCount >= 1, 'quant method narrative is missing')
   assert(tableCount >= requiredTables.length, 'quant paper tables are missing')
   assert(figureCount >= requiredFigures.length, 'quant paper figures are missing')
-  assert(beforeCount >= requiredTables.length + requiredFigures.length, 'not every quant table/figure has a before paragraph')
-  assert(afterCount >= requiredTables.length + requiredFigures.length, 'not every quant table/figure has an after paragraph')
+  assertPaperNarratives({ assert, components, tables, figures, label: 'quant' })
 }
 
 async function inspectDocx(buffer) {

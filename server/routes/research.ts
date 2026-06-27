@@ -1120,11 +1120,11 @@ async function makeCorrelationHeatmapFigure(correlations: Record<string, unknown
       valueMap.set(`${y}|||${x}`, r)
     }
   })
-  const cell = 52
+  const cell = 64
   const left = 178
   const top = 120
-  const width = left + variables.length * cell + 110
-  const height = top + variables.length * cell + 90
+  const width = Math.max(980, left + variables.length * cell + 180)
+  const height = top + variables.length * cell + 120
   const color = (r: number) => {
     const intensity = Math.min(1, Math.abs(r))
     const alpha = 0.18 + intensity * 0.72
@@ -1135,19 +1135,20 @@ async function makeCorrelationHeatmapFigure(correlations: Record<string, unknown
       ? `rgb(${mixed.join(',')})`
       : `rgb(${mixed.join(',')})`
   }
-  const labels = variables.map((name, index) => `<text x="${left + index * cell + 25}" y="104" font-size="11" text-anchor="middle">${escapeXml(shortLabel(name, 8))}</text>
-<text x="${left - 12}" y="${top + index * cell + 31}" font-size="11" text-anchor="end">${escapeXml(shortLabel(name, 14))}</text>`).join('')
+  const labels = variables.map((name, index) => `<text x="${left + index * cell + 31}" y="104" font-size="13" text-anchor="middle">${escapeXml(shortLabel(name, 8))}</text>
+<text x="${left - 12}" y="${top + index * cell + 38}" font-size="13" text-anchor="end">${escapeXml(shortLabel(name, 14))}</text>`).join('')
   const cells = variables.flatMap((rowName, rowIndex) => variables.map((colName, colIndex) => {
     const r = rowName === colName ? 1 : valueMap.get(`${rowName}|||${colName}`) ?? 0
     const x = left + colIndex * cell
     const y = top + rowIndex * cell
     return `<rect x="${x}" y="${y}" width="${cell - 2}" height="${cell - 2}" fill="${color(r)}" stroke="${CHART_THEME.panel}"/>
-<text x="${x + cell / 2}" y="${y + 31}" font-size="11" text-anchor="middle">${r.toFixed(2)}</text>`
+<text x="${x + cell / 2}" y="${y + 38}" font-size="13" text-anchor="middle">${r.toFixed(2)}</text>`
   })).join('')
   return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">变量相关系数热力图</text>
 <text x="34" y="76" class="sub">主要变量之间的 Pearson 相关系数矩阵。</text>
 ${labels}${cells}
-<text x="${left}" y="${height - 34}" class="small">注：绿色表示正相关，红色表示负相关；系数绝对值越大，色块越深。</text>`))
+<text x="${left}" y="${height - 56}" class="small">注：绿色表示正相关，红色表示负相关；</text>
+<text x="${left}" y="${height - 26}" class="small">系数绝对值越大，色块越深。</text>`))
 }
 
 async function makeAnovaFigure(anova: Record<string, unknown>[]) {

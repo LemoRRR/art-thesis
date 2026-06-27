@@ -5,6 +5,7 @@ import JSZip from 'jszip'
 import researchRouter from '../server/routes/research.ts'
 import { buildSectionsDocxBlob } from '../src/lib/docxExport.ts'
 import { researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../src/lib/researchPackages.ts'
+import { assertPaperNarratives } from './research-smoke-assertions.mjs'
 import { idsByResolvedSection, listenOnSafePort } from './smoke-server.mjs'
 
 const outputPath = path.resolve(
@@ -108,14 +109,11 @@ function assertQualitativeQuality(plan, analysis, components) {
       && !String(component.title ?? '').endsWith(': after')
       && String(component.content ?? '').length > 80
   ).length
-  const beforeCount = components.filter(component => component.type === 'analysis' && String(component.title ?? '').endsWith(': before')).length
-  const afterCount = components.filter(component => component.type === 'analysis' && String(component.title ?? '').endsWith(': after')).length
   assert(methodCount >= 1, 'qualitative method narrative is missing')
   assert(tableCount >= requiredTables.length, 'qualitative paper tables are missing')
   assert(figureCount >= 1, 'qualitative paper figure is missing')
   assert(discussionCount >= 2, 'qualitative analysis plus discussion narratives are missing')
-  assert(beforeCount >= requiredTables.length + 1, 'not every qualitative table/figure has a before paragraph')
-  assert(afterCount >= requiredTables.length + 1, 'not every qualitative table/figure has an after paragraph')
+  assertPaperNarratives({ assert, components, tables, figures, label: 'qualitative' })
 }
 
 async function inspectDocx(buffer) {

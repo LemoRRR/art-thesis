@@ -6,6 +6,7 @@ import XLSX from 'xlsx'
 import researchRouter from '../server/routes/research.ts'
 import { buildSectionsDocxBlob } from '../src/lib/docxExport.ts'
 import { researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../src/lib/researchPackages.ts'
+import { assertPaperNarratives } from './research-smoke-assertions.mjs'
 import { idsByResolvedSection, listenOnSafePort } from './smoke-server.mjs'
 
 const outputPath = path.resolve(
@@ -111,14 +112,11 @@ function assertAhpQuality(plan, analysis, components) {
   const discussionCount = components.filter(component =>
     component.type === 'analysis' && /讨论|建议|策略|discussion|optimization/i.test(`${component.title}\n${component.content}`)
   ).length
-  const beforeCount = components.filter(component => component.type === 'analysis' && String(component.title ?? '').endsWith(': before')).length
-  const afterCount = components.filter(component => component.type === 'analysis' && String(component.title ?? '').endsWith(': after')).length
   assert(methodCount >= 1, 'AHP method narrative is missing')
   assert(tableCount >= 2, 'AHP paper tables are missing')
   assert(figureCount >= 2, 'AHP paper figures are missing')
   assert(discussionCount >= 1, 'AHP discussion or strategy narrative is missing')
-  assert(beforeCount >= tables.length + figures.length, 'not every AHP table/figure has a before paragraph')
-  assert(afterCount >= tables.length + figures.length, 'not every AHP table/figure has an after paragraph')
+  assertPaperNarratives({ assert, components, tables, figures, label: 'AHP' })
 }
 
 async function inspectDocx(buffer) {
