@@ -1,17 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { BookOpen, CheckCircle2, Copy, Download, FlaskConical, History, MessageSquare, RefreshCw, Send, Sparkles } from 'lucide-react'
 import ChatBubble from '../components/ChatBubble'
 import DocumentToolbar from '../components/DocumentToolbar'
 import MentionInput, { type MentionRef } from '../components/MentionInput'
-import PaperDocumentEditor from '../components/PaperDocumentEditor'
-import ReferencePanel from '../components/ReferencePanel'
 import type { CitationPatchDraft, EvidenceCardAction } from '../components/ReferencePanel'
-import ResearchDrawer from '../components/ResearchDrawer'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
-import VersionPanel from '../components/VersionPanel'
 import { callDoubao, callGPT, type Message } from '../lib/ai'
 import { outlinesAPI, researchAPI, scholarAPI, type ScholarPaper } from '../lib/api'
 import { formatAcademicOutlineText, formatAcademicOutlineTitle, formatAcademicSectionContentWithOutline, isFrontMatterTitle } from '../lib/academicFormat'
@@ -29,7 +25,6 @@ import {
 } from '../lib/citations'
 import { buildAIContext, buildMentionContext } from '../lib/context'
 import { formatSectionContent, formatSectionsForPaper, parsePaperBlocks, sectionsToPlainText } from '../lib/documentFormat'
-import { exportSectionsToDocx } from '../lib/docxExport'
 import { editorDocToPlainText, ensurePaperEditorDoc, paperTextToEditorDoc } from '../lib/editorDocument'
 import { buildBibliographyContent, buildBibliographySection, createFootnote, deleteFootnote, getAllFootnotes, updateFootnoteNote } from '../lib/footnotes'
 import {
@@ -65,6 +60,11 @@ import {
   type StyleProfile,
 } from '../lib/storage'
 import { createPackageFromAsset, repairResearchTablesInDoc, researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../lib/researchPackages'
+
+const PaperDocumentEditor = lazy(() => import('../components/PaperDocumentEditor'))
+const ReferencePanel = lazy(() => import('../components/ReferencePanel'))
+const ResearchDrawer = lazy(() => import('../components/ResearchDrawer'))
+const VersionPanel = lazy(() => import('../components/VersionPanel'))
 
 type Mode = 'revise' | 'finish'
 type GenerationStepStatus = 'active' | 'done' | 'error'
@@ -592,6 +592,14 @@ function OutlineToDraftTransition({
           50% { opacity: 1; transform: translateX(6px) scale(1); }
         }
       `}</style>
+    </div>
+  )
+}
+
+function EditorLoadingState() {
+  return (
+    <div style={{ flex: 1, display: 'grid', placeItems: 'center', background: '#F3F0EA', color: 'var(--color-ink-3)', fontSize: 12 }}>
+      正在打开论文编辑器...
     </div>
   )
 }
@@ -2227,6 +2235,7 @@ export default function Stage3() {
       return
     }
     try {
+      const { exportSectionsToDocx } = await import('../lib/docxExport')
       await exportSectionsToDocx(projectTitle, exportSections)
     } catch (error) {
       alert(`Word 导出失败：${error instanceof Error ? error.message : '请刷新后重试'}`)
@@ -3211,7 +3220,8 @@ export default function Stage3() {
                   sourceCount={autoCitationSourceCount}
                 />
               ) : (
-              <PaperDocumentEditor
+              <Suspense fallback={<EditorLoadingState />}>
+                <PaperDocumentEditor
                 projectId={project.id}
                 paperTitle={projectTitle}
                 sections={sections}
@@ -3262,19 +3272,22 @@ export default function Stage3() {
                     {centerGenerateButtonLabel}
                   </button>
                 ) : undefined}
-              />
+                />
+              </Suspense>
               )}
 
               {showHistory && !isGeneratingFull && (
-                <VersionPanel
-                  projectId={project.id}
-                  onClose={() => setShowHistory(false)}
-                  onRestore={(snapshot) => {
-                    const restoredSections = snapshot.sections.map(section => ({ ...section, projectId: project.id }))
-                    setSections(restoredSections)
-                    versionStore.restore(snapshot, project.id)
-                  }}
-                />
+                <Suspense fallback={null}>
+                  <VersionPanel
+                    projectId={project.id}
+                    onClose={() => setShowHistory(false)}
+                    onRestore={(snapshot) => {
+                      const restoredSections = snapshot.sections.map(section => ({ ...section, projectId: project.id }))
+                      setSections(restoredSections)
+                      versionStore.restore(snapshot, project.id)
+                    }}
+                  />
+                </Suspense>
               )}
             </div>
 
@@ -3311,28 +3324,34 @@ export default function Stage3() {
         </div>
       </div>
 
-      <ReferencePanel
-        projectId={project.id}
-        stage="stage3"
-        open={showReferences}
-        onClose={() => setShowReferences(false)}
-        onApplyToActiveSection={() => void generateActiveSectionOnly()}
-        onApplyCitationPatches={applyCitationPatches}
-        onInsertEvidenceCard={insertEvidenceCardIntoCurrentSection}
-        onUseEvidenceForRewrite={useEvidenceCardForRewrite}
-        autoStartEnhancementKey={citationEnhanceAutoStartKey}
-      />
-      <ResearchDrawer
-        projectId={project.id}
-        open={showResearchDrawer}
-        activeSectionTitle={sections.find(section => section.id === activeSectionId)?.title}
-        onClose={() => setShowResearchDrawer(false)}
-        onOpenDetails={() => navigate(`/projects/${project.id}/research`)}
-        onInsertAsset={insertResearchAssetIntoCurrentSection}
-        onUseAsReference={addResearchAssetAsReference}
-        onGenerateChapter={generateResearchAssetChapter}
-        onInsertAndPolish={insertResearchAssetAndPolish}
-      />
+      <Suspense fallback={null}>
+        {showReferences && (
+          <ReferencePanel
+            projectId={project.id}
+            stage="stage3"
+            open={showReferences}
+            onClose={() => setShowReferences(false)}
+            onApplyToActiveSection={() => void generateActiveSectionOnly()}
+            onApplyCitationPatches={applyCitationPatches}
+            onInsertEvidenceCard={insertEvidenceCardIntoCurrentSection}
+            onUseEvidenceForRewrite={useEvidenceCardForRewrite}
+            autoStartEnhancementKey={citationEnhanceAutoStartKey}
+          />
+        )}
+        {showResearchDrawer && (
+          <ResearchDrawer
+            projectId={project.id}
+            open={showResearchDrawer}
+            activeSectionTitle={sections.find(section => section.id === activeSectionId)?.title}
+            onClose={() => setShowResearchDrawer(false)}
+            onOpenDetails={() => navigate(`/projects/${project.id}/research`)}
+            onInsertAsset={insertResearchAssetIntoCurrentSection}
+            onUseAsReference={addResearchAssetAsReference}
+            onGenerateChapter={generateResearchAssetChapter}
+            onInsertAndPolish={insertResearchAssetAndPolish}
+          />
+        )}
+      </Suspense>
     </div>
   )
 }

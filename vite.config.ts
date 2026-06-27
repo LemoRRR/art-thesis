@@ -7,6 +7,20 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/@tiptap') || id.includes('node_modules/prosemirror')) {
+            return 'editor-vendor'
+          }
+          if (id.includes('node_modules/docx')) {
+            return 'docx-vendor'
+          }
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': {
