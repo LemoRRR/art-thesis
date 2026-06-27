@@ -1417,6 +1417,10 @@ export default function ResearchCenter() {
   const location = useLocation()
   const project = projectStore.ensure(params.projectId)
   const isAssetPage = location.pathname.endsWith('/assets')
+  const hasDraftContent = useMemo(
+    () => sectionStore.getByProject(project.id).some(section => section.content.replace(/\s/g, '').length > 80),
+    [project.id],
+  )
   const sourceOptions = useMemo(() => getSourceOptions(project.id), [project.id])
   const defaultSourceKind = sourceOptions.find(option => option.available)?.kind ?? 'stage1'
   const [stage1ResearchPlan, setStage1ResearchPlan] = useState<ResearchPlan | undefined>(project.context.researchPlan)
@@ -2016,6 +2020,49 @@ export default function ResearchCenter() {
     } finally {
       setIsWritingToPaper(false)
     }
+  }
+
+  if (!hasDraftContent && !isAssetPage) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', background: 'var(--color-bg)', overflow: 'hidden' }}>
+        <Sidebar />
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <TopBar
+            currentStep={3}
+            right={
+              <button onClick={() => navigate(`/projects/${project.id}/stage3`)} style={primaryButtonStyle}>
+                去文章生成
+                <ArrowRight size={13} />
+              </button>
+            }
+          />
+          <main style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
+            <section style={{ ...panelStyle, maxWidth: 760, margin: '96px auto 0', padding: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--color-accent)', fontSize: 13, fontWeight: 850 }}>
+                <FileText size={18} />
+                研究计算放在全文初稿之后
+              </div>
+              <h1 style={{ margin: '12px 0 10px', fontSize: 22, color: 'var(--color-ink)' }}>
+                请先生成或确认论文正文，再进行数据分析
+              </h1>
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.8, color: 'var(--color-ink-2)' }}>
+                当前项目还没有可用于承接图表和结果解释的全文初稿。推荐流程是：大纲撰写 → 文章生成 → 研究计算。这样系统才能把方法、表格、图片和结果讨论写入正确章节，而不是生成一个孤立的分析模块。
+              </p>
+              <div style={{ marginTop: 18, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                <button onClick={() => navigate(`/projects/${project.id}/stage3`)} style={primaryButtonStyle}>
+                  去文章生成
+                  <ArrowRight size={13} />
+                </button>
+                <button onClick={() => navigate(`/projects/${project.id}/research/assets`)} style={secondaryButtonStyle}>
+                  查看研究资产库
+                  <FileSpreadsheet size={13} />
+                </button>
+              </div>
+            </section>
+          </main>
+        </div>
+      </div>
+    )
   }
 
   if (isAssetPage) {
