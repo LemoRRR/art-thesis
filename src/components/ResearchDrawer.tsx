@@ -106,10 +106,34 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
   return btoa(binary)
 }
 
+function formatAnalysisMethodName(method: string, plan?: ResearchAnalysisPlan) {
+  const normalized = method.trim().toLowerCase()
+  const planText = `${plan?.purpose ?? ''}\n${plan?.reason ?? ''}\n${plan?.formula ?? ''}`
+  const hasEntropy = /熵权|耦合/.test(planText)
+  const labels: Record<string, string> = {
+    kano_entropy: hasEntropy ? 'KANO-熵权法耦合分析' : 'KANO模型分析',
+    ahp: 'AHP层次分析法',
+    qualitative_coding: '质性编码分析',
+    descriptive: '描述性统计',
+    cronbach_alpha: '信度分析',
+    correlation: '相关分析',
+    anova: '方差分析',
+    mediation_model_4: '中介效应检验',
+    efa: '探索性因子分析',
+    out_of_scope: '暂不适用',
+  }
+  return labels[normalized] ?? method
+}
+
+function formatAnalysisMethodList(plan: ResearchAnalysisPlan) {
+  const methods = plan.methods?.length ? plan.methods : [plan.method]
+  return methods.filter(Boolean).map(method => formatAnalysisMethodName(method, plan)).join('、')
+}
+
 function formatPlan(plan: ResearchAnalysisPlan) {
   return [
     `目的：${plan.purpose}`,
-    `方法：${plan.methods?.join('、') || plan.method}`,
+    `方法：${formatAnalysisMethodList(plan) || '待确认'}`,
     `原因：${plan.reason}`,
     `公式/模型：${plan.formula}`,
     `需要列：${plan.requiredColumns.join('、') || '待确认'}`,
@@ -296,7 +320,7 @@ export default function ResearchDrawer({
         taskId: primaryTask?.id,
         type: 'quant_analysis_result',
         title: `${dataset.fileName}-章节研究结果`,
-        summary: `按确认方案执行：${plan.methods?.join('、') || plan.method}；样本量 ${result.sampleSize}。`,
+        summary: `按确认方案执行：${formatAnalysisMethodList(plan) || '研究计算'}；样本量 ${result.sampleSize}。`,
         source: 'created_in_stage3',
         structuredData: { dataset, intent, plan, run: { ...run, ...filteredResult }, result: filteredResult },
         plainText: [
