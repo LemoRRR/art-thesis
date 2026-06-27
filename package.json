@@ -21,6 +21,7 @@
     "smoke:research-ui-contract": "node scripts/research-ui-contract-smoke.mjs",
     "smoke:word-render": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/word-render-smoke.ps1",
     "smoke:citation-docx": "tsx scripts/citation-docx-smoke.mjs",
+    "smoke:footnote-persistence": "tsx scripts/footnote-persistence-smoke.mjs",
     "smoke:citation-enhance": "tsx scripts/citation-enhance-smoke.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
