@@ -452,6 +452,7 @@ async function inspectDocx(buffer, sections, scenario) {
   }
   const pageSize = documentXml.match(/<w:pgSz[^>]*w:w="(\d+)"[^>]*w:h="(\d+)"[^>]*>/)
   const pageMargin = documentXml.match(/<w:pgMar[^>]*w:top="(\d+)"[^>]*w:right="(\d+)"[^>]*w:bottom="(\d+)"[^>]*w:left="(\d+)"/)
+  const suspiciousQuestionRuns = text.match(/\?{4,}/g) ?? []
   return {
     page: {
       width: pageSize ? Number(pageSize[1]) : 0,
@@ -475,6 +476,7 @@ async function inspectDocx(buffer, sections, scenario) {
     ),
     imageExtentCount: (documentXml.match(/<wp:extent\b/g) ?? []).length,
     internalLeakCount: ((documentXml.match(scenario.internalLeakPattern ?? /table_ahp_|figure_ahp_|research_component/g) ?? []).length),
+    suspiciousQuestionRuns,
     paperStructure: {
       hasOrderedSections: true,
       hasMethodNarrative: true,
@@ -608,6 +610,7 @@ async function main() {
     assert(docx.minImagePixels.width >= 900 && docx.minImagePixels.height >= 250, `DOCX image pixels are too small: ${JSON.stringify(docx.minImagePixels)}`)
     assert(docx.imageExtentCount >= scenario.minFigures, `DOCX images are missing display extents: ${docx.imageExtentCount}`)
     assert(docx.internalLeakCount === 0, `DOCX leaked internal ids: ${docx.internalLeakCount}`)
+    assert(docx.suspiciousQuestionRuns.length === 0, `DOCX contains suspicious question-mark text: ${docx.suspiciousQuestionRuns.join(', ')}`)
 
     console.log(JSON.stringify({
       ok: true,

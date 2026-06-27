@@ -137,6 +137,7 @@ async function inspectDocx(buffer) {
   }
   const pageSize = documentXml.match(/<w:pgSz[^>]*w:w="(\d+)"[^>]*w:h="(\d+)"[^>]*>/)
   const pageMargin = documentXml.match(/<w:pgMar[^>]*w:top="(\d+)"[^>]*w:right="(\d+)"[^>]*w:bottom="(\d+)"[^>]*w:left="(\d+)"/)
+  const suspiciousQuestionRuns = text.match(/\?{4,}/g) ?? []
   return {
     page: {
       width: pageSize ? Number(pageSize[1]) : 0,
@@ -154,6 +155,7 @@ async function inspectDocx(buffer) {
     imageExtentCount: (documentXml.match(/<wp:extent\b/g) ?? []).length,
     hasQualText: /Participant|coding|theme|Q1|Q2|Q3/i.test(text),
     internalLeakCount: (text.match(/table_open_coding|figure_theme_frequency|research_component/g) ?? []).length,
+    suspiciousQuestionRuns,
   }
 }
 
@@ -230,6 +232,7 @@ async function main() {
     assert(docx.imageExtentCount >= 1, `DOCX images are missing display extents: ${docx.imageExtentCount}`)
     assert(docx.hasQualText, 'DOCX does not contain qualitative result text')
     assert(docx.internalLeakCount === 0, `DOCX leaked internal research ids: ${docx.internalLeakCount}`)
+    assert(docx.suspiciousQuestionRuns.length === 0, `DOCX contains suspicious question-mark text: ${docx.suspiciousQuestionRuns.join(', ')}`)
 
     console.log(JSON.stringify({
       ok: true,

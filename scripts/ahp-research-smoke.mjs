@@ -140,6 +140,7 @@ async function inspectDocx(buffer) {
   }
   const pageSize = documentXml.match(/<w:pgSz[^>]*w:w="(\d+)"[^>]*w:h="(\d+)"[^>]*>/)
   const pageMargin = documentXml.match(/<w:pgMar[^>]*w:top="(\d+)"[^>]*w:right="(\d+)"[^>]*w:bottom="(\d+)"[^>]*w:left="(\d+)"/)
+  const suspiciousQuestionRuns = text.match(/\?{4,}/g) ?? []
   return {
     page: {
       width: pageSize ? Number(pageSize[1]) : 0,
@@ -157,6 +158,7 @@ async function inspectDocx(buffer) {
     imageExtentCount: (documentXml.match(/<wp:extent\b/g) ?? []).length,
     hasAhpText: /AHP|CR|权重|一致性/.test(text),
     internalLeakCount: (text.match(/table_ahp_|figure_ahp_|research_component/g) ?? []).length,
+    suspiciousQuestionRuns,
   }
 }
 
@@ -233,6 +235,7 @@ async function main() {
     assert(docx.imageExtentCount >= 2, `DOCX images are missing display extents: ${docx.imageExtentCount}`)
     assert(docx.hasAhpText, 'DOCX does not contain AHP result text')
     assert(docx.internalLeakCount === 0, `DOCX leaked internal research ids: ${docx.internalLeakCount}`)
+    assert(docx.suspiciousQuestionRuns.length === 0, `DOCX contains suspicious question-mark text: ${docx.suspiciousQuestionRuns.join(', ')}`)
 
     console.log(JSON.stringify({
       ok: true,

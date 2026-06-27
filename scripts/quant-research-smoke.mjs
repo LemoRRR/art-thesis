@@ -172,6 +172,7 @@ async function inspectDocx(buffer) {
   }
   const pageSize = documentXml.match(/<w:pgSz[^>]*w:w="(\d+)"[^>]*w:h="(\d+)"[^>]*>/)
   const pageMargin = documentXml.match(/<w:pgMar[^>]*w:top="(\d+)"[^>]*w:right="(\d+)"[^>]*w:bottom="(\d+)"[^>]*w:left="(\d+)"/)
+  const suspiciousQuestionRuns = text.match(/\?{4,}/g) ?? []
   return {
     page: {
       width: pageSize ? Number(pageSize[1]) : 0,
@@ -189,6 +190,7 @@ async function inspectDocx(buffer) {
     imageExtentCount: (documentXml.match(/<wp:extent\b/g) ?? []).length,
     hasQuantText: /Cronbach|Pearson|方差|因子|描述/.test(text),
     internalLeakCount: (text.match(/table_descriptive|figure_descriptive|research_component/g) ?? []).length,
+    suspiciousQuestionRuns,
   }
 }
 
@@ -280,6 +282,7 @@ async function main() {
     assert(docx.imageExtentCount >= 5, `DOCX images are missing display extents: ${docx.imageExtentCount}`)
     assert(docx.hasQuantText, 'DOCX does not contain quant result text')
     assert(docx.internalLeakCount === 0, `DOCX leaked internal research ids: ${docx.internalLeakCount}`)
+    assert(docx.suspiciousQuestionRuns.length === 0, `DOCX contains suspicious question-mark text: ${docx.suspiciousQuestionRuns.join(', ')}`)
 
     console.log(JSON.stringify({
       ok: true,
