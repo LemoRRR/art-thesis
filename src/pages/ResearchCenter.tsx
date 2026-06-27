@@ -17,7 +17,7 @@ import TopBar from '../components/TopBar'
 import { researchAPI, type ResearchWritePlanPlacement } from '../lib/api'
 import { callGPT, type Message } from '../lib/ai'
 import { editorDocToPlainText, ensurePaperEditorDoc } from '../lib/editorDocument'
-import { createPackageFromAsset, researchPackageToPaperNodes } from '../lib/researchPackages'
+import { createPackageFromAsset, mergeResearchNodesIntoDoc, researchPackageToPaperNodes } from '../lib/researchPackages'
 import {
   buildResearchDesignBrief,
   buildResearchToolPrompt,
@@ -1969,10 +1969,7 @@ export default function ResearchCenter() {
 
         if (targetSection) {
           const sourceDoc = ensurePaperEditorDoc(targetSection.content, targetSection.editorDoc)
-          const editorDoc = {
-            ...sourceDoc,
-            content: [...(sourceDoc.content ?? []), ...researchNodes],
-          }
+          const editorDoc = mergeResearchNodesIntoDoc(sourceDoc, researchNodes, role)
           sectionStore.update(targetSection.id, {
             content: editorDocToPlainText(editorDoc),
             editorDoc,

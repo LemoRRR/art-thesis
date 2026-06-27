@@ -8,6 +8,8 @@ import {
 } from './storage'
 import type { PaperEditorDoc, PaperEditorNode } from './editorDocument'
 
+export type ResearchInsertionRole = 'method' | 'sample' | 'result' | 'discussion' | 'conclusion'
+
 type StructuredResearchResult = {
   method?: string
   figures?: Array<{ id?: string; title?: string; dataUrl?: string; caption?: string }>
@@ -534,6 +536,20 @@ const RESEARCH_TABLE_COLUMN_LABELS: Record<string, string> = {
   consistency: '一致性',
 }
 
+const RESEARCH_INSERTION_BRIDGE_TEXT: Record<ResearchInsertionRole, string> = {
+  method: '\u5728\u524d\u6587\u7814\u7a76\u8bbe\u8ba1\u57fa\u7840\u4e0a\uff0c\u672c\u6587\u8fdb\u4e00\u6b65\u5c06\u672c\u6b21\u7814\u7a76\u8ba1\u7b97\u7684\u65b9\u6cd5\u8def\u5f84\u4e0e\u6570\u636e\u5904\u7406\u8fc7\u7a0b\u8bf4\u660e\u5982\u4e0b\u3002',
+  sample: '\u5728\u786e\u8ba4\u6837\u672c\u6765\u6e90\u4e0e\u6570\u636e\u7ed3\u6784\u540e\uff0c\u672c\u6587\u5c06\u6837\u672c\u4e0e\u53d8\u91cf\u60c5\u51b5\u6574\u7406\u5982\u4e0b\u3002',
+  result: '\u5728\u5b8c\u6210\u6837\u672c\u6574\u7406\u4e0e\u6307\u6807\u8ba1\u7b97\u540e\uff0c\u672c\u6587\u5c06\u6838\u5fc3\u7ed3\u679c\u7eb3\u5165\u672c\u8282\u8fdb\u884c\u8bf4\u660e\uff0c\u5e76\u7ed3\u5408\u56fe\u8868\u5448\u73b0\u4e3b\u8981\u53d1\u73b0\u3002',
+  discussion: '\u57fa\u4e8e\u4e0a\u8ff0\u5206\u6790\u7ed3\u679c\uff0c\u672c\u6587\u8fdb\u4e00\u6b65\u8ba8\u8bba\u5176\u5bf9\u7814\u7a76\u95ee\u9898\u7684\u56de\u5e94\u4ee5\u53ca\u5bf9\u540e\u7eed\u4f18\u5316\u7b56\u7565\u7684\u542f\u793a\u3002',
+  conclusion: '\u7efc\u5408\u524d\u6587\u7814\u7a76\u8ba1\u7b97\u4e0e\u7ed3\u679c\u8ba8\u8bba\uff0c\u672c\u8282\u8fdb\u4e00\u6b65\u5f52\u7eb3\u7814\u7a76\u7ed3\u8bba\u4e0e\u5b9e\u8df5\u542f\u793a\u3002',
+}
+
+function hasVisiblePaperNode(node: PaperEditorNode) {
+  if (node.type === 'researchImage' || node.type === 'researchTable' || node.type === 'researchBlock') return true
+  if (node.type === 'text') return Boolean(node.text?.trim())
+  return (node.content ?? []).some(hasVisiblePaperNode)
+}
+
 function researchTableColumnLabel(column: string) {
   if (RESEARCH_TABLE_COLUMN_LABELS[column]) return RESEARCH_TABLE_COLUMN_LABELS[column]
   return column
@@ -738,9 +754,38 @@ export function researchPackageToPaperNodes(pkg: ResearchContentPackage, compone
     .flatMap(componentToPaperNodes)
 }
 
+export function researchInsertionRoleForComponents(
+  components: Pick<ResearchPackageComponent, 'type' | 'title' | 'content'>[]
+): ResearchInsertionRole {
+  if (components.length > 0 && components.every(component => component.type === 'method')) return 'method'
+  const text = components.map(component => `${component.title ?? ''}\n${component.content ?? ''}`).join('\n')
+  if (/discussion|recommendation|strategy|limitation|conclusion/i.test(text)) return 'discussion'
+  if (/(\u8ba8\u8bba|\u5efa\u8bae|\u7b56\u7565|\u4f18\u5316|\u542f\u793a|\u5c40\u9650|\u7ed3\u8bba)/u.test(text)) return 'discussion'
+  return 'result'
+}
+
 function paperNodeText(node: PaperEditorNode): string {
   if (node.type === 'text') return node.text ?? ''
   return (node.content ?? []).map(paperNodeText).join('')
+}
+
+export function mergeResearchNodesIntoDoc(
+  doc: PaperEditorDoc,
+  researchNodes: PaperEditorNode[],
+  role: ResearchInsertionRole = 'result'
+): PaperEditorDoc {
+  if (researchNodes.length === 0) return doc
+  const sourceContent = doc.content ?? []
+  const hasExistingContent = sourceContent.some(hasVisiblePaperNode)
+  const bridgeText = RESEARCH_INSERTION_BRIDGE_TEXT[role] ?? RESEARCH_INSERTION_BRIDGE_TEXT.result
+  const lastText = paperNodeText(sourceContent[sourceContent.length - 1] ?? { type: 'paragraph' }).trim()
+  const bridgeNodes = hasExistingContent && lastText !== bridgeText
+    ? [paragraphNode(bridgeText, { researchBlock: true })]
+    : []
+  return {
+    ...doc,
+    content: [...sourceContent, ...bridgeNodes, ...researchNodes],
+  }
 }
 
 function normalizedTableTitle(value: unknown) {

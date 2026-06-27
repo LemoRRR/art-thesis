@@ -60,7 +60,7 @@ import {
   type ResearchAsset,
   type StyleProfile,
 } from '../lib/storage'
-import { createPackageFromAsset, repairResearchTablesInDoc, researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../lib/researchPackages'
+import { createPackageFromAsset, mergeResearchNodesIntoDoc, repairResearchTablesInDoc, researchInsertionRoleForComponents, researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../lib/researchPackages'
 
 const PaperDocumentEditor = lazy(() => import('../components/PaperDocumentEditor'))
 const ReferencePanel = lazy(() => import('../components/ReferencePanel'))
@@ -2636,10 +2636,8 @@ export default function Stage3() {
         if (!ids?.length) return section
         const sourceDoc = ensurePaperEditorDoc(section.content, section.editorDoc)
         const researchNodes = researchPackageToPaperNodes(pkg, ids)
-        const editorDoc = {
-          ...sourceDoc,
-          content: [...(sourceDoc.content ?? []), ...researchNodes],
-        }
+        const role = researchInsertionRoleForComponents(pkg.components.filter(component => ids.includes(component.id)))
+        const editorDoc = mergeResearchNodesIntoDoc(sourceDoc, researchNodes, role)
         return {
           ...section,
           content: editorDocToPlainText(editorDoc),

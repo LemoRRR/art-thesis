@@ -4,7 +4,7 @@ import express from 'express'
 import JSZip from 'jszip'
 import researchRouter from '../server/routes/research.ts'
 import { buildSectionsDocxBlob } from '../src/lib/docxExport.ts'
-import { researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../src/lib/researchPackages.ts'
+import { mergeResearchNodesIntoDoc, researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../src/lib/researchPackages.ts'
 import { assertPaperNarratives } from './research-smoke-assertions.mjs'
 import { idsByResolvedSection, listenOnSafePort } from './smoke-server.mjs'
 
@@ -178,6 +178,35 @@ function assertResearchOutputQuality(analysis, components) {
   assert(narrativeText.includes('回应了研究中关于') || narrativeText.includes('转化为具体的设计优化方向'), 'figure narrative is not research-question oriented enough')
 }
 
+function paperNodeText(node) {
+  if (!node) return ''
+  if (node.type === 'text') return node.text ?? ''
+  if (node.type === 'researchImage') return String(node.attrs?.caption ?? node.attrs?.title ?? '')
+  if (node.type === 'researchTable') return String(node.attrs?.title ?? '')
+  return (node.content ?? []).map(paperNodeText).join('')
+}
+
+function paperDocText(doc) {
+  return (doc.content ?? []).map(paperNodeText).filter(Boolean).join('\n')
+}
+
+function assertResearchBridgeInsertion(pkg) {
+  const sourceDoc = {
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text: '\u672c\u8282\u9996\u5148\u5bf9\u7814\u7a76\u7ed3\u679c\u8fdb\u884c\u6982\u8ff0\u3002' }],
+      },
+    ],
+  }
+  const merged = mergeResearchNodesIntoDoc(sourceDoc, researchPackageToPaperNodes(pkg), 'result')
+  const mergedText = paperDocText(merged)
+  assert(mergedText.includes('\u672c\u8282\u9996\u5148\u5bf9\u7814\u7a76\u7ed3\u679c\u8fdb\u884c\u6982\u8ff0'), 'research insertion should preserve existing section prose')
+  assert(mergedText.includes('\u672c\u6587\u5c06\u6838\u5fc3\u7ed3\u679c\u7eb3\u5165\u672c\u8282\u8fdb\u884c\u8bf4\u660e'), 'research insertion lacks thesis-style bridge prose')
+  assert(merged.content.length > sourceDoc.content.length + 1, 'research insertion did not append package nodes after the bridge')
+}
+
 async function inspectDocx(buffer) {
   const zip = await JSZip.loadAsync(buffer)
   const documentXml = await zip.file('word/document.xml')?.async('string')
@@ -328,6 +357,7 @@ async function main() {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }
+    assertResearchBridgeInsertion(resultPkg)
     const docSections = [
       {
         id: 's3',
