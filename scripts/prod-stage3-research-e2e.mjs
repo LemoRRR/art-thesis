@@ -251,6 +251,9 @@ async function main() {
     page.on('requestfailed', request => {
       browserErrors.push(`requestfailed: ${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}`)
     })
+    page.on('pageerror', error => {
+      browserErrors.push(`pageerror: ${error.message}`)
+    })
     page.on('response', response => {
       if (response.url().includes('/api/research')) {
         apiResponses.push(`${response.status()} ${response.url().replace(baseUrl, '')}`)
