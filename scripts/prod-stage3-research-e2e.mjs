@@ -190,6 +190,8 @@ function assertResearchSectionIntegration(text) {
   const resultText = sectionSlice(text, /数据分析与研究结果/, /讨论与优化建议/, 'result')
   const discussionText = sectionSlice(text, /讨论与优化建议/, /$^/, 'discussion')
 
+  assert(!/Descriptive statistics for all variables|Correlation analysis among numeric variables|Correlation matrix for numeric variables|ANOVA for group comparisons|Cronbach[’']?s alpha for reliability/i.test(methodText), 'DOCX method section contains raw English tool descriptions')
+  assert(!/未指定具体模型|待确认具体模型|鏈|鏈|鎖|鐢|绌/.test(methodText), 'DOCX method section contains placeholder or mojibake method text')
   assert(/问卷|样本|变量|统计方法|信度|相关|方差|因子/.test(methodText), 'DOCX method section lacks research design/method wording')
   assert(!/表4[-—-]\d+|图4[-—-]\d+/.test(methodText), 'DOCX method section should not contain result table/figure captions')
   assert(/表4[-—-]\d+/.test(resultText), 'DOCX result section lacks table captions')
@@ -197,6 +199,9 @@ function assertResearchSectionIntegration(text) {
   assert(/由表|由图|结果显示|可见|说明|表明|用于/.test(resultText), 'DOCX result section lacks paper-style interpretation around tables/figures')
   assert((resultText.match(/表4[-—-]\d+/g) ?? []).length >= 4, 'DOCX result section has too few research tables')
   assert((resultText.match(/图4[-—-]\d+/g) ?? []).length >= 3, 'DOCX result section has too few research figures')
+  assert(/本次定量分析基于|分析方法包括|描述统计结果显示|信度分析结果显示/.test(resultText), 'DOCX result section lacks consolidated statistical interpretation text')
+  assert(!/Cronbach[’']?s alpha 为|相关系数为 r=|检验结果为 F=/.test(discussionText), 'DOCX discussion section contains detailed result interpretation that belongs in the result section')
+  assert(/回应研究问题|策略建议|优化方向|样本边界|过度外推|数据质量/.test(discussionText), 'DOCX discussion section lacks thesis-style synthesis and limitation framing')
   assert(/讨论|建议|策略|优化|启示|路径|重点|后续/.test(discussionText), 'DOCX discussion section lacks discussion/suggestion wording')
 }
 

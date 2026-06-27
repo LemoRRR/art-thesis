@@ -41,6 +41,22 @@ function cleanResearchTitle(value?: string) {
   return String(value ?? '').replace(/\s+/g, ' ').trim()
 }
 
+function cleanResearchNarrativeText(value: unknown) {
+  return String(value ?? '')
+    .replace(
+      /Descriptive statistics for all variables;?\s*Correlation analysis among numeric variables;?\s*ANOVA for group comparisons\.?/gi,
+      '本研究首先对主要变量进行描述性统计，再对数值变量之间的相关关系进行检验，并结合分组变量开展单因素方差分析。'
+    )
+    .replace(/Descriptive statistics for all variables\.?/gi, '对主要变量进行描述性统计。')
+    .replace(/Correlation analysis among numeric variables\.?/gi, '检验数值变量之间的相关关系。')
+    .replace(/Correlation matrix for numeric variables\.?/gi, '构建数值变量相关系数矩阵。')
+    .replace(/ANOVA for group comparisons\.?/gi, '对不同分组样本进行单因素方差分析。')
+    .replace(/Cronbach[’']?s alpha for reliability\.?/gi, '使用 Cronbach α 系数检验量表信度。')
+    .replace(/Exploratory factor analysis\.?/gi, '开展探索性因子分析。')
+    .replace(/Reliability analysis\.?/gi, '开展量表信度分析。')
+    .trim()
+}
+
 function fallbackFigureNarrative(figure: { caption?: string; title?: string }, title: string) {
   const caption = cleanResearchTitle(figure.caption) || cleanResearchTitle(title)
   return {
@@ -156,6 +172,27 @@ function discussionTextForStructuredResult(result: StructuredResearchResult) {
     ].join('\n')
   }
 
+  const descriptiveRows = tableRows(tableById(result, 'table_descriptive'))
+  const reliabilityRows = tableRows(tableById(result, 'table_reliability'))
+  const correlationRows = tableRows(tableById(result, 'table_correlation'))
+  const anovaRows = tableRows(tableById(result, 'table_anova'))
+  const quantSignals = [
+    descriptiveRows.length ? '变量总体水平' : '',
+    reliabilityRows.length ? '量表内部一致性' : '',
+    correlationRows.length ? '变量关联结构' : '',
+    anovaRows.length ? '群体差异' : '',
+  ].filter(Boolean)
+  if (quantSignals.length > 0) {
+    const sampleHint = result.method ? `本次${result.method === 'descriptive' ? '描述统计' : '定量'}分析` : '本次定量分析'
+    return [
+      `${sampleHint}的讨论部分应从“统计结果如何回应研究问题”展开，而不是单纯重复均值、相关系数或显著性数值。结合现有结果，论文可围绕${quantSignals.join('、')}说明研究对象在评价差异、影响关系或测量可靠性上的主要特征。`,
+      '在策略建议上，应优先把均值较高或差异较明显的变量转化为设计、传播或服务优化方向；对于相关关系较强的变量，需要结合理论框架说明其可能的解释路径，但不宜直接写成因果结论。',
+      (result.cautions ?? []).filter(Boolean).length > 0
+        ? `同时，讨论部分还应交代数据质量和样本边界：${(result.cautions ?? []).filter(Boolean).slice(0, 2).join('；')}`
+        : '同时，讨论部分应说明样本来源、量表设计和变量识别边界，以避免对统计结果作过度外推。',
+    ].join('\n')
+  }
+
   const cautions = (result.cautions ?? []).filter(Boolean)
   if (cautions.length > 0) {
     return `结合本次分析限制，论文讨论部分需要说明数据质量、样本规模或变量识别边界，并据此提出后续复核与优化建议。${cautions.slice(0, 2).join('；')}`
@@ -173,7 +210,7 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
       components.push(component('research_component', {
         type: 'method',
         title: '研究方法说明',
-        content: String(result.methodText),
+        content: cleanResearchNarrativeText(result.methodText),
       }))
     }
 
@@ -322,7 +359,7 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
       components.push(component('research_component', {
         type: 'analysis',
         title: '分析文字',
-        content: String(result.analysisText),
+        content: cleanResearchNarrativeText(result.analysisText),
       }))
     }
     const discussionText = discussionTextForStructuredResult(result)

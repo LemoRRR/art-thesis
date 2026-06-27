@@ -2001,14 +2001,6 @@ function deterministicQuantAnalysisText(result: Record<string, unknown>, fallbac
     return fallbackText
   }
 
-  const firstDesc = descriptiveRows[0]
-  const strongestCorrelation = correlationRows.reduce<Record<string, unknown> | null>((best, row) => {
-    const value = Math.abs(Number(row.r ?? 0))
-    const bestValue = best ? Math.abs(Number(best.r ?? 0)) : -1
-    return value > bestValue ? row : best
-  }, null)
-  const alpha = reliabilityRows[0]
-  const firstAnova = anovaRows[0]
   const factorColumns = efaRows[0] ? Object.keys(efaRows[0]).filter(key => key.startsWith('factor_')) : []
   const rawMethods = Array.isArray(result.methods)
     ? result.methods.map(item => String(item))
@@ -2024,18 +2016,18 @@ function deterministicQuantAnalysisText(result: Record<string, unknown>, fallbac
   const methodLabelText = methodLabels.length ? methodLabels.join('、') : '描述性统计及相关统计检验'
 
   return [
-    `本次定量分析基于 ${result.sampleSize || rowValue(qualityRows[0] ?? {}, 'sampleSize') || '上传'} 份样本开展，分析方法包括${methodLabelText}。系统根据数据列类型和用户确认方案生成统计表与图示，用于支撑论文结果章节中的变量分布、信度、相关关系、组间差异或维度结构解释。`,
-    firstDesc
-      ? `描述统计结果显示，${rowValue(firstDesc, 'variable') || '首个变量'}的均值为 ${rowValue(firstDesc, 'mean') || '-'}，标准差为 ${rowValue(firstDesc, 'sd') || '-'}，可用于判断样本在该指标上的总体水平和离散程度。正式写作时应结合研究对象解释均值高低的含义，而不是仅复述数字。`
+    `综合来看，本次定量分析基于 ${result.sampleSize || rowValue(qualityRows[0] ?? {}, 'sampleSize') || '上传'} 份样本开展，分析方法包括${methodLabelText}。上述统计表和图示共同用于说明变量分布、量表可靠性、变量关联以及组间差异等结果特征。`,
+    descriptiveRows.length
+      ? '描述性统计为判断各题项或维度的总体评价水平提供了基础，后续解释应把均值高低与研究对象的具体情境相结合。'
       : '',
-    alpha
-      ? `信度分析结果显示，Cronbach's alpha 为 ${rowValue(alpha, 'alpha') || '-'}，题项数为 ${rowValue(alpha, 'items') || '-' }。该结果可用于判断量表内部一致性；若 alpha 较低，应在论文中提示量表题项仍需复核。`
+    reliabilityRows.length
+      ? '信度分析用于确认量表题项是否具备稳定的内部一致性，从而为后续相关、差异或维度解释提供测量可靠性依据。'
       : '',
-    strongestCorrelation
-      ? `相关分析中，${displayVariableName(rowValue(strongestCorrelation, 'x'), '变量X')}与${displayVariableName(rowValue(strongestCorrelation, 'y'), '变量Y')}的相关系数为 r=${rowValue(strongestCorrelation, 'r') || '-'}${pValueText(rowValue(strongestCorrelation, 'p'))}。${significanceCaveat(rowValue(strongestCorrelation, 'p'))}该结果应结合研究假设判断其方向和强度，不能在缺少显著性或理论支撑时扩大解释为因果关系。`
+    correlationRows.length
+      ? '相关分析用于呈现变量之间的联动关系，但其结果需要结合理论框架解释，不宜直接扩大为因果关系。'
       : '',
-    firstAnova
-      ? `方差分析结果显示，不同${displayVariableName(rowValue(firstAnova, 'group'), '分组变量')}群体在${displayVariableName(rowValue(firstAnova, 'variable'), '目标变量')}上的检验结果为 F=${rowValue(firstAnova, 'f') || '-'}${pValueText(rowValue(firstAnova, 'p'))}。${significanceCaveat(rowValue(firstAnova, 'p'))}论文中可据此讨论不同群体是否存在差异，但应保留对样本量和组别均衡性的说明。`
+    anovaRows.length
+      ? '单因素方差分析用于比较不同分组样本在核心变量上的评价差异，解释时应同时考虑样本量、组别分布和研究问题的实际含义。'
       : '',
     efaRows.length
       ? `探索性因子分析输出了 ${factorColumns.length || '若干'} 个潜在因子载荷。写作时应结合载荷较高的题项归属解释潜在维度结构，并在正式论文中结合旋转结果、KMO/Bartlett 检验或理论维度进一步复核。`
@@ -2344,6 +2336,8 @@ function guardedRoleForWriteComponent(component: { type: string; title?: string;
   const title = `${component.title ?? ''}`
   const text = `${title}\n${component.content ?? ''}`
   if (component.type === 'method') return 'method'
+  if (component.type === 'analysis' && /^(分析文字|结果解释|总体判断)$/.test(title.trim())) return 'result'
+  if (component.type === 'analysis' && /^(讨论与优化建议|讨论|优化建议)$/.test(title.trim())) return 'discussion'
   if (component.type === 'analysis' && (/[:：]\s*(before|after)$/i.test(title) || /^[图表]\s*\d|^表\s*\d/.test(title))) return 'result'
   if (component.type === 'analysis' && /(\u5efa\u8bae|\u7b56\u7565|\u4f18\u5316|\u8ba8\u8bba|\u542f\u793a|\u5bf9\u7b56|\u5c40\u9650|\u5c55\u671b|suggest|strategy|discussion|optimization|limitation)/i.test(text)) return 'discussion'
   if (/建议|策略|优化|讨论|启示|对策|局限|展望/.test(text)) return 'discussion'
