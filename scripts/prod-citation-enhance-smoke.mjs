@@ -26,18 +26,34 @@ function assertPatchQuality(patches, expectedMin) {
   assert(patches.length >= expectedMin, `expected at least ${expectedMin} citation patches, got ${patches.length}`)
   const sectionIds = new Set()
   const sourceIds = new Set()
+  const candidateIds = new Set()
+  const sourceUseCounts = new Map()
   for (const patch of patches) {
     assert(patch.sectionId, 'patch is missing sectionId')
+    assert(patch.candidateId, 'patch is missing candidateId; source grounding cannot be traced to a sentence')
+    assert(!candidateIds.has(patch.candidateId), `duplicate citation patch candidateId: ${patch.candidateId}`)
+    candidateIds.add(patch.candidateId)
     assert(patch.originalText && patch.revisedText, 'patch is missing replacement text')
+    assert(String(patch.originalText).length >= 18, 'patch original text is too short to be a meaningful claim')
     assert(patch.source?.id && patch.source?.title, 'patch is missing bound source metadata')
     assert(Array.isArray(patch.source.authors) && patch.source.authors.length > 0, 'patch source is missing authors')
     assert(patch.source.doi || patch.source.url, 'patch source is missing DOI/URL')
+    assert(String(patch.reason ?? '').length >= 20, 'patch is missing a useful grounding reason')
+    assert(Number(patch.confidence ?? 0) >= 0.5, `patch confidence is too low: ${patch.confidence}`)
     assert(!/\{\{cite:|\[[0-9,\s]+\]|(?:^|[^\w])S\d+(?:[^\w]|$)/i.test(patch.revisedText), 'patch leaked inline citation marker')
     assert(patch.applyMode === 'citation_only' || patch.applyMode === 'rewrite_with_citation', `unexpected applyMode: ${patch.applyMode}`)
+    if (patch.applyMode === 'citation_only') {
+      assert(patch.revisedText === patch.originalText, 'citation_only patch should not rewrite the source sentence')
+    } else {
+      assert(patch.revisedText !== patch.originalText, 'rewrite_with_citation patch should revise the source sentence')
+    }
     sectionIds.add(patch.sectionId)
     sourceIds.add(patch.source.id)
+    sourceUseCounts.set(patch.source.id, (sourceUseCounts.get(patch.source.id) ?? 0) + 1)
   }
   assert(sourceIds.size >= Math.min(2, expectedMin), `citation patches used too few distinct sources: ${sourceIds.size}`)
+  const maxSourceReuse = Math.max(...sourceUseCounts.values())
+  assert(maxSourceReuse <= Math.ceil(patches.length / 2), `one source is overused across citation patches: ${maxSourceReuse}/${patches.length}`)
   return { sectionIds: Array.from(sectionIds), sourceIds: Array.from(sourceIds) }
 }
 
