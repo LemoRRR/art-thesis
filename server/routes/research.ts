@@ -808,10 +808,10 @@ function svgDataUrl(width: number, height: number, body: string) {
 <rect width="100%" height="100%" fill="${CHART_THEME.background}"/>
 <style>
 text{font-family:'Noto Sans CJK SC','Microsoft YaHei',Arial,sans-serif;fill:${CHART_THEME.ink}}
-.title{font-size:30px;font-weight:700;fill:${CHART_THEME.ink}}
-.sub{font-size:18px;fill:${CHART_THEME.muted}}
-.small{font-size:15px;fill:${CHART_THEME.inkSoft}}
-.axis{font-size:18px;fill:${CHART_THEME.ink}}
+.title{font-size:38px;font-weight:700;fill:${CHART_THEME.ink}}
+.sub{font-size:23px;fill:${CHART_THEME.muted}}
+.small{font-size:20px;fill:${CHART_THEME.inkSoft}}
+.axis{font-size:23px;fill:${CHART_THEME.ink}}
 </style>
 ${body}
 </svg>`
@@ -870,11 +870,11 @@ async function makeKanoStackedChartSvg(rows: Record<string, unknown>[]) {
     { code: 'Q/R', label: '可疑/反向', parts: ['Q_', '占比'], color: CHART_THEME.caution },
   ]
   const legend = types.map((type, index) => {
-    const x = 570 + index * 104
-    return `<rect x="${x}" y="52" width="18" height="12" fill="${type.color}"/><text x="${x + 24}" y="64" class="small">${escapeXml(type.label)}</text>`
+    const x = 500 + index * 120
+    return `<rect x="${x}" y="96" width="20" height="14" fill="${type.color}"/><text x="${x + 28}" y="111" class="small">${escapeXml(type.label)}</text>`
   }).join('')
   const bars = rows.slice(0, 12).map((row, index) => {
-    const y = 118 + index * 44
+    const y = 148 + index * 44
     let x = 250
     const label = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 12)
     const segments = types.map(type => {
@@ -890,15 +890,15 @@ async function makeKanoStackedChartSvg(rows: Record<string, unknown>[]) {
 ${segments}<rect x="250" y="${y}" width="700" height="24" fill="none" stroke="${CHART_THEME.rule}"/>
 <text x="988" y="${y + 17}" class="small">主导类型：${escapeXml(kanoTypeName(rowTextByParts(row, ['主导', 'KANO'], '-')))}</text>`
   }).join('')
-  return svgDataUrl(1180, 680, `<text x="34" y="46" class="title">KANO需求类型分布</text>
-<text x="34" y="76" class="sub">各设计维度在必备型、期望型、魅力型、无差异型等类型中的占比分布。</text>
+  return svgDataUrl(1180, 720, `<text x="34" y="48" class="title">KANO需求类型分布</text>
+<text x="34" y="82" class="sub">各设计维度在必备型、期望型、魅力型、无差异型等类型中的占比分布。</text>
 ${legend}${bars}`)
 }
 
 async function makeBetterWorseChartSvg(rows: Record<string, unknown>[]) {
-  const left = 92
-  const top = 112
-  const size = 560
+  const left = 100
+  const top = 118
+  const size = 570
   const points = rows.slice(0, 12).map((row, index) => {
     const better = rowMetric(row, ['Better'])
     const worse = rowMetric(row, ['Worse'])
@@ -906,10 +906,10 @@ async function makeBetterWorseChartSvg(rows: Record<string, unknown>[]) {
     const y = top + size - Math.min(1, Math.max(0, worse)) * size
     const labelDy = y > top + size - 34 ? -18 - (index % 4) * 12 : -8
     const label = shortLabel(rowValue(row, '设计维度') || rowValue(row, '维度全称') || `维度${index + 1}`, 5)
-    return `<circle cx="${x}" cy="${y}" r="${index < 3 ? 8 : 6}" fill="${index < 3 ? CHART_THEME.primaryDark : CHART_THEME.primaryMid}"/>
-${index < 6 || worse > 0.1 ? `<text x="${x + 9}" y="${y + labelDy}" font-size="13" font-weight="700">${escapeXml(label)}</text>` : ''}`
+    return `<circle cx="${x}" cy="${y}" r="${index < 3 ? 9 : 7}" fill="${index < 3 ? CHART_THEME.primaryDark : CHART_THEME.primaryMid}"/>
+${index < 6 || worse > 0.1 ? `<text x="${x + 12}" y="${y + labelDy}" font-size="16" font-weight="700">${escapeXml(label)}</text>` : ''}`
   }).join('')
-  return svgDataUrl(1120, 760, `<text x="34" y="46" class="title">Better-Worse系数矩阵</text>
+  return svgDataUrl(1120, 780, `<text x="34" y="48" class="title">Better-Worse系数矩阵</text>
 <text x="34" y="76" class="sub">横轴为Better满意提升系数，纵轴为Worse不满降低系数绝对值。</text>
 <rect x="${left + size / 2}" y="${top}" width="${size / 2}" height="${size / 2}" fill="${CHART_THEME.track}"/>
 <rect x="${left}" y="${top + size / 2}" width="${size / 2}" height="${size / 2}" fill="${CHART_THEME.band}"/>
@@ -919,29 +919,34 @@ ${index < 6 || worse > 0.1 ? `<text x="${x + 9}" y="${y + labelDy}" font-size="1
 ${points}
 <text x="${left + 190}" y="${top + size + 44}" class="axis">Better满意提升系数</text>
 <text transform="translate(28 ${top + 360}) rotate(-90)" class="axis">Worse不满降低系数绝对值</text>
-<text x="700" y="180" class="small">图中点标签为评价维度简称。</text>
-<text x="700" y="208" class="small">完整数值见KANO维度汇总表。</text>
-<text x="700" y="236" class="small">低不满风险的未标注点可结合表4-1读取。</text>
-<text x="700" y="270" class="small">右上区域表示满意提升与不满风险均较高，</text>
-<text x="700" y="298" class="small">可作为优先优化对象。</text>`)
+<text x="710" y="184" class="small">图中点标签为评价维度简称。</text>
+<text x="710" y="216" class="small">完整数值见KANO维度汇总表。</text>
+<text x="710" y="248" class="small">右上区域表示满意提升与不满风险均较高，</text>
+<text x="710" y="280" class="small">可作为优先优化对象。</text>
+<text x="710" y="328" class="small">低不满风险维度未全部标注，</text>
+<text x="710" y="360" class="small">以避免标签遮挡。</text>`)
 }
 
 async function makeEntropyWeightChartSvg(rows: Record<string, unknown>[]) {
   const chartRows = rows.filter(Boolean)
   const maxWeight = Math.max(...chartRows.map(row => rowMetric(row, ['权重'])), 1)
   const items = chartRows.map((row, index) => {
-    const y = 128 + index * 76
+    const y = 156 + index * 96
     const weight = rowMetric(row, ['权重'])
-    const width = Math.round((weight / maxWeight) * 640)
+    const width = Math.round((weight / maxWeight) * 680)
     const label = shortLabel(rowValue(row, '指标') || rowValue(row, '指标名称') || rowValue(row, '评价指标') || `指标${index + 1}`, 18)
-    return `<text x="46" y="${y + 18}" font-size="16" font-weight="700">${escapeXml(label)}</text>
-<rect x="360" y="${y}" width="660" height="24" fill="${CHART_THEME.track}"/>
-<rect x="360" y="${y}" width="${width}" height="24" fill="${index < 3 ? CHART_THEME.primary : CHART_THEME.primaryMid}"/>
-<text x="1040" y="${y + 18}" font-size="15">${weight.toFixed(2)}%</text>`
+    return `<rect x="34" y="${y - 32}" width="1112" height="70" fill="${chartBand(index)}"/>
+<text x="58" y="${y + 12}" font-size="20" font-weight="700">${escapeXml(label)}</text>
+<rect x="360" y="${y - 8}" width="700" height="30" fill="${CHART_THEME.track}"/>
+<rect x="360" y="${y - 8}" width="${width}" height="30" fill="${index < 3 ? CHART_THEME.primary : CHART_THEME.primaryMid}"/>
+<text x="1080" y="${y + 13}" font-size="18" font-weight="700">${weight.toFixed(2)}%</text>`
   }).join('')
-  return svgDataUrl(1180, 430, `<text x="34" y="46" class="title">熵权指标权重分布</text>
+  return svgDataUrl(1180, 560, `<text x="34" y="48" class="title">熵权指标权重分布</text>
 <text x="34" y="76" class="sub">用于耦合优先级得分计算的客观权重。</text>
-${items}`)
+<text x="360" y="116" class="small">权重占比（%）</text>
+${items}
+<text x="58" y="438" class="small">注：权重越高，说明该指标在区分评价维度综合优先级时贡献越大。</text>
+<text x="58" y="472" class="small">本研究将熵权结果与KANO属性、Better/Worse系数耦合，以减少单一主观判断对排序的影响。</text>`)
 }
 
 async function makePriorityChartSvg(rows: Record<string, unknown>[]) {

@@ -112,6 +112,9 @@ function assertResearchOutputQuality(analysis, components) {
     const dimensions = imageDimensionsFromDataUrl(figure.dataUrl)
     assert(dimensions.width >= 1000, `${figure.title} width is too low: ${dimensions.width}`)
     assert(dimensions.height >= 360, `${figure.title} height is too low: ${dimensions.height}`)
+    if (figure.id === 'figure_entropy_weights') {
+      assert(dimensions.height >= 520, `${figure.title} is too short for a paper-ready Word figure: ${dimensions.height}`)
+    }
   }
   const narrativeComponents = components.filter(component => component.type === 'analysis')
   const beforeCount = narrativeComponents.filter(component => String(component.title ?? '').endsWith(': before')).length
@@ -315,7 +318,7 @@ async function main() {
     assert(docx.cellWidthCount > 0, 'DOCX 表格缺少单元格宽度，可能在 Word 中自动撑爆')
     assert(docx.imageCount >= 4, `DOCX 图片数量不足：${docx.imageCount}`)
     assert(docx.imageExtentCount >= 4, `DOCX 图片缺少 Word 显示尺寸：${docx.imageExtentCount}`)
-    assert(docx.minImageExtent.cx >= 3000000 && docx.minImageExtent.cy >= 1400000, `DOCX 图片显示尺寸过小：${JSON.stringify(docx.minImageExtent)}`)
+    assert(docx.minImageExtent.cx >= 3000000 && docx.minImageExtent.cy >= 2400000, `DOCX 图片显示尺寸过小：${JSON.stringify(docx.minImageExtent)}`)
     assert(docx.tableCaptionCount >= 3, `DOCX 表题数量不足：${docx.tableCaptionCount}`)
     assert(docx.figureCaptionCount >= 4, `DOCX 图题数量不足：${docx.figureCaptionCount}`)
     assert(docx.badTerms.length === 0, `DOCX 出现不应展示的内部/乱码词：${docx.badTerms.join('、')}`)
