@@ -149,6 +149,29 @@ function assertCaptionSequence(text, label, minimumCount) {
   }
 }
 
+function sectionSlice(text, startPattern, endPattern, label) {
+  const start = text.search(startPattern)
+  assert(start >= 0, `DOCX is missing ${label} section`)
+  const rest = text.slice(start)
+  const end = rest.search(endPattern)
+  return end >= 0 ? rest.slice(0, end) : rest
+}
+
+function assertResearchSectionIntegration(text) {
+  const methodText = sectionSlice(text, /研究设计与数据来源/, /数据分析与研究结果/, 'method')
+  const resultText = sectionSlice(text, /数据分析与研究结果/, /讨论与优化建议/, 'result')
+  const discussionText = sectionSlice(text, /讨论与优化建议/, /$^/, 'discussion')
+
+  assert(/问卷|样本|变量|统计方法|信度|相关|方差|因子/.test(methodText), 'DOCX method section lacks research design/method wording')
+  assert(!/表4[-—-]\d+|图4[-—-]\d+/.test(methodText), 'DOCX method section should not contain result table/figure captions')
+  assert(/表4[-—-]\d+/.test(resultText), 'DOCX result section lacks table captions')
+  assert(/图4[-—-]\d+/.test(resultText), 'DOCX result section lacks figure captions')
+  assert(/由表|由图|结果显示|可见|说明|表明|用于/.test(resultText), 'DOCX result section lacks paper-style interpretation around tables/figures')
+  assert((resultText.match(/表4[-—-]\d+/g) ?? []).length >= 4, 'DOCX result section has too few research tables')
+  assert((resultText.match(/图4[-—-]\d+/g) ?? []).length >= 3, 'DOCX result section has too few research figures')
+  assert(/讨论|建议|策略|优化|启示|路径|重点|后续/.test(discussionText), 'DOCX discussion section lacks discussion/suggestion wording')
+}
+
 async function inspectDownloadedDocx(filePath) {
   const buffer = fs.readFileSync(filePath)
   const zip = await JSZip.loadAsync(buffer)
@@ -161,6 +184,7 @@ async function inspectDownloadedDocx(filePath) {
   assert(/数据质量与方法适用性检查表/.test(text), 'DOCX is missing data quality table')
   assert(/描述性统计表/.test(text), 'DOCX is missing descriptive statistics table')
   assert(/描述统计均值图/.test(text), 'DOCX is missing descriptive mean figure')
+  assertResearchSectionIntegration(text)
   assertCaptionSequence(text, '表', 4)
   assertCaptionSequence(text, '图', 3)
   assert(!/table_data_quality|table_descriptive|figure_descriptive_means|research_component/.test(text), 'DOCX leaked internal research ids')
