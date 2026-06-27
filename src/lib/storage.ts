@@ -624,8 +624,49 @@ function toApiProjectPatch(patch: Partial<Project>) {
   }
 }
 
+function isSectionFootnote(value: unknown): value is SectionFootnote {
+  if (!value || typeof value !== 'object') return false
+  const item = value as Partial<SectionFootnote>
+  return (
+    typeof item.id === 'string' &&
+    typeof item.number === 'number' &&
+    typeof item.blockIndex === 'number' &&
+    typeof item.start === 'number' &&
+    typeof item.end === 'number' &&
+    typeof item.anchorText === 'string' &&
+    typeof item.noteText === 'string'
+  )
+}
+
+function readSectionFootnotes(value: unknown): SectionFootnote[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const footnotes = value.filter(isSectionFootnote)
+  return footnotes.length > 0 ? footnotes : undefined
+}
+
+function sectionDocWithFootnotes(editorDoc: PaperEditorDoc | undefined, footnotes: SectionFootnote[] | undefined) {
+  if (!isPaperEditorDoc(editorDoc)) return editorDoc
+  if (!footnotes?.length) {
+    if (!editorDoc.attrs || !('footnotes' in editorDoc.attrs)) return editorDoc
+    const attrs = { ...editorDoc.attrs }
+    delete attrs.footnotes
+    return {
+      ...editorDoc,
+      attrs: Object.keys(attrs).length > 0 ? attrs : undefined,
+    }
+  }
+  return {
+    ...editorDoc,
+    attrs: {
+      ...(editorDoc.attrs ?? {}),
+      footnotes,
+    },
+  }
+}
+
 function fromApiSection(row: any): DocSection {
   const editorDoc = row.content_doc ?? undefined
+  const footnotes = readSectionFootnotes(row.footnotes) ?? readSectionFootnotes(editorDoc?.attrs?.footnotes)
   const rawContent = row.content ?? ''
   const content = String(rawContent).trim() || !isPaperEditorDoc(editorDoc)
     ? rawContent
@@ -636,6 +677,7 @@ function fromApiSection(row: any): DocSection {
     title: row.title ?? '未命名章节',
     content,
     editorDoc,
+    footnotes,
     status: row.status ?? 'pending',
     order: row.sort_order ?? 0,
     lastModified: toTime(row.updated_at ?? row.created_at),
@@ -648,7 +690,7 @@ function toApiSection(section: DocSection) {
     project_id: section.projectId,
     title: section.title,
     content: section.content,
-    content_doc: section.editorDoc,
+    content_doc: sectionDocWithFootnotes(section.editorDoc, section.footnotes),
     status: section.status,
     sort_order: section.order ?? 0,
   }

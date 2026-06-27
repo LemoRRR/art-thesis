@@ -15,7 +15,7 @@ import {
   Trash2,
   Type,
 } from 'lucide-react'
-import { chatStore, projectStore, type ChatMessage } from '../lib/storage'
+import { chatStore, projectStore, sectionStore, type ChatMessage } from '../lib/storage'
 import { auth } from '../lib/auth'
 
 const NAV_ITEMS = [
@@ -82,6 +82,9 @@ function Sidebar() {
     [draftSnapshots, projects]
   )
   const activeProjectId = projectStore.getActiveId()
+  const hasActiveDraftContent = activeProjectId
+    ? sectionStore.getByProject(activeProjectId).some(section => section.content.replace(/\s/g, '').length > 80)
+    : false
   const [loggedIn, setLoggedIn] = useState(() => auth.isLoggedIn())
   const userLabel = getUserLabel()
 
@@ -235,8 +238,9 @@ function Sidebar() {
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         {NAV_ITEMS.map(item => {
           const Icon = item.icon
+          const isResearchShortcut = item.path === 'active-project-research'
           const itemPath = item.path === 'active-project-research'
-            ? `/projects/${activeProjectId}/research`
+            ? `/projects/${activeProjectId}/${hasActiveDraftContent ? 'research' : 'stage3'}`
             : item.path
           const active =
             (item.label === '资料库' && location.pathname.startsWith('/library')) ||
@@ -261,7 +265,9 @@ function Sidebar() {
                 fontSize: 12,
                 fontFamily: 'var(--font-sans)',
                 cursor: 'pointer',
+                opacity: isResearchShortcut && !hasActiveDraftContent ? 0.72 : 1,
               }}
+              title={isResearchShortcut && !hasActiveDraftContent ? '请先生成或确认全文初稿，再做研究计算。' : undefined}
             >
               <Icon size={14} strokeWidth={1.8} />
               {item.label}
