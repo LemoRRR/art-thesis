@@ -627,7 +627,7 @@ function FullGenerationProgressPage({
   }, [visibleSteps.length])
 
   return (
-    <div className="stage3-generation-page" aria-live="polite">
+    <div className="stage3-generation-page" aria-live="polite" data-testid="stage3-generation-progress">
       <div className="stage3-generation-card">
         <div className="stage3-generation-head">
           <div>
@@ -3225,6 +3225,7 @@ export default function Stage3() {
                 emptyAction={showCenterGenerateButton ? (
                   <button
                     type="button"
+                    data-testid="stage3-generate-full-center"
                     onClick={regenerateFullText}
                     style={{
                       display: 'inline-flex',
