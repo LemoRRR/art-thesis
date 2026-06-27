@@ -230,10 +230,16 @@ function thesisSectionDoc(introText, pkg, role) {
 async function inspectDocx(buffer) {
   const zip = await JSZip.loadAsync(buffer)
   const documentXml = await zip.file('word/document.xml')?.async('string')
+  const footnotesXml = await zip.file('word/footnotes.xml')?.async('string')
+  const relsXml = await zip.file('word/_rels/document.xml.rels')?.async('string')
+  const contentTypesXml = await zip.file('[Content_Types].xml')?.async('string')
   assert(documentXml, 'DOCX 缺少 word/document.xml')
   const text = Array.from(documentXml.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g))
     .map(match => match[1])
     .join('')
+  const footnoteText = footnotesXml
+    ? Array.from(footnotesXml.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)).map(match => match[1]).join('')
+    : ''
   const media = Object.keys(zip.files).filter(name => name.startsWith('word/media/') && !name.endsWith('/'))
   const mediaChecks = []
   for (const name of media) {
@@ -281,6 +287,11 @@ async function inspectDocx(buffer) {
     minImageExtent,
     tableCaptionCount: (text.match(/表4-/g) ?? []).length,
     figureCaptionCount: (text.match(/图4-/g) ?? []).length,
+    bodyFootnoteReferenceCount: (documentXml.match(/<w:footnoteReference\b/g) ?? []).length,
+    footnoteCount: (footnotesXml?.match(/<w:footnote\b/g) ?? []).length,
+    hasFootnotesRelationship: relsXml ? /Type="[^"]+\/footnotes"/.test(relsXml) : false,
+    hasFootnotesContentType: contentTypesXml ? /PartName="\/word\/footnotes\.xml"/.test(contentTypesXml) : false,
+    hasResearchCitationFootnote: /Kano/i.test(footnoteText) && footnoteText.includes('1984'),
     badTerms,
     hasExistingMethodProse: text.includes('\u672c\u7814\u7a76\u5728\u95ee\u5377\u6570\u636e\u57fa\u7840\u4e0a\u5efa\u7acb\u5206\u6790\u8def\u5f84'),
     hasExistingResultProse: text.includes('\u672c\u8282\u9996\u5148\u5bf9\u7814\u7a76\u7ed3\u679c\u8fdb\u884c\u6982\u8ff0'),
@@ -384,18 +395,24 @@ async function main() {
       updatedAt: Date.now(),
     }
     assertResearchBridgeInsertion(resultPkg)
+    const methodIntro = '\u672c\u7814\u7a76\u5728\u95ee\u5377\u6570\u636e\u57fa\u7840\u4e0a\u5efa\u7acb\u5206\u6790\u8def\u5f84\uff0c\u4ee5\u4fdd\u8bc1\u540e\u7eed\u7ed3\u679c\u89e3\u91ca\u5177\u6709\u65b9\u6cd5\u4f9d\u636e\u3002'
+    const resultIntro = '\u672c\u8282\u9996\u5148\u5bf9\u7814\u7a76\u7ed3\u679c\u8fdb\u884c\u6982\u8ff0\uff0c\u518d\u56f4\u7ed5\u6838\u5fc3\u6307\u6807\u5c55\u5f00\u5177\u4f53\u5206\u6790\u3002'
+    const discussionIntro = '\u4ee5\u4e0b\u8ba8\u8bba\u5c06\u56de\u5230\u7814\u7a76\u95ee\u9898\u672c\u8eab\uff0c\u5e76\u5c06\u7edf\u8ba1\u7ed3\u679c\u8f6c\u5316\u4e3a\u8bbe\u8ba1\u4e0e\u4f20\u64ad\u4f18\u5316\u542f\u793a\u3002'
+    const methodFootnoteAnchor = '\u5206\u6790\u8def\u5f84'
+    const methodFootnoteStart = methodIntro.indexOf(methodFootnoteAnchor)
+    assert(methodFootnoteStart >= 0, 'method footnote anchor is missing')
     const methodDoc = thesisSectionDoc(
-      '\u672c\u7814\u7a76\u5728\u95ee\u5377\u6570\u636e\u57fa\u7840\u4e0a\u5efa\u7acb\u5206\u6790\u8def\u5f84\uff0c\u4ee5\u4fdd\u8bc1\u540e\u7eed\u7ed3\u679c\u89e3\u91ca\u5177\u6709\u65b9\u6cd5\u4f9d\u636e\u3002',
+      methodIntro,
       methodPkg,
       'method'
     )
     const resultDoc = thesisSectionDoc(
-      '\u672c\u8282\u9996\u5148\u5bf9\u7814\u7a76\u7ed3\u679c\u8fdb\u884c\u6982\u8ff0\uff0c\u518d\u56f4\u7ed5\u6838\u5fc3\u6307\u6807\u5c55\u5f00\u5177\u4f53\u5206\u6790\u3002',
+      resultIntro,
       resultPkg,
       'result'
     )
     const discussionDoc = thesisSectionDoc(
-      '\u4ee5\u4e0b\u8ba8\u8bba\u5c06\u56de\u5230\u7814\u7a76\u95ee\u9898\u672c\u8eab\uff0c\u5e76\u5c06\u7edf\u8ba1\u7ed3\u679c\u8f6c\u5316\u4e3a\u8bbe\u8ba1\u4e0e\u4f20\u64ad\u4f18\u5316\u542f\u793a\u3002',
+      discussionIntro,
       discussionPkg,
       'discussion'
     )
@@ -406,6 +423,15 @@ async function main() {
         title: '???????????',
         content: paperDocText(methodDoc),
         editorDoc: methodDoc,
+        footnotes: [{
+          id: 'smoke-research-citation-footnote',
+          number: 1,
+          blockIndex: 0,
+          start: methodFootnoteStart,
+          end: methodFootnoteStart + methodFootnoteAnchor.length,
+          anchorText: methodFootnoteAnchor,
+          noteText: 'Kano, N. Attractive quality and must-be quality. Journal of the Japanese Society for Quality Control, 1984.',
+        }],
         status: 'done',
         order: 3,
       },
@@ -445,6 +471,11 @@ async function main() {
     assert(docx.minImageExtent.cx >= 5000000 && docx.minImageExtent.cy >= 2400000, `DOCX 图片显示尺寸过小：${JSON.stringify(docx.minImageExtent)}`)
     assert(docx.tableCaptionCount >= 3, `DOCX 表题数量不足：${docx.tableCaptionCount}`)
     assert(docx.figureCaptionCount >= 4, `DOCX 图题数量不足：${docx.figureCaptionCount}`)
+    assert(docx.bodyFootnoteReferenceCount >= 1, `DOCX 缺少正文脚注引用：${docx.bodyFootnoteReferenceCount}`)
+    assert(docx.footnoteCount >= 1, `DOCX footnotes.xml 脚注数量不足：${docx.footnoteCount}`)
+    assert(docx.hasFootnotesRelationship, 'DOCX 缺少 footnotes relationship')
+    assert(docx.hasFootnotesContentType, 'DOCX 缺少 footnotes content type')
+    assert(docx.hasResearchCitationFootnote, 'DOCX 研究计算导出未保留文献脚注')
     assert(docx.badTerms.length === 0, `DOCX 出现不应展示的内部/乱码词：${docx.badTerms.join('、')}`)
     assert(docx.hasExistingMethodProse && docx.hasExistingResultProse && docx.hasExistingDiscussionProse, 'DOCX should preserve existing thesis section prose before inserted research results')
     assert(docx.hasMethodBridge && docx.hasResultBridge && docx.hasDiscussionBridge, 'DOCX should include thesis-style bridge prose for method, result, and discussion insertions')
