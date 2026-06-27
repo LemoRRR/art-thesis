@@ -491,6 +491,7 @@ async function inspectDocx(buffer, sections, scenario) {
   const suspiciousQuestionRuns = text.match(/\?{4,}/g) ?? []
   const hasEntropyTable = /熵权法权重计算/.test(text)
   const falseEntropyTerms = hasEntropyTable ? [] : ['熵权', '耦合'].filter(term => text.includes(term))
+  const impossibleFigureRefs = hasEntropyTable ? [] : (text.match(/图4-4/g) ?? [])
   return {
     page: {
       width: pageSize ? Number(pageSize[1]) : 0,
@@ -516,6 +517,7 @@ async function inspectDocx(buffer, sections, scenario) {
     internalLeakCount: ((documentXml.match(scenario.internalLeakPattern ?? /table_ahp_|figure_ahp_|research_component/g) ?? []).length),
     suspiciousQuestionRuns,
     falseEntropyTerms,
+    impossibleFigureRefs,
     paperStructure: {
       hasOrderedSections: true,
       hasMethodNarrative: true,
@@ -651,6 +653,7 @@ async function main() {
     assert(docx.internalLeakCount === 0, `DOCX leaked internal ids: ${docx.internalLeakCount}`)
     assert(docx.suspiciousQuestionRuns.length === 0, `DOCX contains suspicious question-mark text: ${docx.suspiciousQuestionRuns.join(', ')}`)
     assert(docx.falseEntropyTerms.length === 0, `KANO-only DOCX should not mention entropy/coupling: ${docx.falseEntropyTerms.join(', ')}`)
+    assert(docx.impossibleFigureRefs.length === 0, `KANO-only DOCX references a missing figure number: ${docx.impossibleFigureRefs.join(', ')}`)
 
     console.log(JSON.stringify({
       ok: true,

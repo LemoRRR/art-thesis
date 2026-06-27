@@ -2172,7 +2172,7 @@ function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
       beforeText: hasEntropyWeights
         ? '为将KANO属性识别与熵权结果转化为更直观的优化顺序，本文绘制耦合优先级排序图，以呈现各评价维度进入后续设计策略的先后次序。'
         : '为将KANO属性识别和Better/Worse系数结果转化为更直观的优化顺序，本文绘制优先级排序图，以呈现各评价维度进入后续设计策略的先后次序。',
-      afterText: `图4-4显示，${topPriorityNames.length ? `优先级靠前的维度包括${topPriorityNames.map(name => `“${name}”`).join('、')}` : `排名第一的维度为“${rowValue(topPriority ?? {}, '维度') || '-'}”`}。这说明论文后续讨论应围绕高优先级维度展开，将数据结果转化为具体的设计优化方向和策略建议。`,
+      afterText: `${hasEntropyWeights ? '图4-4' : '图4-3'}显示，${topPriorityNames.length ? `优先级靠前的维度包括${topPriorityNames.map(name => `“${name}”`).join('、')}` : `排名第一的维度为“${rowValue(topPriority ?? {}, '维度') || '-'}”`}。这说明论文后续讨论应围绕高优先级维度展开，将数据结果转化为具体的设计优化方向和策略建议。`,
     })
   }
 

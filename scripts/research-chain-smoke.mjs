@@ -286,6 +286,7 @@ async function inspectDocx(buffer) {
     .filter(term => text.includes(term))
   const hasEntropyTable = /熵权法权重计算/.test(text)
   const falseEntropyTerms = hasEntropyTable ? [] : ['熵权', '耦合'].filter(term => text.includes(term))
+  const impossibleFigureRefs = hasEntropyTable ? [] : (text.match(/图4-4/g) ?? [])
   const suspiciousQuestionRuns = text.match(/\?{4,}/g) ?? []
   return {
     page: {
@@ -312,6 +313,7 @@ async function inspectDocx(buffer) {
     hasResearchCitationFootnote: /Kano/i.test(footnoteText) && footnoteText.includes('1984'),
     badTerms,
     falseEntropyTerms,
+    impossibleFigureRefs,
     suspiciousQuestionRuns,
     hasExistingMethodProse: text.includes('\u672c\u7814\u7a76\u5728\u95ee\u5377\u6570\u636e\u57fa\u7840\u4e0a\u5efa\u7acb\u5206\u6790\u8def\u5f84'),
     hasExistingResultProse: text.includes('\u672c\u8282\u9996\u5148\u5bf9\u7814\u7a76\u7ed3\u679c\u8fdb\u884c\u6982\u8ff0'),
@@ -506,6 +508,7 @@ async function main() {
     assert(docx.hasResearchCitationFootnote, 'DOCX 研究计算导出未保留文献脚注')
     assert(docx.badTerms.length === 0, `DOCX 出现不应展示的内部/乱码词：${docx.badTerms.join('、')}`)
     assert(docx.falseEntropyTerms.length === 0, `KANO-only DOCX 不应出现熵权/耦合表述：${docx.falseEntropyTerms.join('、')}`)
+    assert(docx.impossibleFigureRefs.length === 0, `KANO-only DOCX 出现不存在的图号引用：${docx.impossibleFigureRefs.join('、')}`)
     assert(docx.suspiciousQuestionRuns.length === 0, `DOCX 出现疑似乱码问号段落：${docx.suspiciousQuestionRuns.join('、')}`)
     assert(docx.hasExistingMethodProse && docx.hasExistingResultProse && docx.hasExistingDiscussionProse, 'DOCX should preserve existing thesis section prose before inserted research results')
     assert(docx.hasMethodBridge && docx.hasResultBridge && docx.hasDiscussionBridge, 'DOCX should include thesis-style bridge prose for method, result, and discussion insertions')
