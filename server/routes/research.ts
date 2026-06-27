@@ -530,12 +530,12 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
     efa,
     tables,
     figures: await buildGenericQuantFigures(descriptive, correlations, anova, efa, cronbachAlpha),
-    methodText: '本次分析使用系统内置轻量统计引擎读取用户上传数据，并按确认方案完成描述统计、信度、相关、方差分析或探索性因子载荷近似计算。p值、复杂模型和高阶因子旋转建议在完整 Python/R 环境中进一步复核。',
+    methodText: '本次分析基于问卷数据的变量结构和研究方案，依次开展描述性统计、信度检验、相关分析、组间差异检验及探索性因子分析，用于呈现样本特征、测量可靠性和变量关系。',
     analysisText: strongest
       ? `相关分析显示，${strongest.x} 与 ${strongest.y} 的相关系数为 r=${strongest.r}。论文写作时应结合研究假设、变量含义和显著性检验进一步解释。`
-      : '系统已根据上传数据完成基础统计计算。论文写作时应围绕表格中的均值、标准差、相关系数或组间差异进行谨慎解释。',
+      : '本次分析已完成基础统计计算。论文写作时应围绕表格中的均值、标准差、相关系数或组间差异进行谨慎解释。',
     cautions: [
-      '当前线上环境使用轻量统计兜底；复杂模型、精确 p 值和高阶图表建议在正式统计环境中复核。',
+      '复杂模型、精确显著性检验和高阶因子结构仍需结合正式统计口径进行复核。',
       ...(Array.isArray(qualityReport?.warnings) ? qualityReport.warnings.filter((item): item is string => typeof item === 'string') : []),
     ],
     plainText: plainLines.join('\n'),

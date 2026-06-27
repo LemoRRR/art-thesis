@@ -192,6 +192,7 @@ function assertResearchSectionIntegration(text) {
 
   assert(!/Descriptive statistics for all variables|Correlation analysis among numeric variables|Correlation matrix for numeric variables|ANOVA for group comparisons|Cronbach[’']?s alpha for reliability/i.test(methodText), 'DOCX method section contains raw English tool descriptions')
   assert(!/未指定具体模型|待确认具体模型|鏈|鏈|鎖|鐢|绌/.test(methodText), 'DOCX method section contains placeholder or mojibake method text')
+  assert(!/系统内置|轻量统计|Python\/R|上传数据|兜底|工具/.test(methodText), 'DOCX method section contains tool/workflow wording')
   assert(/问卷|样本|变量|统计方法|信度|相关|方差|因子/.test(methodText), 'DOCX method section lacks research design/method wording')
   assert(!/表4[-—-]\d+|图4[-—-]\d+/.test(methodText), 'DOCX method section should not contain result table/figure captions')
   assert(/表4[-—-]\d+/.test(resultText), 'DOCX result section lacks table captions')
