@@ -236,6 +236,7 @@ function normalizePatch(
     source.source,
   ].filter(Boolean).join(' ')
   const supportScore = citationSupportScore(`${originalText} ${revisedText}`, sourceEvidence)
+  if (citationHardMismatch(`${originalText} ${revisedText}`, sourceEvidence)) return null
   if (supportScore < MIN_CITATION_SUPPORT_SCORE) return null
 
   const rawClaimType = String(row.claimType ?? row.enhancementType ?? 'assertion')
@@ -421,6 +422,20 @@ function citationSupportScore(candidateText: string, sourceEvidence: string) {
   return score
 }
 
+function citationHardMismatch(candidateText: string, sourceEvidence: string) {
+  const left = candidateText.toLowerCase()
+  const right = sourceEvidence.toLowerCase()
+  const mustMatch: Array<[RegExp, RegExp]> = [
+    [/kano|卡诺/i, /kano|卡诺/i],
+    [/熵权|entropy/i, /熵权|entropy/i],
+    [/\bAHP\b|层次分析/i, /\bAHP\b|层次分析/i],
+    [/Cronbach|信度/i, /Cronbach|信度|reliability/i],
+    [/Pearson|相关系数|相关分析/i, /Pearson|相关|correlation/i],
+    [/因子分析|factor analysis|EFA/i, /因子分析|factor analysis|EFA/i],
+  ]
+  return mustMatch.some(([candidatePattern, sourcePattern]) => candidatePattern.test(left) && !sourcePattern.test(right))
+}
+
 function fallbackCitationPatches(
   sections: SectionInput[],
   sources: SourceInput[],
@@ -450,9 +465,10 @@ function fallbackCitationPatches(
         return {
           source,
           score: citationSupportScore(candidate.text, sourceEvidence),
+          hardMismatch: citationHardMismatch(candidate.text, sourceEvidence),
         }
       })
-      .filter(item => item.score >= MIN_CITATION_SUPPORT_SCORE)
+      .filter(item => !item.hardMismatch && item.score >= MIN_CITATION_SUPPORT_SCORE)
       .sort((a, b) => b.score - a.score)[0]
     if (!best) continue
     const pairKey = `${candidate.id}:${best.source.id}`

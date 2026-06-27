@@ -133,6 +133,48 @@ async function main() {
     assert(unrelated.ok === true, 'unrelated-source response should be ok')
     assert((unrelated.patches ?? []).length === 0, 'reliable but unrelated sources should not produce citation patches')
 
+    const methodMismatch = await post(base, '/api/references/enhance', {
+      sections: [
+        {
+          id: 'mismatch-kano',
+          title: 'Method grounding',
+          content: 'The KANO model is used to classify user requirements into must-be, one-dimensional and attractive categories before prioritizing design elements.',
+        },
+        {
+          id: 'mismatch-entropy',
+          title: 'Weighting method',
+          content: 'Entropy weight method calculates objective indicator weights according to dispersion and is used to reduce subjective ranking bias.',
+        },
+      ],
+      sources: [
+        {
+          id: 'src_entropy_only',
+          title: 'Entropy Weight Method for Objective Indicator Weighting',
+          authors: ['Wang Li'],
+          year: 2021,
+          url: 'https://example.org/entropy-weight-method-only',
+          abstract: 'Entropy weight method calculates objective weights from indicator dispersion and supports ranking decisions.',
+        },
+        {
+          id: 'src_kano_only',
+          title: 'KANO Model and Customer Satisfaction Classification',
+          authors: ['Kano Noriaki'],
+          year: 1984,
+          doi: '10.0000/kano-model-only',
+          abstract: 'The KANO model classifies requirements into must-be, one-dimensional and attractive qualities.',
+        },
+      ],
+      minPatchCount: 2,
+      fallbackOnly: true,
+    })
+    assert(methodMismatch.ok === true, 'method-mismatch response should be ok')
+    assertPatchQuality(methodMismatch.patches ?? [], 2)
+    for (const patch of methodMismatch.patches ?? []) {
+      const text = String(patch.originalText ?? '')
+      if (/KANO/i.test(text)) assert(patch.source.id === 'src_kano_only', 'KANO claim should only bind to a KANO source')
+      if (/Entropy/i.test(text)) assert(patch.source.id === 'src_entropy_only', 'entropy claim should only bind to an entropy source')
+    }
+
     const fallback = await post(base, '/api/references/enhance', {
       projectTitle: '非遗文创视觉元素魅力识别研究',
       sections,
