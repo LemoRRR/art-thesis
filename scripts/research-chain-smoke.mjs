@@ -59,6 +59,7 @@ function imageDimensionsFromDataUrl(dataUrl) {
       type: 'png',
       width: buffer.readUInt32BE(16),
       height: buffer.readUInt32BE(20),
+      colorType: buffer[25],
       bytes: buffer.length,
     }
   }
@@ -76,6 +77,18 @@ function imageDimensionsFromDataUrl(dataUrl) {
     height,
     bytes: Buffer.byteLength(svg, 'utf8'),
   }
+}
+
+function assertProfessionalFigureMetadata(figure, dimensions) {
+  const title = String(figure.title ?? '').trim()
+  const caption = String(figure.caption ?? '').trim()
+  assert(title.length >= 4, `figure title is too short: ${figure.id}`)
+  assert(caption.length >= 12, `figure caption is too thin for paper use: ${figure.id}`)
+  assert(!/^图\s*\d*$/i.test(title), `figure title is generic: ${figure.id}`)
+  assert(!/undefined|null|NaN|未命名/.test(`${title}\n${caption}`), `figure metadata contains placeholder text: ${figure.id}`)
+  assert(dimensions.type === 'png', `${figure.title} should be exported as a flattened PNG, got ${dimensions.type}`)
+  assert(dimensions.colorType !== 4 && dimensions.colorType !== 6, `${figure.title} PNG still has alpha; Word/WPS may render it inconsistently`)
+  assert(dimensions.bytes >= 12_000, `${figure.title} PNG is suspiciously small: ${dimensions.bytes} bytes`)
 }
 
 function assertResearchOutputQuality(analysis, components) {
@@ -110,6 +123,7 @@ function assertResearchOutputQuality(analysis, components) {
   }
   for (const figure of figures) {
     const dimensions = imageDimensionsFromDataUrl(figure.dataUrl)
+    assertProfessionalFigureMetadata(figure, dimensions)
     assert(dimensions.width >= 1000, `${figure.title} width is too low: ${dimensions.width}`)
     assert(dimensions.height >= 360, `${figure.title} height is too low: ${dimensions.height}`)
     if (figure.id === 'figure_entropy_weights') {
