@@ -163,34 +163,37 @@ function makeInterviewTextBase64() {
 
 function scenarioConfig() {
   if (scenarioName === 'kano' || scenarioName === 'kano_entropy') {
+    const kanoOnlyMode = hasCustomKanoWorkbook
     return {
       name: 'kano_entropy',
-      title: 'Production KANO entropy research smoke test',
-      fileName: 'prod-kano-entropy-smoke.xlsx',
+      title: kanoOnlyMode ? 'Production KANO research smoke test' : 'Production KANO entropy research smoke test',
+      fileName: kanoOnlyMode ? 'prod-kano-smoke.xlsx' : 'prod-kano-entropy-smoke.xlsx',
       base64: makeKanoWorkbookBase64(),
       method: 'kano_entropy',
       assetType: 'quant_analysis_result',
-      assetTitle: 'Production KANO-熵权法分析结果',
-      assetSummary: '真实问卷 Excel 的 KANO-熵权法分析结果。',
-      userRequest: '请根据上传的真实问卷 Excel 生成 KANO-熵权法分析结果、论文表格、论文图和可写入正文的解释。',
+      assetTitle: kanoOnlyMode ? 'Production KANO分析结果' : 'Production KANO-熵权法分析结果',
+      assetSummary: kanoOnlyMode ? '真实问卷 Excel 的 KANO 分析结果。' : '真实问卷 Excel 的 KANO-熵权法分析结果。',
+      userRequest: kanoOnlyMode
+        ? '请根据上传的真实问卷 Excel 生成 KANO 分析结果、论文表格、论文图和可写入正文的解释。'
+        : '请根据上传的真实问卷 Excel 生成 KANO-熵权法分析结果、论文表格、论文图和可写入正文的解释。',
       sections: [
-        { id: 's3', title: '三、研究设计与数据来源', content: '本章说明问卷设计、样本来源、KANO模型和熵权法计算过程。' },
-        { id: 's4', title: '四、数据分析与研究结果', content: '本章呈现KANO分类、Better-Worse系数、熵权计算和耦合优先级排序结果。' },
+        { id: 's3', title: '三、研究设计与数据来源', content: kanoOnlyMode ? '本章说明问卷设计、样本来源、KANO模型和优先级计算过程。' : '本章说明问卷设计、样本来源、KANO模型和熵权法计算过程。' },
+        { id: 's4', title: '四、数据分析与研究结果', content: kanoOnlyMode ? '本章呈现KANO分类、Better-Worse系数和优先级排序结果。' : '本章呈现KANO分类、Better-Worse系数、熵权计算和耦合优先级排序结果。' },
         { id: 's5', title: '五、优化策略与研究讨论', content: '本章结合数据分析结果提出非遗文创视觉创新优化策略。' },
       ],
       assertAnalysis: analysis => {
         assert(analysis.method === 'kano_entropy', `production analysis method is not KANO entropy: ${analysis.method}`)
         const hasEntropyTable = (analysis.tables ?? []).some(table => table.id === 'table_entropy_weights')
         assert((analysis.tables ?? []).some(table => table.id === 'table_kano_summary'), 'production KANO summary table missing')
-        if (!hasCustomKanoWorkbook) {
+        if (!kanoOnlyMode) {
           assert(hasEntropyTable, 'production entropy weight table missing')
         }
         assert((analysis.tables ?? []).some(table => table.id === 'table_priority_ranking'), 'production priority table missing')
         assert((analysis.figures ?? []).some(figure => figure.id === 'figure_kano_distribution'), 'production KANO distribution figure missing')
         assert((analysis.figures ?? []).some(figure => figure.id === 'figure_kano_entropy_priority'), 'production priority figure missing')
       },
-      minTables: hasCustomKanoWorkbook ? 2 : 3,
-      minFigures: hasCustomKanoWorkbook ? 3 : 4,
+      minTables: kanoOnlyMode ? 2 : 3,
+      minFigures: kanoOnlyMode ? 3 : 4,
     }
   }
 
@@ -372,6 +375,7 @@ function assertProfessionalFigureMetadata(figure, dimensions) {
 function assertPaperReadyComponents(analysis, components, scenario) {
   const tables = analysis.tables ?? []
   const figures = analysis.figures ?? []
+  const hasEntropyTable = tables.some(table => table.id === 'table_entropy_weights')
   const methodCount = components.filter(component => component.type === 'method').length
   const tableCount = components.filter(component => component.type === 'statistics' || component.type === 'table').length
   const figureCount = components.filter(component => component.type === 'figure').length
@@ -391,6 +395,17 @@ function assertPaperReadyComponents(analysis, components, scenario) {
     /由表|由图|结果显示|可知|说明|表明|table|figure|result|shows|indicates|suggests|analysis/i.test(narrativeText),
     'paper-ready narrative lacks academic result interpretation wording'
   )
+  if (analysis.method === 'kano_entropy' && !hasEntropyTable) {
+    const combinedText = [
+      analysis.methodText,
+      analysis.analysisText,
+      analysis.plainText,
+      ...tables.flatMap(table => [table.title, ...(table.columns ?? [])]),
+      ...figures.flatMap(figure => [figure.title, figure.caption]),
+      ...components.map(component => `${component.title ?? ''}\n${component.content ?? ''}`),
+    ].join('\n')
+    assert(!/熵权|耦合/.test(combinedText), 'KANO-only production output should not mention entropy weighting or coupling')
+  }
 
   for (const component of components.filter(item => item.type === 'statistics' || item.type === 'table')) {
     const columns = Array.isArray(component.data?.columns) ? component.data.columns : []
@@ -474,6 +489,8 @@ async function inspectDocx(buffer, sections, scenario) {
   const pageSize = documentXml.match(/<w:pgSz[^>]*w:w="(\d+)"[^>]*w:h="(\d+)"[^>]*>/)
   const pageMargin = documentXml.match(/<w:pgMar[^>]*w:top="(\d+)"[^>]*w:right="(\d+)"[^>]*w:bottom="(\d+)"[^>]*w:left="(\d+)"/)
   const suspiciousQuestionRuns = text.match(/\?{4,}/g) ?? []
+  const hasEntropyTable = /熵权法权重计算/.test(text)
+  const falseEntropyTerms = hasEntropyTable ? [] : ['熵权', '耦合'].filter(term => text.includes(term))
   return {
     page: {
       width: pageSize ? Number(pageSize[1]) : 0,
@@ -498,6 +515,7 @@ async function inspectDocx(buffer, sections, scenario) {
     imageExtentCount: (documentXml.match(/<wp:extent\b/g) ?? []).length,
     internalLeakCount: ((documentXml.match(scenario.internalLeakPattern ?? /table_ahp_|figure_ahp_|research_component/g) ?? []).length),
     suspiciousQuestionRuns,
+    falseEntropyTerms,
     paperStructure: {
       hasOrderedSections: true,
       hasMethodNarrative: true,
@@ -632,6 +650,7 @@ async function main() {
     assert(docx.imageExtentCount >= scenario.minFigures, `DOCX images are missing display extents: ${docx.imageExtentCount}`)
     assert(docx.internalLeakCount === 0, `DOCX leaked internal ids: ${docx.internalLeakCount}`)
     assert(docx.suspiciousQuestionRuns.length === 0, `DOCX contains suspicious question-mark text: ${docx.suspiciousQuestionRuns.join(', ')}`)
+    assert(docx.falseEntropyTerms.length === 0, `KANO-only DOCX should not mention entropy/coupling: ${docx.falseEntropyTerms.join(', ')}`)
 
     console.log(JSON.stringify({
       ok: true,

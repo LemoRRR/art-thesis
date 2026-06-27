@@ -2152,7 +2152,7 @@ function kanoEntropyComponentNarratives(result: Record<string, unknown>) {
       componentId: 'figure_better_worse_matrix',
       title: 'Better-Worse系数四象限图',
       beforeText: '为判断各维度是主要提升满意度还是主要降低不满意，本文将Better系数与Worse绝对值放入同一坐标系中比较，从而识别不同维度的风险与增益位置。',
-      afterText: `图4-2表明，${rowValue(topWorse ?? {}, '维度') || 'Worse系数较高的维度'}的缺失风险更突出，而${rowValue(topBetter ?? {}, '维度') || 'Better系数较高的维度'}对满意度提升更明显。该结果回应了研究中关于“哪些视觉或体验要素应优先优化”的问题，也为后续耦合排序提供了系数依据。`,
+      afterText: `图4-2表明，${rowValue(topWorse ?? {}, '维度') || 'Worse系数较高的维度'}的缺失风险更突出，而${rowValue(topBetter ?? {}, '维度') || 'Better系数较高的维度'}对满意度提升更明显。该结果回应了研究中关于“哪些视觉或体验要素应优先优化”的问题，也为后续${hasEntropyWeights ? '耦合排序' : '优先级排序'}提供了系数依据。`,
     })
   }
 

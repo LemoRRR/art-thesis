@@ -163,6 +163,16 @@ function assertResearchOutputQuality(analysis, components) {
       JSON.stringify(entropyTable.columns) === JSON.stringify(['指标', '熵值', '差异', '权重(%)']),
       `entropy weight table columns are not paper-ready: ${JSON.stringify(entropyTable.columns)}`
     )
+  } else {
+    const combinedText = [
+      analysis.methodText,
+      analysis.analysisText,
+      analysis.plainText,
+      ...tables.flatMap(table => [table.title, ...(table.columns ?? [])]),
+      ...figures.flatMap(figure => [figure.title, figure.caption]),
+      ...components.map(component => `${component.title ?? ''}\n${component.content ?? ''}`),
+    ].join('\n')
+    assert(!/熵权|耦合/.test(combinedText), 'KANO-only output should not mention entropy weighting or coupling')
   }
   for (const table of tables) {
     assert((table.columns ?? []).length <= 7, `${table.title} has too many displayed columns`)
@@ -274,6 +284,8 @@ async function inspectDocx(buffer) {
   )
   const badTerms = ['系统识别到', '研究支撑', '上传工作簿', '当前工作簿', '该方案直接采用', '用于辅助说明数据中的主要分布特征', '寤鸿', '鐔', '璁', '銆']
     .filter(term => text.includes(term))
+  const hasEntropyTable = /熵权法权重计算/.test(text)
+  const falseEntropyTerms = hasEntropyTable ? [] : ['熵权', '耦合'].filter(term => text.includes(term))
   const suspiciousQuestionRuns = text.match(/\?{4,}/g) ?? []
   return {
     page: {
@@ -299,6 +311,7 @@ async function inspectDocx(buffer) {
     hasFootnotesContentType: contentTypesXml ? /PartName="\/word\/footnotes\.xml"/.test(contentTypesXml) : false,
     hasResearchCitationFootnote: /Kano/i.test(footnoteText) && footnoteText.includes('1984'),
     badTerms,
+    falseEntropyTerms,
     suspiciousQuestionRuns,
     hasExistingMethodProse: text.includes('\u672c\u7814\u7a76\u5728\u95ee\u5377\u6570\u636e\u57fa\u7840\u4e0a\u5efa\u7acb\u5206\u6790\u8def\u5f84'),
     hasExistingResultProse: text.includes('\u672c\u8282\u9996\u5148\u5bf9\u7814\u7a76\u7ed3\u679c\u8fdb\u884c\u6982\u8ff0'),
@@ -320,11 +333,16 @@ async function main() {
 
   try {
     const fileData = fs.readFileSync(workbookPath).toString('base64')
+    const expectedEntropyWorkbook = workbookPath.includes('熵权')
     const common = {
-      projectTitle: '面向青年群体的非遗文创视觉元素魅力识别——基于KANO-熵权法的分析',
+      projectTitle: expectedEntropyWorkbook
+        ? '面向青年群体的非遗文创视觉元素魅力识别——基于KANO-熵权法的分析'
+        : '面向青年群体的国潮插画视觉元素魅力识别——基于KANO模型的分析',
       fileName: path.basename(workbookPath),
       base64: fileData,
-      userRequest: '请根据上传的问卷数据生成论文第四章可用的KANO-熵权法分析结果、表格、图片和论文式解释。',
+      userRequest: expectedEntropyWorkbook
+        ? '请根据上传的问卷数据生成论文第四章可用的KANO-熵权法分析结果、表格、图片和论文式解释。'
+        : '请根据上传的问卷数据生成论文第四章可用的KANO分析结果、表格、图片和论文式解释。',
     }
     const plan = await post(base, '/api/research/analysis-plan', common)
     const analysis = await post(base, '/api/research/analyze', { ...common, plan: plan.plan })
@@ -337,7 +355,7 @@ async function main() {
     ]
     const writePlan = await post(base, '/api/research/write-plan', {
       paperTitle: common.projectTitle,
-      assetTitle: 'KANO-熵权法分析',
+      assetTitle: expectedEntropyWorkbook ? 'KANO-熵权法分析' : 'KANO分析',
       assetSummary: '问卷数据分析结果',
       sections,
       components,
@@ -357,13 +375,13 @@ async function main() {
     assert(placements.some(item => item.role === 'discussion' && item.targetSectionId === 's5'), '讨论建议组件未写入优化策略/研究讨论章节')
 
     const semanticSections = [
-      { id: 'design', title: '研究设计、样本与测量', content: '说明问卷来源、样本处理、KANO模型和熵权法计算口径。' },
-      { id: 'findings', title: '实证结果分析', content: '呈现KANO分类、Better-Worse系数、熵权结果和综合排序。' },
+      { id: 'design', title: '研究设计、样本与测量', content: expectedEntropyWorkbook ? '说明问卷来源、样本处理、KANO模型和熵权法计算口径。' : '说明问卷来源、样本处理、KANO模型和优先级计算口径。' },
+      { id: 'findings', title: '实证结果分析', content: expectedEntropyWorkbook ? '呈现KANO分类、Better-Worse系数、熵权结果和综合排序。' : '呈现KANO分类、Better-Worse系数和优先级排序。' },
       { id: 'strategy', title: '设计优化路径与讨论', content: '将实证发现转化为视觉元素优化策略和研究讨论。' },
     ]
     const semanticWritePlan = await post(base, '/api/research/write-plan', {
       paperTitle: common.projectTitle,
-      assetTitle: 'KANO-熵权法分析',
+      assetTitle: expectedEntropyWorkbook ? 'KANO-熵权法分析' : 'KANO分析',
       assetSummary: '问卷数据分析结果',
       sections: semanticSections,
       components,
@@ -487,6 +505,7 @@ async function main() {
     assert(docx.hasFootnotesContentType, 'DOCX 缺少 footnotes content type')
     assert(docx.hasResearchCitationFootnote, 'DOCX 研究计算导出未保留文献脚注')
     assert(docx.badTerms.length === 0, `DOCX 出现不应展示的内部/乱码词：${docx.badTerms.join('、')}`)
+    assert(docx.falseEntropyTerms.length === 0, `KANO-only DOCX 不应出现熵权/耦合表述：${docx.falseEntropyTerms.join('、')}`)
     assert(docx.suspiciousQuestionRuns.length === 0, `DOCX 出现疑似乱码问号段落：${docx.suspiciousQuestionRuns.join('、')}`)
     assert(docx.hasExistingMethodProse && docx.hasExistingResultProse && docx.hasExistingDiscussionProse, 'DOCX should preserve existing thesis section prose before inserted research results')
     assert(docx.hasMethodBridge && docx.hasResultBridge && docx.hasDiscussionBridge, 'DOCX should include thesis-style bridge prose for method, result, and discussion insertions')
