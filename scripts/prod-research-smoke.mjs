@@ -349,6 +349,22 @@ function pngDimensionsFromDataUrl(dataUrl) {
   }
 }
 
+function assertProfessionalFigureMetadata(figure, dimensions) {
+  const title = String(figure.title ?? '').trim()
+  const caption = String(figure.caption ?? '').trim()
+  const combined = `${title}\n${caption}`
+  assert(title.length >= 4, `figure title is too short: ${figure.id}`)
+  assert(caption.length >= 12, `figure caption is too thin for paper use: ${figure.id}`)
+  assert(!/^图\s*\d*$/i.test(title), `figure title is generic: ${figure.id}`)
+  assert(!/^(figure|chart|analysis chart|result chart|分析图|结果图|图表)$/i.test(title), `figure title is generic: ${figure.id}`)
+  assert(!/undefined|null|NaN|未命名|\?{4,}/i.test(combined), `figure metadata contains placeholder or garbled text: ${figure.id}`)
+  assert(
+    /分布|系数|权重|矩阵|检验|变量|主题|因子|载荷|一致性|优先级|distribution|coefficient|weight|matrix|test|variable|theme|factor|loading|priority|consistency|correlation/i.test(combined),
+    `figure metadata is not analysis-specific enough: ${figure.id}`
+  )
+  assert(dimensions.bytes >= 10000, `${figure.title} source PNG is suspiciously small: ${dimensions.bytes} bytes`)
+}
+
 function assertPaperReadyComponents(analysis, components, scenario) {
   const tables = analysis.tables ?? []
   const figures = analysis.figures ?? []
@@ -378,6 +394,7 @@ function assertPaperReadyComponents(analysis, components, scenario) {
   }
   for (const figure of figures) {
     const dimensions = pngDimensionsFromDataUrl(figure.dataUrl)
+    assertProfessionalFigureMetadata(figure, dimensions)
     assert(dimensions.width >= 900, `${figure.title} source PNG width is too low: ${dimensions.width}`)
     assert(dimensions.height >= 250, `${figure.title} source PNG height is too low: ${dimensions.height}`)
     assert(dimensions.colorType !== 4 && dimensions.colorType !== 6, `${figure.title} source PNG still has alpha`)
