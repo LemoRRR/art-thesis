@@ -269,6 +269,7 @@ async function inspectDocx(buffer) {
   )
   const badTerms = ['系统识别到', '研究支撑', '上传工作簿', '当前工作簿', '该方案直接采用', '用于辅助说明数据中的主要分布特征', '寤鸿', '鐔', '璁', '銆']
     .filter(term => text.includes(term))
+  const suspiciousQuestionRuns = text.match(/\?{4,}/g) ?? []
   return {
     page: {
       width: pageSize ? Number(pageSize[1]) : 0,
@@ -293,6 +294,7 @@ async function inspectDocx(buffer) {
     hasFootnotesContentType: contentTypesXml ? /PartName="\/word\/footnotes\.xml"/.test(contentTypesXml) : false,
     hasResearchCitationFootnote: /Kano/i.test(footnoteText) && footnoteText.includes('1984'),
     badTerms,
+    suspiciousQuestionRuns,
     hasExistingMethodProse: text.includes('\u672c\u7814\u7a76\u5728\u95ee\u5377\u6570\u636e\u57fa\u7840\u4e0a\u5efa\u7acb\u5206\u6790\u8def\u5f84'),
     hasExistingResultProse: text.includes('\u672c\u8282\u9996\u5148\u5bf9\u7814\u7a76\u7ed3\u679c\u8fdb\u884c\u6982\u8ff0'),
     hasExistingDiscussionProse: text.includes('\u4ee5\u4e0b\u8ba8\u8bba\u5c06\u56de\u5230\u7814\u7a76\u95ee\u9898\u672c\u8eab'),
@@ -420,7 +422,7 @@ async function main() {
       {
         id: 's3',
         projectId: 'smoke',
-        title: '???????????',
+        title: '三、研究设计与方法',
         content: paperDocText(methodDoc),
         editorDoc: methodDoc,
         footnotes: [{
@@ -438,7 +440,7 @@ async function main() {
       {
         id: 's4',
         projectId: 'smoke',
-        title: '???????????',
+        title: '四、数据分析与结果',
         content: paperDocText(resultDoc),
         editorDoc: resultDoc,
         status: 'done',
@@ -447,7 +449,7 @@ async function main() {
       {
         id: 's5',
         projectId: 'smoke',
-        title: '???????????',
+        title: '五、讨论与优化建议',
         content: paperDocText(discussionDoc),
         editorDoc: discussionDoc,
         status: 'done',
@@ -477,6 +479,7 @@ async function main() {
     assert(docx.hasFootnotesContentType, 'DOCX 缺少 footnotes content type')
     assert(docx.hasResearchCitationFootnote, 'DOCX 研究计算导出未保留文献脚注')
     assert(docx.badTerms.length === 0, `DOCX 出现不应展示的内部/乱码词：${docx.badTerms.join('、')}`)
+    assert(docx.suspiciousQuestionRuns.length === 0, `DOCX 出现疑似乱码问号段落：${docx.suspiciousQuestionRuns.join('、')}`)
     assert(docx.hasExistingMethodProse && docx.hasExistingResultProse && docx.hasExistingDiscussionProse, 'DOCX should preserve existing thesis section prose before inserted research results')
     assert(docx.hasMethodBridge && docx.hasResultBridge && docx.hasDiscussionBridge, 'DOCX should include thesis-style bridge prose for method, result, and discussion insertions')
 
