@@ -1612,7 +1612,14 @@ export default function Stage3() {
     setIsGeneratingFull(false)
     setIsPreparingDraft(false)
     setAllGenerated(generatedSections.length > 0 && generatedSections.every(section => section.status === 'done'))
-    sectionStore.saveForProject(project.id, generatedSections)
+    sectionStore.saveForProject(project.id, generatedSections, { syncRemote: false })
+    try {
+      pushGenerationStep('正在保存全文到云端', 'active')
+      await sectionStore.syncProject(project.id)
+      pushGenerationStep('全文已保存到云端', 'done')
+    } catch (error) {
+      pushGenerationStep(`云端保存暂未完成：${error instanceof Error ? error.message : '请稍后点击同步云端'}`, 'error')
+    }
     const auditNote = buildCitationAuditNote(generatedSections, citableSources.length)
     setCitationAuditNote(prev => [
       prev,
@@ -1822,7 +1829,12 @@ export default function Stage3() {
 
     setIsGeneratingFull(false)
     setAllGenerated(nextSections.every(section => section.status === 'done'))
-    sectionStore.saveForProject(project.id, nextSections)
+    sectionStore.saveForProject(project.id, nextSections, { syncRemote: false })
+    try {
+      await sectionStore.syncProject(project.id)
+    } catch (error) {
+      console.warn('[Stage3] Failed to sync generated additional sections', error)
+    }
     setGenerationStatusLabel('')
   }, [academicLevel, activeStyleGuide, buildChapterCitationContext, prepareAutoCitationContext, project.id, saveStageMessages])
 

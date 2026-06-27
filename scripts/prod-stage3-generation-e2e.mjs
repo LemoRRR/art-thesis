@@ -62,10 +62,28 @@ async function clickByTestId(page, testId, timeout = 30000) {
 
 async function cleanup({ token, projectId }) {
   if (!token || keepProject) return
+  const sections = await requestJson('GET', `/api/sections/project/${encodeURIComponent(projectId)}`, undefined, token).catch(() => [])
   await Promise.allSettled([
+    ...(Array.isArray(sections) ? sections.map(section => section?.id
+      ? requestJson('DELETE', `/api/sections/${encodeURIComponent(section.id)}`, undefined, token)
+      : Promise.resolve()) : []),
     requestJson('DELETE', `/api/outlines/project/${encodeURIComponent(projectId)}`, undefined, token),
     requestJson('DELETE', `/api/projects/${encodeURIComponent(projectId)}`, undefined, token),
   ])
+}
+
+async function waitForGeneratedSections(projectId, token, timeoutMs = 120000) {
+  const startedAt = Date.now()
+  let latest = []
+  while (Date.now() - startedAt < timeoutMs) {
+    latest = await requestJson('GET', `/api/sections/project/${encodeURIComponent(projectId)}`, undefined, token)
+    if (Array.isArray(latest) && latest.length >= 2) {
+      const text = latest.map(section => `${section.title}\n${section.content ?? ''}`).join('\n')
+      if (text.length > 300 && /研究背景|结论|优化建议|非遗|文创/.test(text)) return latest
+    }
+    await new Promise(resolve => setTimeout(resolve, 3000))
+  }
+  return latest
 }
 
 function draftOutline() {
@@ -159,14 +177,14 @@ async function main() {
     await page.waitForFunction(() => {
       const text = document.body?.innerText ?? ''
       return /正在生成全文|正在生成第|全文已生成|保底初稿/.test(text)
-    }, { timeout: 60000 })
+    }, undefined, { timeout: 60000 })
 
     await page.waitForFunction(() => {
       const text = document.body?.innerText ?? ''
       return /全文已生成|全 文已生成|保底初稿|重新生成全文|导出 Word|全文已生成，可继续修改/.test(text) && !/AI 正在生成全文/.test(text)
-    }, { timeout: 300000 })
+    }, undefined, { timeout: 300000 })
 
-    const sections = await requestJson('GET', `/api/sections/project/${encodeURIComponent(projectId)}`, undefined, token)
+    const sections = await waitForGeneratedSections(projectId, token)
     assert(Array.isArray(sections), 'sections response should be an array')
     assert(sections.length >= 2, `expected generated sections, got ${sections.length}`)
     const generatedText = sections.map(section => `${section.title}\n${section.content ?? ''}`).join('\n')
