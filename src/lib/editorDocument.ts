@@ -245,12 +245,36 @@ function footnoteIdsInNodes(nodes: PaperEditorNode[]) {
   return ids
 }
 
-function sectionFootnotesFromNodes(nodes: PaperEditorNode[], previous?: DocSection): SectionFootnote[] | undefined {
-  const previousFootnotes = previous?.footnotes ?? []
-  if (previousFootnotes.length === 0) return undefined
+function isSectionFootnote(value: unknown): value is SectionFootnote {
+  if (!value || typeof value !== 'object') return false
+  const item = value as Partial<SectionFootnote>
+  return (
+    typeof item.id === 'string' &&
+    typeof item.number === 'number' &&
+    typeof item.blockIndex === 'number' &&
+    typeof item.start === 'number' &&
+    typeof item.end === 'number' &&
+    typeof item.anchorText === 'string' &&
+    typeof item.noteText === 'string'
+  )
+}
+
+function footnotesFromDocAttrs(doc: PaperEditorDoc): SectionFootnote[] {
+  const raw = doc.attrs?.footnotes
+  return Array.isArray(raw) ? raw.filter(isSectionFootnote) : []
+}
+
+function sectionFootnotesFromNodes(
+  nodes: PaperEditorNode[],
+  previous?: DocSection,
+  documentFootnotes: SectionFootnote[] = []
+): SectionFootnote[] | undefined {
+  const candidates = previous?.footnotes?.length ? previous.footnotes : documentFootnotes
+  if (candidates.length === 0) return undefined
   const usedIds = footnoteIdsInNodes(nodes)
-  if (usedIds.size === 0) return previousFootnotes
-  return previousFootnotes.filter(footnote => usedIds.has(footnote.id))
+  if (usedIds.size === 0) return previous?.footnotes?.length ? previous.footnotes : undefined
+  const matched = candidates.filter(footnote => usedIds.has(footnote.id))
+  return matched.length > 0 ? matched : undefined
 }
 
 function sectionTitleNode(node: PaperEditorNode) {
@@ -259,6 +283,7 @@ function sectionTitleNode(node: PaperEditorNode) {
 
 export function paperDocToSections(doc: PaperEditorDoc, previousSections: DocSection[]): DocSection[] {
   const previousById = new Map(previousSections.map(section => [section.id, section]))
+  const documentFootnotes = footnotesFromDocAttrs(doc)
   const next: DocSection[] = []
   let currentHeading: PaperEditorNode | null = null
   let currentBody: PaperEditorNode[] = []
@@ -281,7 +306,7 @@ export function paperDocToSections(doc: PaperEditorDoc, previousSections: DocSec
       title,
       content: editorDocToPlainText({ type: 'doc', content: body }),
       editorDoc,
-      footnotes: sectionFootnotesFromNodes(sectionNodes, previous),
+      footnotes: sectionFootnotesFromNodes(sectionNodes, previous, documentFootnotes),
       status: previous?.status ?? 'done',
       lastModified: Date.now(),
       order: previous?.order ?? next.length,
