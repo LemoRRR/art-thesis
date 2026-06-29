@@ -108,6 +108,12 @@ interface MethodDraft {
   pendingTasks: string
 }
 
+interface SyncedResearchAsset {
+  label: string
+  value: string
+  ready: boolean
+}
+
 const purposeOptions: Array<{
   value: WorkspacePurpose
   label: string
@@ -116,21 +122,21 @@ const purposeOptions: Array<{
 }> = [
   {
     value: 'generate',
-    label: '根据论文生成研究工具',
-    desc: '从 Stage1、Stage2 大纲和已有正文里读取上下文，生成量表、问卷、KANO、AHP 或访谈/编码工具。',
-    action: '选择工具并生成',
+    label: 'A. 还没有数据',
+    desc: '先根据题目、大纲和已有正文生成专用研究工具，例如问卷、访谈提纲、KANO 问卷、AHP 专家表或文本编码表。',
+    action: '生成研究工具',
   },
   {
     value: 'analyze',
-    label: '已有数据直接分析',
-    desc: '用户已经有回收表、访谈文本或其他分析材料时，直接上传，系统先留痕再生成分析资产。',
-    action: '上传数据或材料',
+    label: 'B. 已有数据',
+    desc: '上传 Excel、CSV 或访谈文本，系统自动识别数据结构，生成论文可用的图、表和结果分析文字。',
+    action: '上传并分析',
   },
   {
     value: 'optimize',
-    label: '上传已有问卷优化',
-    desc: '用户已有问卷时，检查重复题、引导性问题、维度覆盖和是否适合后续信效度分析。',
-    action: '上传问卷检查',
+    label: 'C. 已有问卷',
+    desc: '检查既有问卷的维度覆盖、题项质量、引导性问题、反向题和后续分析适配性。',
+    action: '优化/检查量表',
   },
 ]
 
@@ -1422,7 +1428,10 @@ export default function ResearchCenter() {
     [project.id],
   )
   const sourceOptions = useMemo(() => getSourceOptions(project.id), [project.id])
-  const defaultSourceKind = sourceOptions.find(option => option.available)?.kind ?? 'stage1'
+  const defaultSourceKind = sourceOptions.find(option => option.kind === 'full_text' && option.available)?.kind
+    ?? sourceOptions.find(option => option.kind === 'outline' && option.available)?.kind
+    ?? sourceOptions.find(option => option.available)?.kind
+    ?? 'stage1'
   const [stage1ResearchPlan, setStage1ResearchPlan] = useState<ResearchPlan | undefined>(project.context.researchPlan)
   const [sourceKind, setSourceKind] = useState<SourceKind>(defaultSourceKind)
   const source = sourceOptions.find(option => option.kind === sourceKind && option.available)
@@ -1468,6 +1477,51 @@ export default function ResearchCenter() {
   const latestDataset = assets.find(asset => asset.type === 'quant_dataset')
   const latestAnalysis = assets.find(asset => asset.type === 'quant_analysis_result' || asset.type === 'qualitative_coding')
   const isAnalyzing = analysisPhase === 'planning' || analysisPhase === 'running' || analysisPhase === 'interpreting'
+  const outlineSource = sourceOptions.find(option => option.kind === 'outline')
+  const fullTextSource = sourceOptions.find(option => option.kind === 'full_text')
+  const generatedResearchTools = assets.filter(asset => (
+    asset.type === 'survey_questionnaire'
+    || asset.type === 'kano_result'
+    || asset.type === 'ahp_result'
+    || asset.type === 'questionnaire_review'
+  ))
+  const insertedResearchAssets = assets.filter(asset => asset.status === 'used_in_paper' || (asset.linkedSectionIds?.length ?? 0) > 0)
+  const syncedAssets: SyncedResearchAsset[] = [
+    { label: '题目/研究对象', value: project.context.researchObject || project.title, ready: Boolean(project.title) },
+    { label: 'Stage1 方法判断', value: stage1ResearchPlan?.methodLabel || '将按题目和正文临时判断', ready: Boolean(stage1ResearchPlan) },
+    { label: 'Stage2 大纲', value: outlineSource?.available ? '已读取' : '暂无大纲', ready: Boolean(outlineSource?.available) },
+    { label: 'Stage3 全文', value: fullTextSource?.available ? '已读取正文' : '暂无全文', ready: Boolean(fullTextSource?.available) },
+    { label: '研究工具', value: generatedResearchTools.length ? `${generatedResearchTools.length} 个` : '未生成', ready: generatedResearchTools.length > 0 },
+    { label: '数据/分析结果', value: latestAnalysis ? '已有分析结果' : latestDataset ? '已有数据待分析' : '未上传', ready: Boolean(latestDataset || latestAnalysis) },
+    { label: '写入论文', value: insertedResearchAssets.length ? `已写入 ${insertedResearchAssets.length} 次` : '待写入', ready: insertedResearchAssets.length > 0 },
+  ]
+  const workflowAdvice = latestAnalysis
+    ? {
+      status: '已有分析结果，下一步建议写入论文',
+      body: '系统已经有可用的研究结果包，可以先预览图表和论文表述，再一键插入到研究方法、数据分析和讨论建议章节。',
+      cta: '查看并写入论文',
+      purpose: 'analyze' as WorkspacePurpose,
+    }
+    : latestDataset
+      ? {
+        status: '已有数据，下一步建议生成分析结果',
+        body: '系统检测到已上传数据。建议先运行分析，生成论文格式的表格、图片和结果解释，再导入正文。',
+        cta: '生成分析结果',
+        purpose: 'analyze' as WorkspacePurpose,
+      }
+      : generatedResearchTools.length
+        ? {
+          status: '已有研究工具，下一步建议收集或上传数据',
+          body: '研究工具已经生成，可以导出问卷/量表收集数据；如果已经回收 Excel，可直接上传并分析。',
+          cta: '上传数据',
+          purpose: 'analyze' as WorkspacePurpose,
+        }
+        : {
+          status: '建议先生成研究工具',
+          body: `根据当前论文上下文，系统建议采用“${stage1ResearchPlan?.methodLabel || route.label}”。如果已经有数据，也可以跳过工具生成，直接上传分析。`,
+          cta: '生成研究工具',
+          purpose: 'generate' as WorkspacePurpose,
+        }
   const canReinterpretActiveAsset = Boolean(
     activeAsset?.structuredData
     && typeof activeAsset.structuredData === 'object'
@@ -1686,7 +1740,7 @@ export default function ResearchCenter() {
           : '对上传的问卷或统计数据生成论文可用的数据分析方案、图表和结果解释。',
         purpose: isQualitative ? '质性编码分析' : '论文数据分析',
         capabilityTier: 'partial_loop',
-        recommendedMethods: isQualitative ? ['descriptive'] : ['descriptive', 'cronbach_alpha', 'correlation', 'anova', 'efa'],
+        recommendedMethods: isQualitative ? ['descriptive'] : ['descriptive', 'cronbach_alpha', 'correlation', 'regression_analysis', 'mediation_model_4', 'anova', 'efa'],
         expectedPackage: ['method', 'statistics', 'figure', 'analysis'],
         notes: [],
       } satisfies Parameters<typeof researchAPI.analysisPlan>[0]['intent']
@@ -2187,9 +2241,51 @@ export default function ResearchCenter() {
         />
 
         <main style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
-          <div style={{ maxWidth: 1280, margin: '0 auto 14px', border: '1px solid rgba(45, 90, 61, 0.18)', borderRadius: 8, padding: '10px 12px', background: 'var(--color-accent-light)', color: 'var(--color-accent)', fontSize: 12, lineHeight: 1.7 }}>
-            独立研究页现在定位为早期规划入口。若论文已经开始写作，建议回到 Stage3 对应章节点击「插入研究结果」，系统会带入当前章节上下文，变量映射和结果文字会更贴合正文。
-          </div>
+          <section style={workflowHeroStyle}>
+            <div>
+              <div style={workflowEyebrowStyle}>研究计算工作流</div>
+              <h1 style={{ margin: '6px 0 8px', fontSize: 22, color: 'var(--color-ink)' }}>同步论文资产，再生成研究包</h1>
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.8, color: 'var(--color-ink-2)' }}>
+                系统会先读取题目、大纲、已有正文、研究工具和已上传数据，再判断当前应该生成工具、上传分析，还是把结果导入论文对应章节。
+              </p>
+            </div>
+            <div style={workflowAdviceStyle}>
+              <div style={{ fontSize: 12, color: 'var(--color-ink-3)', fontWeight: 800 }}>系统判断下一步</div>
+              <div style={{ marginTop: 5, fontSize: 15, color: 'var(--color-ink)', fontWeight: 850 }}>{workflowAdvice.status}</div>
+              <p style={{ margin: '6px 0 12px', fontSize: 12, lineHeight: 1.65, color: 'var(--color-ink-3)' }}>{workflowAdvice.body}</p>
+              <button
+                onClick={() => {
+                  setPurpose(workflowAdvice.purpose)
+                  if (latestAnalysis) setActiveAssetId(latestAnalysis.id)
+                  else if (latestDataset) setActiveAssetId(latestDataset.id)
+                }}
+                style={primaryButtonStyle}
+              >
+                {workflowAdvice.cta}
+                <ArrowRight size={13} />
+              </button>
+            </div>
+          </section>
+          <section style={{ ...panelStyle, maxWidth: 1280, margin: '0 auto 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 850, color: 'var(--color-ink)' }}>已同步资产</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: 'var(--color-ink-3)' }}>进入研究计算时自动读取前面阶段，不需要用户重新描述论文。</div>
+              </div>
+              <span style={badgeStyle}>共 {assets.length} 个研究资产</span>
+            </div>
+            <div style={syncedAssetGridStyle}>
+              {syncedAssets.map(item => (
+                <div key={item.label} style={{ ...syncedAssetCardStyle, opacity: item.ready ? 1 : 0.68 }}>
+                  <span style={{ ...syncedAssetDotStyle, background: item.ready ? 'var(--color-accent)' : '#D8D2C8' }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: 'var(--color-ink-3)' }}>{item.label}</div>
+                    <div style={{ marginTop: 3, fontSize: 13, color: 'var(--color-ink)', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.value}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
           <section style={{ ...panelStyle, maxWidth: 1280, margin: '0 auto 14px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
               <div>
@@ -2306,7 +2402,7 @@ export default function ResearchCenter() {
           <div style={{ maxWidth: 1280, margin: '0 auto', display: 'grid', gridTemplateColumns: 'minmax(680px, 1fr)', gap: 14, alignItems: 'start' }}>
             <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <section style={stepPanelStyle}>
-                <StepTitle number="1" icon={<ClipboardList size={15} />} title="选择目的" />
+                <StepTitle number="1" icon={<ClipboardList size={15} />} title="选择当前任务" />
                 <div style={purposeGridStyle}>
                   {purposeOptions.map(option => (
                     <button
@@ -2330,7 +2426,7 @@ export default function ResearchCenter() {
               </section>
 
               <section style={stepPanelStyle}>
-                <StepTitle number="2" icon={<FileText size={15} />} title="确认论文上下文" />
+                <StepTitle number="2" icon={<FileText size={15} />} title="确认使用的论文资产" />
                 <div style={sourceChoiceGridStyle}>
                   {sourceOptions.map(option => (
                     <button
@@ -2367,7 +2463,7 @@ export default function ResearchCenter() {
               </section>
 
               <section style={stepPanelStyle}>
-                <StepTitle number="3" icon={<Pencil size={15} />} title="生成或查看当前结果" />
+                <StepTitle number="3" icon={<Pencil size={15} />} title="生成专业研究包" />
                 <div style={taskBlockStyle}>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-ink)' }}>{activePurpose.label}</div>
@@ -2508,7 +2604,7 @@ export default function ResearchCenter() {
               </section>
 
               <section style={stepPanelStyle}>
-                <StepTitle number="4" icon={<CheckCircle2 size={15} />} title="选择结果功能" />
+                <StepTitle number="4" icon={<CheckCircle2 size={15} />} title="确认后导入论文" />
                 {!activeAsset ? (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, border: '1px dashed var(--color-border)', borderRadius: 8, padding: 12, background: 'var(--color-bg)' }}>
                     <div style={{ fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.7 }}>
@@ -2674,6 +2770,61 @@ const panelStyle = {
   borderRadius: 8,
   padding: 16,
   boxShadow: 'var(--shadow-sm)',
+}
+
+const workflowHeroStyle = {
+  maxWidth: 1280,
+  margin: '0 auto 14px',
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) 360px',
+  gap: 14,
+  alignItems: 'stretch',
+  background: 'var(--color-surface)',
+  border: '1px solid var(--color-border)',
+  borderRadius: 8,
+  padding: 18,
+  boxShadow: 'var(--shadow-sm)',
+}
+
+const workflowEyebrowStyle = {
+  fontSize: 11,
+  color: 'var(--color-accent)',
+  fontWeight: 850,
+  letterSpacing: '0.05em',
+}
+
+const workflowAdviceStyle = {
+  border: '1px solid rgba(45, 90, 61, 0.18)',
+  borderRadius: 8,
+  background: 'var(--color-accent-light)',
+  padding: 12,
+  display: 'flex',
+  flexDirection: 'column' as const,
+  alignItems: 'flex-start',
+}
+
+const syncedAssetGridStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+  gap: 8,
+}
+
+const syncedAssetCardStyle = {
+  border: '1px solid var(--color-border)',
+  borderRadius: 8,
+  background: 'var(--color-bg)',
+  padding: 10,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  minWidth: 0,
+}
+
+const syncedAssetDotStyle = {
+  width: 8,
+  height: 8,
+  borderRadius: 999,
+  flexShrink: 0,
 }
 
 const methodEditorStyle = {

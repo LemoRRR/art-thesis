@@ -325,8 +325,11 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
       { type: 'figure', id: 'figure_reliability_alpha' },
       { type: 'table', id: 'table_correlation' },
       { type: 'figure', id: 'figure_correlation_heatmap' },
+      { type: 'table', id: 'table_regression' },
+      { type: 'figure', id: 'figure_regression_coefficients' },
       { type: 'table', id: 'table_anova' },
       { type: 'figure', id: 'figure_anova_f' },
+      { type: 'table', id: 'table_mediation' },
       { type: 'table', id: 'table_efa' },
       { type: 'figure', id: 'figure_efa_loadings' },
       { type: 'table', id: 'table_open_coding' },
@@ -382,7 +385,7 @@ export function splitResearchAssetIntoComponents(asset: ResearchAsset): Research
   const text = asset.plainText.trim()
   const components: ResearchPackageComponent[] = []
   const methodMatch = text.match(/【(?:研究方法|问卷说明|方法说明|研究设计)】([\s\S]*?)(?=\n?【|$)/)
-  const statsMatch = text.match(/【(?:描述性统计|数据分析结果|统计数据|信度分析|相关分析|方差分析|中介效应|因子分析)】([\s\S]*?)(?=\n?【|$)/)
+  const statsMatch = text.match(/【(?:描述性统计|数据分析结果|统计数据|信度分析|相关分析|回归分析|方差分析|中介效应|因子分析)】([\s\S]*?)(?=\n?【|$)/)
   const analysisMatch = text.match(/【(?:论文写作提示|分析文字|结果解释|总体判断|结论)】([\s\S]*?)(?=\n?【|$)/)
 
   if (methodMatch?.[1]?.trim()) {
@@ -507,6 +510,13 @@ const RESEARCH_TABLE_COLUMN_LABELS: Record<string, string> = {
   y: '变量Y',
   r: '相关系数',
   p: '显著性',
+  predictor: '预测变量',
+  coefficient: '回归系数',
+  se: '标准误',
+  t: 't值',
+  indirect: '间接效应',
+  c_prime: '直接效应',
+  ci95: '95% CI',
   group: '分组变量',
   f: 'F值',
   sampleSize: '样本量',
@@ -516,6 +526,7 @@ const RESEARCH_TABLE_COLUMN_LABELS: Record<string, string> = {
   reliabilitySuitable: '信度分析',
   efaSuitable: '因子分析',
   correlationSuitable: '相关分析',
+  regressionSuitable: '回归分析',
   anovaSuitable: '方差分析',
   id: '编号',
   originalText: '原文摘录',
@@ -649,8 +660,14 @@ function researchTableNote(component: ResearchPackageComponent) {
   if (id.includes('correlation') || title.includes('相关')) {
     return '注：r表示相关系数，p表示显著性水平。'
   }
+  if (id.includes('regression') || title.includes('回归')) {
+    return '注：回归系数用于判断预测变量对因变量的影响方向与强度，p值用于辅助判断显著性。'
+  }
   if (id.includes('anova') || title.includes('方差')) {
     return '注：F值用于判断不同组别在变量均值上的差异程度，p值用于辅助判断显著性。'
+  }
+  if (id.includes('mediation') || title.includes('中介')) {
+    return '注：中介效应通常关注间接效应及其Bootstrap置信区间；若置信区间不包含0，可作为中介效应存在的证据。'
   }
   if (id.includes('efa') || title.includes('因子')) {
     return '注：表中数值为探索性因子载荷，载荷越高表示题项与对应因子的关联越强。'

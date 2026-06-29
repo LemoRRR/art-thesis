@@ -122,6 +122,7 @@ export type ResearchAnalysisMethod =
   | 'descriptive'
   | 'cronbach_alpha'
   | 'correlation'
+  | 'regression_analysis'
   | 'anova'
   | 'mediation_model_4'
   | 'efa'

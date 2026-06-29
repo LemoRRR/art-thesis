@@ -14,6 +14,7 @@ type ResearchAnalysisMethod =
   | 'descriptive'
   | 'cronbach_alpha'
   | 'correlation'
+  | 'regression_analysis'
   | 'anova'
   | 'mediation_model_4'
   | 'efa'
@@ -23,6 +24,7 @@ const ANALYSIS_METHODS: ResearchAnalysisMethod[] = [
   'descriptive',
   'cronbach_alpha',
   'correlation',
+  'regression_analysis',
   'anova',
   'mediation_model_4',
   'efa',
@@ -34,6 +36,9 @@ function normalizeAnalysisMethod(value: unknown): ResearchAnalysisMethod | '' {
   const aliases: Record<string, ResearchAnalysisMethod> = {
     cronbach: 'cronbach_alpha',
     alpha: 'cronbach_alpha',
+    regression: 'regression_analysis',
+    linear_regression: 'regression_analysis',
+    ols: 'regression_analysis',
     mediation: 'mediation_model_4',
     process_model_4: 'mediation_model_4',
   }
@@ -259,6 +264,7 @@ function assessDatasetQuality(rows: Record<string, unknown>[], columns: string[]
     reliabilitySuitable: rows.length >= 30 && likertLike.length >= 3,
     efaSuitable: rows.length >= Math.max(50, numericColumns.length * 5) && numericColumns.length >= 6,
     correlationSuitable: rows.length >= 20 && numericColumns.length >= 2,
+    regressionSuitable: rows.length >= 30 && numericColumns.length >= 3,
     anovaSuitable: rows.length >= 20 && numericColumns.length >= 1 && categoricalColumns.length >= 1,
     warnings,
   }
@@ -379,6 +385,182 @@ function nodeAnova(rows: Record<string, unknown>[], columns: string[], groupColu
   })
 }
 
+function transpose(matrix: number[][]) {
+  return matrix[0]?.map((_value, colIndex) => matrix.map(row => row[colIndex])) ?? []
+}
+
+function multiplyMatrices(left: number[][], right: number[][]) {
+  const rightT = transpose(right)
+  return left.map(row => rightT.map(column => dot(row, column)))
+}
+
+function invertMatrix(matrix: number[][]) {
+  const size = matrix.length
+  const augmented = matrix.map((row, rowIndex) => [
+    ...row,
+    ...Array.from({ length: size }, (_item, colIndex) => (rowIndex === colIndex ? 1 : 0)),
+  ])
+  for (let pivotIndex = 0; pivotIndex < size; pivotIndex += 1) {
+    let maxRow = pivotIndex
+    for (let rowIndex = pivotIndex + 1; rowIndex < size; rowIndex += 1) {
+      if (Math.abs(augmented[rowIndex][pivotIndex]) > Math.abs(augmented[maxRow][pivotIndex])) maxRow = rowIndex
+    }
+    if (Math.abs(augmented[maxRow][pivotIndex]) < 1e-10) return null
+    ;[augmented[pivotIndex], augmented[maxRow]] = [augmented[maxRow], augmented[pivotIndex]]
+    const pivot = augmented[pivotIndex][pivotIndex]
+    augmented[pivotIndex] = augmented[pivotIndex].map(value => value / pivot)
+    for (let rowIndex = 0; rowIndex < size; rowIndex += 1) {
+      if (rowIndex === pivotIndex) continue
+      const factor = augmented[rowIndex][pivotIndex]
+      augmented[rowIndex] = augmented[rowIndex].map((value, colIndex) => value - factor * augmented[pivotIndex][colIndex])
+    }
+  }
+  return augmented.map(row => row.slice(size))
+}
+
+function regressionColumnRoles(payload: Record<string, unknown>, columns: string[]) {
+  const plan = (payload.confirmedPlan && typeof payload.confirmedPlan === 'object') ? payload.confirmedPlan as Record<string, unknown> : {}
+  const variables = Array.isArray(plan.variables) ? plan.variables : []
+  const roleColumn = (role: string) => variables
+    .find(variable => variable && typeof variable === 'object' && String((variable as Record<string, unknown>).role) === role)
+  const dependent = roleColumn('dependent')
+  const dependentColumn = dependent && typeof dependent === 'object' && typeof (dependent as Record<string, unknown>).column === 'string'
+    && columns.includes(String((dependent as Record<string, unknown>).column))
+    ? String((dependent as Record<string, unknown>).column)
+    : columns.find(column => /^(y|dv|因变量|结果)/i.test(column) || /意愿|满意|接受|购买|传播|评价|结果/.test(column))
+      ?? columns[columns.length - 1]
+  const xColumns = columns
+    .filter(column => column !== dependentColumn)
+    .filter(column => !/^(m|mediator|中介)/i.test(column))
+    .slice(0, 5)
+  return { dependentColumn, xColumns }
+}
+
+function nodeRegression(rows: Record<string, unknown>[], columns: string[], payload: Record<string, unknown>) {
+  if (columns.length < 2) return null
+  const { dependentColumn, xColumns } = regressionColumnRoles(payload, columns)
+  if (!dependentColumn || xColumns.length === 0) return null
+  const completeRows = rows
+    .map(row => ({
+      y: numericValue(row[dependentColumn]),
+      x: xColumns.map(column => numericValue(row[column])),
+    }))
+    .filter(row => row.y !== null && row.x.every(value => value !== null)) as Array<{ y: number; x: number[] }>
+  const n = completeRows.length
+  const k = xColumns.length
+  if (n <= k + 2) return null
+  const x = completeRows.map(row => [1, ...row.x])
+  const y = completeRows.map(row => row.y)
+  const xT = transpose(x)
+  const xtx = multiplyMatrices(xT, x)
+  const xtxInv = invertMatrix(xtx)
+  if (!xtxInv) return null
+  const xty = xT.map(row => dot(row, y))
+  const beta = xtxInv.map(row => dot(row, xty))
+  const predicted = x.map(row => dot(row, beta))
+  const yMean = mean(y)
+  const ssTotal = y.reduce((sum, value) => sum + (value - yMean) ** 2, 0)
+  const ssResidual = y.reduce((sum, value, index) => sum + (value - predicted[index]) ** 2, 0)
+  const r2 = ssTotal ? 1 - ssResidual / ssTotal : null
+  const adjR2 = r2 === null ? null : 1 - (1 - r2) * (n - 1) / Math.max(1, n - k - 1)
+  const mse = ssResidual / Math.max(1, n - k - 1)
+  const rowsOut = beta.map((coefficient, index) => {
+    const se = Math.sqrt(Math.max(0, mse * xtxInv[index][index]))
+    const t = se ? coefficient / se : null
+    return {
+      predictor: index === 0 ? '常数项' : xColumns[index - 1],
+      coefficient: round(coefficient),
+      se: round(se),
+      t: round(t),
+      p: null,
+    }
+  })
+  return {
+    dependent: dependentColumn,
+    predictors: xColumns,
+    n,
+    r2: round(r2),
+    adjR2: round(adjR2),
+    rows: rowsOut,
+  }
+}
+
+function seededRandom(seed: number) {
+  let state = seed >>> 0
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0
+    return state / 0x100000000
+  }
+}
+
+function percentile(values: number[], percent: number) {
+  if (!values.length) return null
+  const sorted = [...values].sort((left, right) => left - right)
+  const index = (sorted.length - 1) * percent
+  const lower = Math.floor(index)
+  const upper = Math.ceil(index)
+  if (lower === upper) return sorted[lower]
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower)
+}
+
+function olsCoefficients(predictors: number[][], outcome: number[]) {
+  const x = predictors.map(row => [1, ...row])
+  const xT = transpose(x)
+  const xtxInv = invertMatrix(multiplyMatrices(xT, x))
+  if (!xtxInv) return null
+  const xty = xT.map(row => dot(row, outcome))
+  return xtxInv.map(row => dot(row, xty))
+}
+
+function nodeMediation(rows: Record<string, unknown>[], columns: string[]) {
+  if (columns.length < 3) return null
+  const xCol = columns.find(column => /^(x|iv|自变量)/i.test(column)) ?? columns[0]
+  const mCol = columns.find(column => /^(m|mediator|中介)/i.test(column)) ?? columns.find(column => column !== xCol) ?? columns[1]
+  const yCol = columns.find(column => /^(y|dv|因变量|结果)/i.test(column) || /意愿|满意|接受|购买|传播|评价|结果/.test(column))
+    ?? columns.find(column => column !== xCol && column !== mCol)
+    ?? columns[2]
+  if (!xCol || !mCol || !yCol || new Set([xCol, mCol, yCol]).size < 3) return null
+  const data = rows
+    .map(row => [numericValue(row[xCol]), numericValue(row[mCol]), numericValue(row[yCol])])
+    .filter(row => row.every(value => value !== null)) as number[][]
+  if (data.length < 20) return null
+  const x = data.map(row => row[0])
+  const m = data.map(row => row[1])
+  const y = data.map(row => row[2])
+  const aCoef = olsCoefficients(x.map(value => [value]), m)
+  const yCoef = olsCoefficients(data.map(row => [row[0], row[1]]), y)
+  if (!aCoef || !yCoef || aCoef.length < 2 || yCoef.length < 3) return null
+  const a = aCoef[1]
+  const cPrime = yCoef[1]
+  const b = yCoef[2]
+  const indirect = a * b
+  const random = seededRandom(20260624)
+  const samples: number[] = []
+  for (let iteration = 0; iteration < 800; iteration += 1) {
+    const sample = Array.from({ length: data.length }, () => data[Math.floor(random() * data.length)])
+    const sx = sample.map(row => row[0])
+    const sm = sample.map(row => row[1])
+    const sy = sample.map(row => row[2])
+    const sa = olsCoefficients(sx.map(value => [value]), sm)
+    const sb = olsCoefficients(sample.map(row => [row[0], row[1]]), sy)
+    if (sa && sb && sa.length >= 2 && sb.length >= 3) samples.push(sa[1] * sb[2])
+  }
+  const low = percentile(samples, 0.025)
+  const high = percentile(samples, 0.975)
+  return {
+    model: 'PROCESS Model 4',
+    x: xCol,
+    m: mCol,
+    y: yCol,
+    n: data.length,
+    a: round(a),
+    b: round(b),
+    c_prime: round(cPrime),
+    indirect: round(indirect),
+    ci95: low === null || high === null ? null : [round(low), round(high)],
+  }
+}
+
 function dot(left: number[], right: number[]) {
   return left.reduce((sum, value, index) => sum + value * right[index], 0)
 }
@@ -495,7 +677,9 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
   const descriptive = methods.includes('descriptive') ? nodeDescribe(rows, selectedColumns) : []
   const correlations = methods.includes('correlation') ? nodeCorrelations(rows, selectedColumns.slice(0, 8)) : []
   const cronbachAlpha = methods.includes('cronbach_alpha') ? nodeCronbach(rows, selectedColumns) : null
+  const regression = methods.includes('regression_analysis') ? nodeRegression(rows, selectedColumns.slice(0, 8), payload) : null
   const anova = methods.includes('anova') ? nodeAnova(rows, selectedColumns.slice(0, 6), groupColumn) : []
+  const mediation = methods.includes('mediation_model_4') ? nodeMediation(rows, selectedColumns.slice(0, 8)) : null
   const efa = methods.includes('efa') ? nodeEfa(rows, selectedColumns.slice(0, 10)) : null
   const qualityReport = profile.qualityReport && typeof profile.qualityReport === 'object'
     ? profile.qualityReport as Record<string, unknown>
@@ -504,7 +688,9 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
     descriptive.length ? { id: 'table_descriptive', title: '描述性统计表', rows: descriptive, columns: ['variable', 'n', 'mean', 'sd', 'min', 'max'] } : null,
     cronbachAlpha ? { id: 'table_reliability', title: '信度分析表', rows: [{ alpha: cronbachAlpha.alpha, items: cronbachAlpha.items.length, n: cronbachAlpha.n, itemColumns: cronbachAlpha.items.join('、') }], columns: ['alpha', 'items', 'n', 'itemColumns'] } : null,
     correlations.length ? { id: 'table_correlation', title: '相关分析表', rows: correlations.slice(0, 24), columns: ['x', 'y', 'n', 'r', 'p'] } : null,
+    regression ? { id: 'table_regression', title: '回归分析表', rows: regression.rows, columns: ['predictor', 'coefficient', 'se', 't', 'p'] } : null,
     anova.length ? { id: 'table_anova', title: '单因素方差分析表', rows: anova, columns: ['group', 'variable', 'f', 'p'] } : null,
+    mediation ? { id: 'table_mediation', title: 'Bootstrap中介效应检验表', rows: [mediation], columns: ['x', 'm', 'y', 'a', 'b', 'c_prime', 'indirect', 'ci95'] } : null,
     efa ? { id: 'table_efa', title: '探索性因子载荷表', rows: arrayRecords(efa.loadings), columns: ['variable', ...Array.from({ length: Number(efa.factors) || 0 }, (_item, index) => `factor_${index + 1}`)] } : null,
     qualityReport ? {
       id: 'table_data_quality',
@@ -517,9 +703,10 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
         reliabilitySuitable: qualityReport.reliabilitySuitable ? '适合' : '需谨慎',
         efaSuitable: qualityReport.efaSuitable ? '适合' : '需谨慎',
         correlationSuitable: qualityReport.correlationSuitable ? '适合' : '需谨慎',
+        regressionSuitable: qualityReport.regressionSuitable ? '适合' : '需谨慎',
         anovaSuitable: qualityReport.anovaSuitable ? '适合' : '需谨慎',
       }],
-      columns: ['sampleSize', 'missingRate', 'duplicateRows', 'invalidSampleCandidates', 'reliabilitySuitable', 'efaSuitable', 'correlationSuitable', 'anovaSuitable'],
+      columns: ['sampleSize', 'missingRate', 'duplicateRows', 'invalidSampleCandidates', 'reliabilitySuitable', 'efaSuitable', 'correlationSuitable', 'regressionSuitable', 'anovaSuitable'],
     } : null,
   ].filter(Boolean)
   const strongest = correlations.length
@@ -534,8 +721,15 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
     cronbachAlpha ? `\n【信度分析】\nCronbach's alpha=${cronbachAlpha.alpha}，题项数=${cronbachAlpha.items.length}，有效样本=${cronbachAlpha.n}。` : '',
     correlations.length ? '\n【相关分析】' : '',
     ...correlations.slice(0, 12).map(row => `${displayVariableName(row.x, '变量X')}与${displayVariableName(row.y, '变量Y')}: r=${row.r}${pValueText(row.p)}`),
+    regression ? '\n【回归分析】' : '',
+    ...(regression ? [
+      `因变量：${regression.dependent}；自变量：${regression.predictors.join('、')}；R²=${regression.r2}，调整R²=${regression.adjR2}。`,
+      ...regression.rows.map(row => `${displayVariableName(row.predictor, '预测变量')}: B=${row.coefficient}${row.t ? `，t=${row.t}` : ''}${pValueText(row.p)}`),
+    ] : []),
     anova.length ? '\n【方差分析】' : '',
     ...anova.map(row => `${displayVariableName(row.group, '分组变量')}分组下${displayVariableName(row.variable, '目标变量')}: F=${row.f}${pValueText(row.p)}`),
+    mediation ? '\n【中介效应】' : '',
+    ...(mediation ? [`${mediation.x}通过${mediation.m}影响${mediation.y}的间接效应为 ${mediation.indirect}，95% CI=${Array.isArray(mediation.ci95) ? mediation.ci95.join('~') : '未计算'}。`] : []),
     efa ? '\n【探索性因子分析】' : '',
     ...(efa ? arrayRecords(efa.loadings).slice(0, 12).map(row => `${row.variable}: ${Object.keys(row).filter(key => key.startsWith('factor_')).map(key => `${key}=${row[key]}`).join('，')}`) : []),
   ].filter(Boolean)
@@ -549,14 +743,19 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
     descriptive,
     cronbachAlpha,
     correlations,
+    regression,
     anova,
     qualityReport,
-    mediation: null,
+    mediation,
     efa,
     tables,
-    figures: await buildGenericQuantFigures(descriptive, correlations, anova, efa, cronbachAlpha),
-    methodText: '本研究采用描述性统计、Cronbach α 信度检验、Pearson 相关分析、单因素方差分析及探索性因子分析等定量研究方法，对问卷数据进行计算与检验。该方法路径用于呈现样本特征、测量可靠性、变量关系、组间差异和潜在因子结构，并为后续结果解释与研究讨论提供统计依据。',
-    analysisText: strongest
+    figures: await buildGenericQuantFigures(descriptive, correlations, anova, efa, cronbachAlpha, regression),
+    methodText: '本研究采用描述性统计、Cronbach α 信度检验、Pearson 相关分析、回归分析、单因素方差分析及探索性因子分析等定量研究方法，对问卷数据进行计算与检验。该方法路径用于呈现样本特征、测量可靠性、变量关系、影响路径、组间差异和潜在因子结构，并为后续结果解释与研究讨论提供统计依据。',
+    analysisText: mediation
+      ? `Bootstrap 中介模型显示，${mediation.x} 通过 ${mediation.m} 影响 ${mediation.y} 的间接效应为 ${mediation.indirect}，95% CI=${Array.isArray(mediation.ci95) ? mediation.ci95.join('~') : '未计算'}。若置信区间不包含0，可作为中介效应存在的证据。`
+      : regression
+      ? `回归分析以 ${regression.dependent} 为因变量，纳入 ${regression.predictors.join('、')} 作为预测变量，模型 R²=${regression.r2}，调整R²=${regression.adjR2}。论文写作时应结合系数方向、显著性和研究假设进行解释。`
+      : strongest
       ? `相关分析显示，${strongest.x} 与 ${strongest.y} 的相关系数为 r=${strongest.r}。论文写作时应结合研究假设、变量含义和显著性检验进一步解释。`
       : '本次分析已完成基础统计计算。论文写作时应围绕表格中的均值、标准差、相关系数或组间差异进行谨慎解释。',
     cautions: [
@@ -1244,6 +1443,34 @@ async function makeReliabilityFigure(cronbachAlpha: Record<string, unknown> | nu
 <text x="${left}" y="${top + 102}" class="small">注：题项数 ${items || 'N/A'}，有效样本 ${n || 'N/A'}；虚线表示常用 0.70 参考阈值。</text>`))
 }
 
+async function makeRegressionFigure(regression: Record<string, unknown> | null | undefined) {
+  const rows = arrayRecords(regression?.rows).filter(row => String(row.predictor ?? '') !== '常数项').slice(0, 8)
+  if (!rows.length) return ''
+  const width = 980
+  const height = 150 + rows.length * 46
+  const left = 270
+  const center = 540
+  const top = 118
+  const maxAbs = Math.max(...rows.map(row => Math.abs(Number(row.coefficient) || 0)), 0.01)
+  const scale = 250 / maxAbs
+  const bars = rows.map((row, index) => {
+    const y = top + index * 46
+    const coefficient = Number(row.coefficient) || 0
+    const barWidth = Math.max(4, Math.round(Math.abs(coefficient) * scale))
+    const x = coefficient >= 0 ? center : center - barWidth
+    const color = coefficient >= 0 ? CHART_THEME.primary : CHART_THEME.warm
+    return `<text x="42" y="${y + 17}" font-size="14" font-weight="700">${escapeXml(shortLabel(row.predictor, 18))}</text>
+<rect x="${left}" y="${y}" width="520" height="22" fill="${CHART_THEME.track}"/>
+<line x1="${center}" y1="${y - 6}" x2="${center}" y2="${y + 30}" stroke="${CHART_THEME.inkSoft}" stroke-dasharray="4 4"/>
+<rect x="${x}" y="${y}" width="${barWidth}" height="22" fill="${color}"/>
+<text x="820" y="${y + 16}" font-size="13">B=${escapeXml(row.coefficient ?? '-')} ${row.p ? `p=${escapeXml(row.p)}` : 'p未报'}</text>`
+  }).join('')
+  return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">回归系数分布图</text>
+<text x="34" y="76" class="sub">模型因变量：${escapeXml(regression?.dependent ?? '结果变量')}；R²=${escapeXml(regression?.r2 ?? '-')}，调整R²=${escapeXml(regression?.adjR2 ?? '-')}。</text>
+${bars}
+<text x="42" y="${height - 22}" class="small">注：柱形向右表示正向影响，向左表示负向影响；正式解释需结合显著性水平和研究假设。</text>`))
+}
+
 async function makeEfaLoadingFigure(efa: Record<string, unknown> | null | undefined) {
   const loadings = arrayRecords(efa?.loadings).slice(0, 10)
   if (!loadings.length) return ''
@@ -1347,12 +1574,14 @@ async function buildGenericQuantFigures(
   correlations: Record<string, unknown>[],
   anova: Record<string, unknown>[],
   efa?: Record<string, unknown> | null,
-  cronbachAlpha?: Record<string, unknown> | null
+  cronbachAlpha?: Record<string, unknown> | null,
+  regression?: Record<string, unknown> | null
 ) {
   const figures = await Promise.all([
     descriptive.length ? makeDescriptiveMeanFigure(descriptive).then(dataUrl => ({ id: 'figure_descriptive_means', title: '描述统计均值图', caption: '主要数值变量的均值与标准差分布。', dataUrl })) : null,
     cronbachAlpha ? makeReliabilityFigure(cronbachAlpha).then(dataUrl => ({ id: 'figure_reliability_alpha', title: '信度分析 Alpha 系数图', caption: "Cronbach's alpha 系数用于判断量表题项内部一致性。", dataUrl })) : null,
     correlations.length ? makeCorrelationHeatmapFigure(correlations).then(dataUrl => ({ id: 'figure_correlation_heatmap', title: '相关系数热力图', caption: '主要变量之间的 Pearson 相关系数矩阵。', dataUrl })) : null,
+    regression ? makeRegressionFigure(regression).then(dataUrl => ({ id: 'figure_regression_coefficients', title: '回归系数图', caption: '回归模型中各预测变量的系数方向与大小。', dataUrl })) : null,
     anova.length ? makeAnovaFigure(anova).then(dataUrl => ({ id: 'figure_anova_f', title: '组间差异检验图', caption: '不同变量在分组比较中的 F 统计量。', dataUrl })) : null,
     efa ? makeEfaLoadingFigure(efa).then(dataUrl => ({ id: 'figure_efa_loadings', title: '探索性因子载荷图', caption: '各题项在主要因子上的载荷强度分布。', dataUrl })) : null,
   ])
@@ -1366,7 +1595,8 @@ async function enrichQuantResultFigures<T extends Record<string, unknown>>(resul
     arrayRecords(result.correlations),
     arrayRecords(result.anova),
     result.efa && typeof result.efa === 'object' ? result.efa as Record<string, unknown> : null,
-    result.cronbachAlpha && typeof result.cronbachAlpha === 'object' ? result.cronbachAlpha as Record<string, unknown> : null
+    result.cronbachAlpha && typeof result.cronbachAlpha === 'object' ? result.cronbachAlpha as Record<string, unknown> : null,
+    result.regression && typeof result.regression === 'object' ? result.regression as Record<string, unknown> : null
   )
   const generatedTypes = new Set(generated.map(figure => figure.id.replace(/^figure_/, '').split('_')[0]))
   const figures = [
@@ -1447,9 +1677,10 @@ async function enrichQuantResult<T extends Record<string, unknown>>(result: T, p
             reliabilitySuitable: qualityReport.reliabilitySuitable ? '适合' : '需谨慎',
             efaSuitable: qualityReport.efaSuitable ? '适合' : '需谨慎',
             correlationSuitable: qualityReport.correlationSuitable ? '适合' : '需谨慎',
+            regressionSuitable: qualityReport.regressionSuitable ? '适合' : '需谨慎',
             anovaSuitable: qualityReport.anovaSuitable ? '适合' : '需谨慎',
           }],
-          columns: ['sampleSize', 'missingRate', 'duplicateRows', 'invalidSampleCandidates', 'reliabilitySuitable', 'efaSuitable', 'correlationSuitable', 'anovaSuitable'],
+          columns: ['sampleSize', 'missingRate', 'duplicateRows', 'invalidSampleCandidates', 'reliabilitySuitable', 'efaSuitable', 'correlationSuitable', 'regressionSuitable', 'anovaSuitable'],
         },
         ...tables,
       ],
@@ -1662,12 +1893,17 @@ function inferMethods(userRequest = '', columns: string[] = [], numericColumns: 
   methods.add('descriptive')
   if (textIncludesAny(userRequest, ['信度', 'cronbach', 'alpha', '量表'])) methods.add('cronbach_alpha')
   if (textIncludesAny(userRequest, ['相关', 'correlation', '关系', '影响'])) methods.add('correlation')
+  if (textIncludesAny(userRequest, ['回归', 'regression', '预测', '影响因素', '作用路径'])) methods.add('regression_analysis')
   if (textIncludesAny(userRequest, ['方差', 'anova', '组间', '差异']) || categoricalColumns.length > 0) methods.add('anova')
   if (textIncludesAny(userRequest, ['中介', 'mediator', 'mediation', 'model 4'])) methods.add('mediation_model_4')
   if (textIncludesAny(userRequest, ['因子', 'efa', '效度', '降维'])) methods.add('efa')
   if (textIncludesAny(userRequest, ['sem', '结构方程', 'hlm', '多重中介', '调节中介', 'spss'])) return ['out_of_scope']
   if (methods.size === 1 && numericColumns.length >= 2) methods.add('correlation')
-  if (numericColumns.length >= 3 && columns.some(col => /^[xmyv]\d*/i.test(col))) methods.add('cronbach_alpha')
+  if (numericColumns.length >= 3 && textIncludesAny(userRequest, ['影响', '意愿', '满意', '购买', '传播', '接受'])) methods.add('regression_analysis')
+  if (numericColumns.length >= 3 && columns.some(col => /^[xmyv]\d*/i.test(col))) {
+    methods.add('cronbach_alpha')
+    methods.add('regression_analysis')
+  }
   return Array.from(methods)
 }
 
@@ -1743,6 +1979,8 @@ function planFromInference(intent: Record<string, unknown>, profile: Record<stri
     variables,
     formula: primary === 'mediation_model_4'
       ? 'M = i1 + aX + e1；Y = i2 + c′X + bM + e2；indirect = a × b，Bootstrap 95% CI。'
+      : primary === 'regression_analysis'
+        ? 'Y = β0 + β1X1 + β2X2 + ... + ε；报告回归系数、R²、调整R²和显著性。'
       : primary === 'correlation'
         ? 'Pearson r = cov(X,Y) / (sd(X) × sd(Y))。'
         : primary === 'anova'
@@ -2900,7 +3138,7 @@ router.post('/analysis-plan', async (req, res) => {
       content: `你是严谨的数据分析方法顾问。只返回 JSON，不要 Markdown。字段：
 {
   "purpose": "本次分析目的",
-  "method": "descriptive | cronbach_alpha | correlation | anova | mediation_model_4 | efa | out_of_scope",
+  "method": "descriptive | cronbach_alpha | correlation | regression_analysis | anova | mediation_model_4 | efa | out_of_scope",
   "methods": ["可执行方法列表"],
   "reason": "为什么选择这些方法",
   "variables": [{"role":"independent|dependent|mediator|moderator|control|group|item|unknown","name":"变量名","column":"数据列","confidence":0.0,"note":"说明"}],

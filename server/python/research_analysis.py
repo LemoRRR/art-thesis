@@ -2,6 +2,7 @@
 import base64
 import io
 import json
+import re
 import sys
 from typing import Any
 
@@ -100,14 +101,18 @@ def plan_methods(payload: dict[str, Any], numeric: list[str], categorical: list[
             methods.append("correlation")
         if len(numeric) >= 3:
             methods.append("cronbach_alpha")
+            methods.append("regression_analysis")
         if categorical:
             methods.append("anova")
-    allowed = ["descriptive", "cronbach_alpha", "correlation", "anova", "mediation_model_4", "efa"]
+    allowed = ["descriptive", "cronbach_alpha", "correlation", "regression_analysis", "anova", "mediation_model_4", "efa"]
     unique = []
     for method in methods:
         normalized = {
             "cronbach": "cronbach_alpha",
             "alpha": "cronbach_alpha",
+            "regression": "regression_analysis",
+            "linear_regression": "regression_analysis",
+            "ols": "regression_analysis",
             "mediation": "mediation_model_4",
             "process_model_4": "mediation_model_4",
         }.get(method, method)
@@ -219,6 +224,60 @@ def ols_coef(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     x_design = np.column_stack([np.ones(len(x)), x])
     coef, *_ = np.linalg.lstsq(x_design, y, rcond=None)
     return coef
+
+
+def regression_columns(cols: list[str]) -> tuple[str | None, list[str]]:
+    if len(cols) < 2:
+        return None, []
+    dependent = next((col for col in cols if re.search(r"^(y|dv|因变量|结果)|意愿|满意|接受|购买|传播|评价|结果", col, re.I)), cols[-1])
+    predictors = [col for col in cols if col != dependent and not re.search(r"^(m|mediator|中介)", col, re.I)][:5]
+    return dependent, predictors
+
+
+def linear_regression(df: pd.DataFrame, cols: list[str]) -> dict[str, Any] | None:
+    y_col, x_cols = regression_columns(cols)
+    if not y_col or not x_cols:
+        return None
+    data = df[[y_col] + x_cols].apply(pd.to_numeric, errors="coerce").dropna()
+    if data.shape[0] <= len(x_cols) + 2:
+        return None
+    y = data[y_col].to_numpy()
+    x = data[x_cols].to_numpy()
+    x_design = np.column_stack([np.ones(len(x)), x])
+    coef, *_ = np.linalg.lstsq(x_design, y, rcond=None)
+    predicted = x_design @ coef
+    residual = y - predicted
+    ss_res = float(np.sum(residual ** 2))
+    ss_total = float(np.sum((y - np.mean(y)) ** 2))
+    r2 = 1 - ss_res / ss_total if ss_total else None
+    adj_r2 = 1 - (1 - r2) * (len(y) - 1) / max(1, len(y) - len(x_cols) - 1) if r2 is not None else None
+    mse = ss_res / max(1, len(y) - len(x_cols) - 1)
+    try:
+        cov = mse * np.linalg.inv(x_design.T @ x_design)
+        se = np.sqrt(np.maximum(np.diag(cov), 0))
+    except Exception:
+        se = np.full(len(coef), np.nan)
+    rows = []
+    for index, value in enumerate(coef):
+        t_value = value / se[index] if np.isfinite(se[index]) and se[index] else None
+        p_value = None
+        if scipy_stats is not None and t_value is not None:
+            p_value = 2 * (1 - scipy_stats.t.cdf(abs(float(t_value)), df=max(1, len(y) - len(x_cols) - 1)))
+        rows.append({
+            "predictor": "常数项" if index == 0 else x_cols[index - 1],
+            "coefficient": round(float(value), 4),
+            "se": round(float(se[index]), 4) if np.isfinite(se[index]) else None,
+            "t": round(float(t_value), 4) if t_value is not None else None,
+            "p": round(float(p_value), 6) if p_value is not None else None,
+        })
+    return {
+        "dependent": y_col,
+        "predictors": x_cols,
+        "n": int(data.shape[0]),
+        "r2": round(float(r2), 4) if r2 is not None else None,
+        "adjR2": round(float(adj_r2), 4) if adj_r2 is not None else None,
+        "rows": rows,
+    }
 
 
 def bootstrap_mediation(df: pd.DataFrame, cols: list[str], bootstrap: int = 1000) -> dict[str, Any] | None:
@@ -389,6 +448,7 @@ def main():
     desc = describe(df, item_cols if item_cols else cols) if "descriptive" in methods else []
     corr = correlations(df, item_cols[:8]) if "correlation" in methods else []
     alpha = cronbach_alpha(df, item_cols) if "cronbach_alpha" in methods else None
+    regression = linear_regression(df, item_cols[:8]) if "regression_analysis" in methods else None
     anova_rows = anova(df, item_cols[:6], str(group_column) if group_column else None) if "anova" in methods else []
     mediation = bootstrap_mediation(df, item_cols) if "mediation_model_4" in methods else None
     efa_result = efa(df, item_cols) if "efa" in methods else None
@@ -404,6 +464,13 @@ def main():
         lines += ["", "【信度分析】", f"Cronbach's α={alpha['alpha']}，题项数={len(alpha['items'])}，有效样本={alpha['n']}。"]
     if corr:
         lines += ["", "【相关分析】", table_text(corr[:24], ["x", "y", "n", "r", "p"])]
+    if regression:
+        lines += [
+            "",
+            "【回归分析】",
+            f"因变量：{regression['dependent']}；自变量：{'、'.join(regression['predictors'])}；R²={regression['r2']}，调整R²={regression['adjR2']}。",
+            table_text(regression["rows"], ["predictor", "coefficient", "se", "t", "p"]),
+        ]
     if anova_rows:
         lines += ["", "【单因素方差分析】", table_text(anova_rows, ["group", "variable", "f", "p"])]
     if mediation:
@@ -424,16 +491,22 @@ def main():
         tables.append({"id": "table_descriptive", "title": "描述性统计", "rows": desc, "columns": ["variable", "n", "mean", "sd", "min", "max"]})
     if corr:
         tables.append({"id": "table_correlation", "title": "相关分析", "rows": corr[:24], "columns": ["x", "y", "n", "r", "p"]})
+    if regression:
+        tables.append({"id": "table_regression", "title": "回归分析", "rows": regression["rows"], "columns": ["predictor", "coefficient", "se", "t", "p"]})
     if anova_rows:
         tables.append({"id": "table_anova", "title": "单因素方差分析", "rows": anova_rows, "columns": ["group", "variable", "f", "p"]})
+    if mediation:
+        tables.append({"id": "table_mediation", "title": "Bootstrap中介效应检验", "rows": [mediation], "columns": ["x", "m", "y", "a", "b", "c_prime", "indirect", "ci95"]})
     if efa_result:
         tables.append({"id": "table_efa", "title": "探索性因子分析", "rows": efa_result["loadings"], "columns": ["variable"] + [f"factor_{i + 1}" for i in range(efa_result["factors"])]})
 
-    method_text = "本次分析根据问卷数据的变量结构开展描述统计、信度检验、相关分析、差异检验和探索性因子分析，并结合图表结果对研究问题进行解释。"
+    method_text = "本次分析根据问卷数据的变量结构开展描述统计、信度检验、相关分析、回归分析、差异检验、中介效应检验和探索性因子分析，并结合图表结果对研究问题进行解释。"
     analysis_text = "Python 已完成真实计算。写作时应基于统计表中的系数、p 值和置信区间解释结果，不应加入表中不存在的结论。"
     if corr:
         strongest = max(corr, key=lambda row: abs(float(row.get("r") or 0)))
         analysis_text = f"相关分析中，{strongest['x']} 与 {strongest['y']} 的相关系数 r={strongest['r']}，p={strongest.get('p')}。论文表述需结合研究假设判断其方向和显著性。"
+    if regression:
+        analysis_text = f"回归分析以 {regression['dependent']} 为因变量，纳入 {'、'.join(regression['predictors'])} 作为预测变量，模型 R²={regression['r2']}，调整R²={regression['adjR2']}。论文写作时应结合系数方向、显著性和研究假设解释影响路径。"
     if mediation:
         analysis_text = f"Bootstrap 中介模型显示间接效应为 {mediation['indirect']}，95% CI={mediation['ci95']}。若置信区间不包含 0，可作为中介效应存在的证据。"
 
@@ -446,6 +519,7 @@ def main():
         "descriptive": desc,
         "cronbachAlpha": alpha,
         "correlations": corr,
+        "regression": regression,
         "anova": anova_rows,
         "mediation": mediation,
         "efa": efa_result,
