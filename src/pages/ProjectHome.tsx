@@ -24,7 +24,6 @@ export default function ProjectHome() {
   const [editing, setEditing] = useState(false)
   const libraryItems = libraryStore.getAll()
   const sections = sectionStore.getByProject(project.id)
-  const hasDraftContent = sections.some(section => section.content.replace(/\s/g, '').length > 80)
 
   const updateProject = (patch: Partial<Project>) => {
     projectStore.update(project.id, patch)
@@ -143,11 +142,11 @@ export default function ProjectHome() {
               ))}
               <button
                 data-testid="project-research-entry"
-                onClick={() => navigate(`/projects/${project.id}/${hasDraftContent ? 'research' : 'stage3'}`)}
+                onClick={() => navigate(`/projects/${project.id}/research`)}
                 style={{
-                  border: `1.5px solid ${hasDraftContent ? 'var(--color-border)' : '#FFD8A8'}`,
+                  border: '1.5px solid var(--color-border)',
                   borderRadius: 'var(--radius-lg)',
-                  background: hasDraftContent ? 'var(--color-surface)' : '#FFF8EC',
+                  background: 'var(--color-surface)',
                   padding: 16,
                   textAlign: 'left',
                   cursor: 'pointer',
@@ -160,17 +159,15 @@ export default function ProjectHome() {
               >
                 <span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 14, fontWeight: 650, color: 'var(--color-ink)', marginBottom: 8 }}>
-                    <FlaskConical size={15} color={hasDraftContent ? 'var(--color-accent)' : '#B35C00'} />
+                    <FlaskConical size={15} color="var(--color-accent)" />
                     4 研究计算
                   </span>
                   <span style={{ display: 'block', fontSize: 12, lineHeight: 1.65, color: 'var(--color-ink-3)' }}>
-                    {hasDraftContent
-                      ? '全文初稿完成后，继续处理量表、问卷、数据分析、图表和结果写入'
-                      : '请先进入文章生成，生成或确认全文初稿后再做研究计算'}
+                    生成研究工具、上传数据、运行分析，并在有正文后把结果写入论文对应章节
                   </span>
                 </span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--color-accent)' }}>
-                  {hasDraftContent ? '进入模块' : '先去文章生成'}
+                  进入模块
                   <ArrowRight size={12} />
                 </span>
               </button>

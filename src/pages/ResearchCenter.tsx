@@ -1427,6 +1427,7 @@ export default function ResearchCenter() {
     () => sectionStore.getByProject(project.id).some(section => section.content.replace(/\s/g, '').length > 80),
     [project.id],
   )
+  const shouldBlockResearchForMissingDraft = false
   const sourceOptions = useMemo(() => getSourceOptions(project.id), [project.id])
   const defaultSourceKind = sourceOptions.find(option => option.kind === 'full_text' && option.available)?.kind
     ?? sourceOptions.find(option => option.kind === 'outline' && option.available)?.kind
@@ -2073,7 +2074,7 @@ export default function ResearchCenter() {
     }
   }
 
-  if (!hasDraftContent && !isAssetPage) {
+  if (shouldBlockResearchForMissingDraft && !hasDraftContent && !isAssetPage) {
     return (
       <div style={{ height: '100vh', display: 'flex', background: 'var(--color-bg)', overflow: 'hidden' }}>
         <Sidebar />
