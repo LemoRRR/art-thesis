@@ -264,8 +264,8 @@ export default function ResearchHub() {
               </p>
             </section>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 14, alignItems: 'start' }}>
-              <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={contentGridStyle}>
+              <section style={folderColumnStyle}>
                 {filteredFolders.length === 0 ? (
                   <div style={emptyStyle}>没有符合当前筛选条件的论文资产。</div>
                 ) : (
@@ -547,19 +547,38 @@ const folderGridStyle: React.CSSProperties = {
   gap: 12,
 }
 
+const contentGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) 320px',
+  gap: 14,
+  alignItems: 'start',
+}
+
+const folderColumnStyle: React.CSSProperties = {
+  minWidth: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 12,
+  paddingBottom: 8,
+}
+
 const folderCardStyle: React.CSSProperties = {
   background: 'var(--color-surface)',
   border: '1px solid var(--color-border)',
   borderRadius: 8,
   boxShadow: 'var(--shadow-sm)',
   overflow: 'hidden',
+  minHeight: 248,
+  display: 'flex',
+  flexDirection: 'column',
 }
 
 const folderMainButtonStyle: React.CSSProperties = {
   width: '100%',
+  flex: 1,
   border: 'none',
   background: 'transparent',
-  padding: 14,
+  padding: 16,
   textAlign: 'left',
   fontFamily: 'var(--font-sans)',
   cursor: 'pointer',
@@ -643,7 +662,8 @@ const sidePanelStyle: React.CSSProperties = {
   borderRadius: 8,
   padding: 14,
   position: 'sticky',
-  top: 18,
+  top: 14,
+  alignSelf: 'start',
 }
 
 const recentAssetStyle: React.CSSProperties = {
@@ -683,11 +703,16 @@ const paginationStyle: React.CSSProperties = {
   background: 'var(--color-surface)',
   border: '1px solid var(--color-border)',
   borderRadius: 8,
-  padding: 10,
+  padding: '12px 14px',
+  minHeight: 54,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: 10,
+  position: 'sticky',
+  bottom: 12,
+  zIndex: 5,
+  boxShadow: 'var(--shadow-sm)',
 }
 
 const pageButtonStyle: React.CSSProperties = {
