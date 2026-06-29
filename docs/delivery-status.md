@@ -5,8 +5,8 @@
 ## 当前线上版本
 
 - 正式站点：https://paper-ai-tool.vercel.app
-- 当前线上代码提交：`9e6e838 Prepare production auth and monitoring polish`
-- 当前部署：`paper-ai-tool-i0ynhng1f-lemorrrs-projects.vercel.app`
+- 当前线上代码提交：`85a1341 Fix cloud restore duplicate project sync`
+- 当前部署：`paper-ai-tool-jycum7zga-lemorrrs-projects.vercel.app`
 - 正式域名 alias：已指向最新部署。
 
 ## 已验证
@@ -20,6 +20,7 @@
 - `npm run smoke:prod-research-ahp` 通过：生产环境使用正式临时账号完成 AHP 分析，生成 2 张表、2 张图、15 个研究组件，并导出可检查的 Word。
 - `npm run smoke:prod-research-kano` 通过：生产环境使用真实 KANO/熵权 Excel 样本生成 3 张表、4 张图、24 个研究组件，并导出可检查的 Word。
 - `npm run smoke:prod-stage3-generation-e2e` 通过：正式站 Stage3 点击生成全文后显示进度并完成生成，持久化 3 个章节、3511 字。
+- `npm run smoke:prod-cloud-restore` 通过：正式站新浏览器登录后可恢复项目、大纲、正文和研究包，且不再出现本地占位项目重复上传导致的 duplicate key。
 - `npm run smoke:prod-stage3-research-e2e` 通过：正式站从 Stage3 打开研究计算、上传 Excel、生成分析、写入论文并导出 Word；导出文件含 5 个表题、4 个图题、4 张有效 PNG。
 - `npm run smoke:citation-docx` 通过：正文脚注引用、footnotes relationship/content type 正常。
 - `npm run smoke:footnote-persistence` 通过：脚注可恢复并可导出到 docx。
@@ -50,6 +51,7 @@
 
 ### P0 稳定性
 
+- 修复新浏览器打开远端项目时 `projectStore.ensure` 创建本地占位项目并重复上传到云端的问题，避免 `/api/projects` duplicate key 同步失败。
 - 前后端 Sentry 错误观测已接入，未配置 `SENTRY_DSN` / `VITE_SENTRY_DSN` 时保持 inert，不影响本地和未配置环境。
 
 - Stage3 全文生成写入长任务状态：准备、检索文献、生成计划、逐章生成、保存云端、完成、失败。
@@ -76,7 +78,7 @@
 ### 必须人工或真实账号验证
 
 - 固定客户演示账号与演示项目。
-- 换浏览器登录后，项目、大纲、正文、研究资产是否完整恢复。
+- 换浏览器登录后的云端恢复已通过自动化验证；仍建议用固定客户演示账号人工复查一次。
 - 用客户真实题目人工验收全文质量、引用贴合度和研究结论表述。
 - 用客户真实 Excel 再跑一遍研究计算，确认字段识别、图表样式和 Word 格式；系统已通过内置真实 KANO/熵权样本，但客户文件仍需人工验收。
 
