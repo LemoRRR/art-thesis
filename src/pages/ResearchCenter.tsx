@@ -109,6 +109,26 @@ interface MethodDraft {
   pendingTasks: string
 }
 
+interface DatasetMeta {
+  fileName?: string
+  fileType?: string
+  rowCount?: number
+  columnCount?: number
+  uploadedAt?: number
+  preview?: string
+  sheetNames?: string[]
+  base64?: string
+}
+
+interface StructuredAnalysisPreview {
+  sampleSize?: number
+  figures?: Array<{ id?: string; title?: string; dataUrl?: string; caption?: string }>
+  tables?: Array<{ id?: string; title?: string; rows?: unknown[]; columns?: string[] }>
+  methodText?: string
+  analysisText?: string
+  plainText?: string
+}
+
 interface SyncedResearchAsset {
   label: string
   value: string
@@ -1146,6 +1166,115 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary)
 }
 
+function detectDelimitedMeta(text: string): Pick<DatasetMeta, 'rowCount' | 'columnCount' | 'preview'> {
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  if (lines.length === 0) return { rowCount: 0, columnCount: 0, preview: '' }
+  const header = lines[0] ?? ''
+  const delimiter = ['\t', ',', ';'].sort((a, b) => header.split(b).length - header.split(a).length)[0]
+  const columnCount = delimiter ? header.split(delimiter).filter(Boolean).length : 1
+  return {
+    rowCount: Math.max(lines.length - 1, 0),
+    columnCount,
+    preview: lines.slice(0, 24).join('\n'),
+  }
+}
+
+async function readDatasetFile(file: File): Promise<{ text: string; meta: DatasetMeta }> {
+  const uploadedAt = Date.now()
+  const isExcel = /\.(xlsx|xls)$/i.test(file.name)
+  if (!isExcel) {
+    const text = await file.text()
+    const fileType = /\.csv$/i.test(file.name) ? 'CSV' : 'TXT'
+    return {
+      text,
+      meta: {
+        fileName: file.name,
+        fileType,
+        uploadedAt,
+        ...detectDelimitedMeta(text),
+      },
+    }
+  }
+
+  const buffer = await file.arrayBuffer()
+  const base64 = arrayBufferToBase64(buffer)
+  try {
+    const XLSX = await import('xlsx')
+    const workbook = XLSX.read(buffer, { type: 'array' })
+    const firstSheetName = workbook.SheetNames[0]
+    const sheet = firstSheetName ? workbook.Sheets[firstSheetName] : undefined
+    if (!sheet) {
+      return {
+        text: '',
+        meta: {
+          fileName: file.name,
+          fileType: 'Excel',
+          uploadedAt,
+          rowCount: 0,
+          columnCount: 0,
+          sheetNames: workbook.SheetNames,
+          base64,
+        },
+      }
+    }
+    const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' })
+    const nonEmptyRows = matrix.filter(row => row.some(cell => String(cell ?? '').trim()))
+    const columnCount = nonEmptyRows.reduce((max, row) => Math.max(max, row.length), 0)
+    const csvPreview = XLSX.utils.sheet_to_csv(sheet).split(/\r?\n/).slice(0, 24).join('\n')
+    return {
+      text: csvPreview,
+      meta: {
+        fileName: file.name,
+        fileType: 'Excel',
+        uploadedAt,
+        rowCount: Math.max(nonEmptyRows.length - 1, 0),
+        columnCount,
+        preview: csvPreview,
+        sheetNames: workbook.SheetNames,
+        base64,
+      },
+    }
+  } catch (error) {
+    console.warn('[ResearchCenter] Excel preview parse failed', error)
+    return {
+      text: '',
+      meta: {
+        fileName: file.name,
+        fileType: 'Excel',
+        uploadedAt,
+        base64,
+      },
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function datasetMetaFromAsset(asset: ResearchAsset | null): DatasetMeta {
+  if (!asset || !isRecord(asset.structuredData)) return {}
+  return asset.structuredData as DatasetMeta
+}
+
+function analysisPreviewFromAsset(asset: ResearchAsset | null): StructuredAnalysisPreview | null {
+  if (!asset || !isRecord(asset.structuredData)) return null
+  const result = isRecord(asset.structuredData.result) ? asset.structuredData.result : asset.structuredData
+  return {
+    sampleSize: typeof result.sampleSize === 'number' ? result.sampleSize : undefined,
+    figures: Array.isArray(result.figures) ? result.figures as StructuredAnalysisPreview['figures'] : undefined,
+    tables: Array.isArray(result.tables) ? result.tables as StructuredAnalysisPreview['tables'] : undefined,
+    methodText: typeof result.methodText === 'string' ? result.methodText : undefined,
+    analysisText: typeof result.analysisText === 'string' ? result.analysisText : undefined,
+    plainText: asset.plainText,
+  }
+}
+
+function formatUploadTime(value?: number): string {
+  if (!value) return '未知'
+  return new Date(value).toLocaleString('zh-CN', { hour12: false })
+}
+
 function reviewQuestionnaire(fileName: string, text: string, source: SourceContext): string {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
   const questionLines = lines.filter(line => /^(Q?\d+[.、\s]|第.+题|如果|我认为|我愿意)/.test(line))
@@ -1471,6 +1600,7 @@ export default function ResearchCenter() {
   const [analysisPhase, setAnalysisPhase] = useState<AnalysisPhase>('idle')
   const [analysisError, setAnalysisError] = useState('')
   const [resultView, setResultView] = useState<ResultView>('questionnaire')
+  const [showDatasetPreview, setShowDatasetPreview] = useState(true)
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -1516,6 +1646,13 @@ export default function ResearchCenter() {
   const activePurpose = purposeOptions.find(option => option.value === purpose) ?? purposeOptions[0]
   const latestDataset = assets.find(asset => asset.type === 'quant_dataset')
   const latestAnalysis = assets.find(asset => asset.type === 'quant_analysis_result' || asset.type === 'qualitative_coding')
+  const activeDatasetAnalysis = activeAsset?.type === 'quant_dataset'
+    ? assets.find(asset => (
+      (asset.type === 'quant_analysis_result' || asset.type === 'qualitative_coding')
+      && isRecord(asset.structuredData)
+      && asset.structuredData.datasetAssetId === activeAsset.id
+    )) ?? null
+    : null
   const isAnalyzing = analysisPhase === 'planning' || analysisPhase === 'running' || analysisPhase === 'interpreting'
   const outlineSource = sourceOptions.find(option => option.kind === 'outline')
   const fullTextSource = sourceOptions.find(option => option.kind === 'full_text')
@@ -1693,9 +1830,7 @@ export default function ResearchCenter() {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    const isExcel = /\.(xlsx|xls)$/i.test(file.name)
-    const text = isExcel ? '' : await file.text()
-    const base64 = isExcel ? arrayBufferToBase64(await file.arrayBuffer()) : undefined
+    const { text, meta } = await readDatasetFile(file)
     const task = tasks[0] ?? researchTaskStore.add({
       projectId: project.id,
       title: '数据分析任务',
@@ -1708,9 +1843,11 @@ export default function ResearchCenter() {
       taskId: task.id,
       type: 'quant_dataset',
       title: file.name,
-      summary: isExcel ? '已上传 Excel 数据文件' : `已上传数据文件，${text.split(/\r?\n/).filter(Boolean).length} 行`,
+      summary: meta.rowCount !== undefined && meta.columnCount !== undefined
+        ? `已上传 ${meta.fileType ?? '数据'} 文件，${meta.rowCount} 行样本，${meta.columnCount} 个字段`
+        : `已上传 ${meta.fileType ?? '数据'} 文件`,
       source: 'uploaded_by_user',
-      structuredData: { fileName: file.name, preview: text.slice(0, 2000), base64 },
+      structuredData: meta,
       plainText: text.slice(0, 10000),
       status: 'confirmed',
     })
@@ -1720,6 +1857,7 @@ export default function ResearchCenter() {
       nextActionLabel: '运行统计分析',
     })
     setUploadedName(file.name)
+    setShowDatasetPreview(true)
     setAnalysisPhase('uploaded')
     setAnalysisError('')
     refresh(dataset.id)
@@ -2670,12 +2808,26 @@ export default function ResearchCenter() {
                           ))}
                         </div>
                       )}
-                      <textarea
-                        value={activeDisplayText}
-                        readOnly={isKanoAsset && resultView !== 'full' && !draftText}
-                        onChange={event => setDraftText(event.target.value)}
-                        style={editorStyle}
-                      />
+                      {activeAsset.type === 'quant_dataset' ? (
+                        <DatasetAssetCard
+                          asset={activeAsset}
+                          analysisAsset={activeDatasetAnalysis}
+                          showPreview={showDatasetPreview}
+                          onTogglePreview={() => setShowDatasetPreview(value => !value)}
+                          onAnalyze={() => void runAnalysis()}
+                          onOpenAnalysis={() => activeDatasetAnalysis && setActiveAssetId(activeDatasetAnalysis.id)}
+                          isAnalyzing={isAnalyzing}
+                        />
+                      ) : activeAsset.type === 'quant_analysis_result' || activeAsset.type === 'qualitative_coding' ? (
+                        <AnalysisAssetPreview asset={activeAsset} text={activeDisplayText} onChange={setDraftText} />
+                      ) : (
+                        <textarea
+                          value={activeDisplayText}
+                          readOnly={isKanoAsset && resultView !== 'full' && !draftText}
+                          onChange={event => setDraftText(event.target.value)}
+                          style={editorStyle}
+                        />
+                      )}
                     </>
                   )}
                 </div>
@@ -2718,39 +2870,6 @@ export default function ResearchCenter() {
                           数据模板
                         </button>
                       </ActionGroup>
-                      <ActionGroup title="数据分析">
-                        <label style={{ ...secondaryButtonStyle, justifyContent: 'center' }}>
-                          <Upload size={13} />
-                          上传回收数据
-                          <input type="file" accept=".csv,.txt,.xlsx,.xls" onChange={uploadData} style={{ display: 'none' }} />
-                        </label>
-                        <button
-                          onClick={runAnalysis}
-                          disabled={!latestDataset || isAnalyzing}
-                          title={latestDataset ? '基于最新上传数据生成分析结果' : '请先上传 CSV/TXT 数据文件'}
-                          style={{
-                            ...secondaryButtonStyle,
-                            opacity: latestDataset && !isAnalyzing ? 1 : 0.62,
-                            cursor: latestDataset && !isAnalyzing ? 'pointer' : 'not-allowed',
-                          }}
-                        >
-                          <BarChart3 size={13} />
-                          {isAnalyzing ? '正在生成…' : '生成分析结果'}
-                        </button>
-                        <button
-                          onClick={() => void reinterpretActiveAnalysis()}
-                          disabled={!canReinterpretActiveAsset || isReinterpreting}
-                          title={canReinterpretActiveAsset ? '保留计算结果，只重新生成论文方法和结果表述' : '需要先生成结构化分析结果'}
-                          style={{
-                            ...secondaryButtonStyle,
-                            opacity: canReinterpretActiveAsset && !isReinterpreting ? 1 : 0.62,
-                            cursor: canReinterpretActiveAsset && !isReinterpreting ? 'pointer' : 'not-allowed',
-                          }}
-                        >
-                          <Pencil size={13} />
-                          {isReinterpreting ? '正在重新解释…' : '重新解释结果'}
-                        </button>
-                      </ActionGroup>
                       <ActionGroup title="写入论文">
                         <button onClick={() => void insertIntoPaper()} disabled={isWritingToPaper} style={{ ...primaryButtonStyle, opacity: isWritingToPaper ? 0.65 : 1, cursor: isWritingToPaper ? 'not-allowed' : 'pointer' }}>
                           <CheckCircle2 size={13} />
@@ -2782,6 +2901,173 @@ export default function ResearchCenter() {
 
           </div>
         </main>
+      </div>
+    </div>
+  )
+}
+
+function DatasetAssetCard({
+  asset,
+  analysisAsset,
+  showPreview,
+  onTogglePreview,
+  onAnalyze,
+  onOpenAnalysis,
+  isAnalyzing,
+}: {
+  asset: ResearchAsset
+  analysisAsset: ResearchAsset | null
+  showPreview: boolean
+  onTogglePreview: () => void
+  onAnalyze: () => void
+  onOpenAnalysis: () => void
+  isAnalyzing: boolean
+}) {
+  const meta = datasetMetaFromAsset(asset)
+  const preview = meta.preview || asset.plainText
+  return (
+    <div style={datasetCardStyle}>
+      <div style={datasetCardHeaderStyle}>
+        <div style={{ display: 'flex', gap: 10, minWidth: 0 }}>
+          <div style={datasetIconStyle}>
+            <FileSpreadsheet size={18} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 850, color: 'var(--color-ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {meta.fileName || asset.title}
+            </div>
+            <div style={{ marginTop: 4, fontSize: 12, color: 'var(--color-ink-3)' }}>
+              {meta.fileType || '数据文件'} · 最近上传 {formatUploadTime(meta.uploadedAt || asset.createdAt)}
+            </div>
+          </div>
+        </div>
+        <span style={{ ...badgeStyle, flexShrink: 0 }}>
+          {analysisAsset ? '已分析' : '待分析'}
+        </span>
+      </div>
+      <div style={datasetMetaGridStyle}>
+        <MiniInfo label="文件类型" value={meta.fileType || '数据文件'} />
+        <MiniInfo label="样本量" value={meta.rowCount !== undefined ? `${meta.rowCount} 行` : '待识别'} />
+        <MiniInfo label="字段数" value={meta.columnCount !== undefined ? `${meta.columnCount} 列` : '待识别'} />
+        <MiniInfo label="状态" value={analysisAsset ? '已有论文分析结果' : '可生成分析结果'} />
+      </div>
+      <div style={inlineActionRowStyle}>
+        <button onClick={onTogglePreview} style={secondaryButtonStyle}>
+          <FileText size={13} />
+          {showPreview ? '收起数据预览' : '预览数据'}
+        </button>
+        <button
+          onClick={onAnalyze}
+          disabled={isAnalyzing}
+          style={{ ...primaryButtonStyle, opacity: isAnalyzing ? 0.62 : 1, cursor: isAnalyzing ? 'not-allowed' : 'pointer' }}
+        >
+          <BarChart3 size={13} />
+          {isAnalyzing ? '正在生成分析结果…' : analysisAsset ? '重新生成分析结果' : '生成分析结果'}
+        </button>
+        {analysisAsset && (
+          <button onClick={onOpenAnalysis} style={secondaryButtonStyle}>
+            查看分析结果
+            <ArrowRight size={13} />
+          </button>
+        )}
+      </div>
+      {showPreview && (
+        <pre style={datasetPreviewStyle}>
+          {preview || '当前文件已上传，但暂时无法生成预览。仍可点击“生成分析结果”，由后端读取原始文件进行分析。'}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+function AnalysisAssetPreview({ asset, text, onChange }: { asset: ResearchAsset; text: string; onChange: (value: string) => void }) {
+  const preview = analysisPreviewFromAsset(asset)
+  if (!preview) {
+    return <textarea value={text} onChange={event => onChange(event.target.value)} style={editorStyle} />
+  }
+  const figures = preview.figures ?? []
+  const tables = preview.tables ?? []
+  return (
+    <div style={analysisPreviewGridStyle}>
+      {figures.length > 0 && (
+        <section style={analysisBlockStyle}>
+          <div style={analysisBlockTitleStyle}>论文图像预览</div>
+          <div style={figureGridStyle}>
+            {figures.slice(0, 6).map((figure, index) => (
+              <figure key={figure.id || `${figure.title}-${index}`} style={figureCardStyle}>
+                {figure.dataUrl ? (
+                  <img src={figure.dataUrl} alt={figure.title || `图${index + 1}`} style={figureImageStyle} />
+                ) : (
+                  <div style={emptyStyle}>图像数据暂不可用</div>
+                )}
+                <figcaption style={figureCaptionStyle}>
+                  <strong>{figure.title || `图${index + 1}`}</strong>
+                  {figure.caption && <span>{figure.caption}</span>}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </section>
+      )}
+      {tables.length > 0 && (
+        <section style={analysisBlockStyle}>
+          <div style={analysisBlockTitleStyle}>论文表格预览</div>
+          <div style={{ display: 'grid', gap: 12 }}>
+            {tables.slice(0, 4).map((table, index) => (
+              <ResearchTablePreview key={table.id || `${table.title}-${index}`} table={table} index={index} />
+            ))}
+          </div>
+        </section>
+      )}
+      {(preview.methodText || preview.analysisText) && (
+        <section style={analysisBlockStyle}>
+          <div style={analysisBlockTitleStyle}>论文表述预览</div>
+          {preview.methodText && <p style={paperTextBlockStyle}>{preview.methodText}</p>}
+          {preview.analysisText && <p style={paperTextBlockStyle}>{preview.analysisText}</p>}
+        </section>
+      )}
+      <textarea value={text || preview.plainText || asset.plainText} onChange={event => onChange(event.target.value)} style={{ ...editorStyle, minHeight: 220 }} />
+    </div>
+  )
+}
+
+function ResearchTablePreview({ table, index }: { table: NonNullable<StructuredAnalysisPreview['tables']>[number]; index: number }) {
+  const rows = (table.rows ?? []).slice(0, 6)
+  const firstRow = rows[0]
+  const columns = (table.columns?.length
+    ? table.columns
+    : Array.isArray(firstRow)
+      ? firstRow.map((_, columnIndex) => `列${columnIndex + 1}`)
+      : isRecord(firstRow)
+        ? Object.keys(firstRow)
+        : []
+  ).slice(0, 8)
+  return (
+    <div style={tablePreviewWrapStyle}>
+      <div style={tableTitleStyle}>{table.title || `表${index + 1}`}</div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={tablePreviewStyle}>
+          <thead>
+            <tr>
+              {columns.map(column => <th key={column} style={tableHeaderCellStyle}>{column}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {columns.map(column => (
+                  <td key={column} style={tableBodyCellStyle}>
+                    {Array.isArray(row)
+                      ? String(row[Number(column.replace('列', '')) - 1] ?? '')
+                      : isRecord(row)
+                        ? String(row[column] ?? '')
+                        : ''}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )
@@ -3000,9 +3286,157 @@ const resultPreviewStyle = {
   paddingTop: 14,
 }
 
+const datasetCardStyle = {
+  border: '1px solid var(--color-border)',
+  borderRadius: 8,
+  background: 'var(--color-surface)',
+  padding: 14,
+  display: 'grid',
+  gap: 12,
+}
+
+const datasetCardHeaderStyle = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  justifyContent: 'space-between',
+  gap: 12,
+}
+
+const datasetIconStyle = {
+  width: 38,
+  height: 38,
+  borderRadius: 8,
+  background: 'var(--color-accent-light)',
+  color: 'var(--color-accent)',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
+}
+
+const datasetMetaGridStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+  gap: 8,
+}
+
+const datasetPreviewStyle = {
+  margin: 0,
+  maxHeight: 220,
+  overflow: 'auto',
+  border: '1px solid var(--color-border)',
+  borderRadius: 8,
+  background: 'var(--color-bg)',
+  color: 'var(--color-ink-2)',
+  padding: 12,
+  fontSize: 12,
+  lineHeight: 1.7,
+  fontFamily: 'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)',
+  whiteSpace: 'pre-wrap' as const,
+}
+
+const analysisPreviewGridStyle = {
+  display: 'grid',
+  gap: 14,
+}
+
+const analysisBlockStyle = {
+  border: '1px solid var(--color-border)',
+  borderRadius: 8,
+  background: 'var(--color-bg)',
+  padding: 12,
+}
+
+const analysisBlockTitleStyle = {
+  fontSize: 13,
+  fontWeight: 850,
+  color: 'var(--color-ink)',
+  marginBottom: 10,
+}
+
+const figureGridStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+  gap: 12,
+}
+
+const figureCardStyle = {
+  margin: 0,
+  border: '1px solid var(--color-border)',
+  borderRadius: 8,
+  background: 'var(--color-surface)',
+  padding: 10,
+}
+
+const figureImageStyle = {
+  width: '100%',
+  maxHeight: 280,
+  objectFit: 'contain' as const,
+  background: '#fff',
+  border: '1px solid var(--color-border)',
+  borderRadius: 6,
+}
+
+const figureCaptionStyle = {
+  marginTop: 8,
+  display: 'grid',
+  gap: 4,
+  fontSize: 12,
+  lineHeight: 1.55,
+  color: 'var(--color-ink-3)',
+}
+
+const paperTextBlockStyle = {
+  margin: '8px 0 0',
+  whiteSpace: 'pre-wrap' as const,
+  fontSize: 12,
+  lineHeight: 1.8,
+  color: 'var(--color-ink-2)',
+}
+
+const tablePreviewWrapStyle = {
+  border: '1px solid var(--color-border)',
+  borderRadius: 8,
+  background: 'var(--color-surface)',
+  padding: 10,
+}
+
+const tableTitleStyle = {
+  marginBottom: 8,
+  fontSize: 12,
+  fontWeight: 850,
+  color: 'var(--color-ink)',
+}
+
+const tablePreviewStyle = {
+  width: '100%',
+  borderCollapse: 'collapse' as const,
+  tableLayout: 'fixed' as const,
+  fontSize: 11,
+  lineHeight: 1.45,
+}
+
+const tableHeaderCellStyle = {
+  border: '1px solid var(--color-border)',
+  background: 'var(--color-accent-light)',
+  color: 'var(--color-ink)',
+  padding: '6px 7px',
+  textAlign: 'left' as const,
+  fontWeight: 850,
+  wordBreak: 'keep-all' as const,
+}
+
+const tableBodyCellStyle = {
+  border: '1px solid var(--color-border)',
+  color: 'var(--color-ink-2)',
+  padding: '6px 7px',
+  verticalAlign: 'top' as const,
+  wordBreak: 'break-word' as const,
+}
+
 const actionGroupGridStyle = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
   gap: 10,
 }
 
