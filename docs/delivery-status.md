@@ -5,8 +5,8 @@
 ## 当前线上版本
 
 - 正式站点：https://paper-ai-tool.vercel.app
-- 当前线上代码提交：`ca15a10 Enforce research workflow ordering`
-- 当前部署：`paper-ai-tool-miv6zynim-lemorrrs-projects.vercel.app`
+- 当前线上代码提交：`9e6e838 Prepare production auth and monitoring polish`
+- 当前部署：`paper-ai-tool-i0ynhng1f-lemorrrs-projects.vercel.app`
 - 正式域名 alias：已指向最新部署。
 
 ## 已验证
@@ -27,6 +27,7 @@
 - `GET /api/health` 返回 `{"ok":true,"service":"paper-ai-tool-api"}`。
 - 正式站首页返回 200。
 - 正式站登录页返回 200。
+- 正式登录页不再展示演示账号入口，直达 `/demo` 会提示演示入口已停用并返回登录。
 - 生产环境 `/api/auth/demo-login` 返回 403，符合“正式环境禁用演示登录”的安全预期。
 - 生产 E2E 验收脚本已迁移到正式注册/登录路径，不再依赖生产禁用的演示登录。
 
@@ -43,6 +44,8 @@
 ## 本轮已补齐
 
 ### P0 稳定性
+
+- 前后端 Sentry 错误观测已接入，未配置 `SENTRY_DSN` / `VITE_SENTRY_DSN` 时保持 inert，不影响本地和未配置环境。
 
 - Stage3 全文生成写入长任务状态：准备、检索文献、生成计划、逐章生成、保存云端、完成、失败。
 - Stage3 刷新后如发现上次任务处于 pending/running，会显示可恢复提示，不再静默消失。
@@ -77,7 +80,7 @@
 - 长任务状态目前是前端持久化，不是完整后端任务队列；刷新可提示恢复，但不能在后台继续执行已断开的生成。
 - 引用增强本地冒烟已通过；仍需要真实客户项目验收观点与来源匹配度。
 - Word-like 分页编辑仍采用连续编辑器 + 视觉层方向，不是完整 Word 排版引擎。
-- 线上错误观测还不够完整，建议接入服务端日志聚合或 Sentry。
+- 线上错误观测已有 Sentry 接入点；仍需要在 Vercel 环境变量中配置 `SENTRY_DSN` / `VITE_SENTRY_DSN` 才会真正上报。
 
 ## 下一步建议
 
