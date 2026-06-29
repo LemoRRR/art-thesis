@@ -1763,7 +1763,6 @@ export const projectStore = {
       title: docTitleStore.get(),
     }
     write(KEYS.PROJECTS, [fallback, ...projects])
-    remoteTask(() => projectsAPI.create(toApiProject(fallback)))
     projectStore.setActiveId(fallback.id)
     return fallback
   },

@@ -18,6 +18,7 @@
     "smoke:prod-stage3-research-e2e": "node scripts/prod-stage3-research-e2e.mjs",
     "smoke:local-stage3-research-e2e": "node scripts/local-stage3-research-e2e.mjs",
     "smoke:prod-stage3-generation-e2e": "node scripts/prod-stage3-generation-e2e.mjs",
+    "smoke:prod-cloud-restore": "node scripts/prod-cloud-restore-smoke.mjs",
     "smoke:prod-citation-enhance": "node scripts/prod-citation-enhance-smoke.mjs",
     "smoke:prod-auth-project": "node scripts/prod-auth-project-smoke.mjs",
     "smoke:research-ui-contract": "node scripts/research-ui-contract-smoke.mjs",
