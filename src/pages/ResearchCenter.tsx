@@ -1969,6 +1969,15 @@ export default function ResearchCenter() {
       ].filter(Boolean).join('\n')
       setAnalysisPhase('ready')
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      // Stats service temporarily unavailable (e.g. cold start): ask the user to
+      // retry instead of saving a degraded browser-side result they might trust.
+      if (message.includes('503') || message.includes('统计分析服务')) {
+        setAnalysisPhase('error')
+        setAnalysisError('统计分析服务正在唤醒，请约 30 秒后重试。')
+        setNotice('统计分析服务正在唤醒，请约 30 秒后重试（不会影响已保存内容）。')
+        return
+      }
       console.warn('[ResearchCenter] Python analysis failed, fallback to browser analysis', error)
       usedBrowserFallback = true
       analysisText = [

@@ -66,24 +66,34 @@ function sanitizeForPythonJson(value: unknown): unknown {
 const PYTHON_STATS_URL = process.env.PYTHON_STATS_URL
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET
 
+// Marker so the analyze handler can tell "the real engine is configured but
+// unavailable" apart from other failures, and surface a retry instead of
+// silently returning degraded JS-fallback statistics.
+const STATS_ENGINE_UNAVAILABLE = 'STATS_ENGINE_UNAVAILABLE'
+
 async function runPythonRemote(payload: unknown): Promise<Record<string, unknown>> {
   const base = PYTHON_STATS_URL!.replace(/\/$/, '')
-  const res = await fetch(`${base}/analyze`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(INTERNAL_SECRET ? { 'X-Internal-Secret': INTERNAL_SECRET } : {}),
-    },
-    body: JSON.stringify(sanitizeForPythonJson(payload ?? {})),
-  })
-  if (!res.ok) throw new Error(`Remote python stats failed: ${res.status}`)
-  return sanitizeForPythonJson(await res.json()) as Record<string, unknown>
+  try {
+    const res = await fetch(`${base}/analyze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(INTERNAL_SECRET ? { 'X-Internal-Secret': INTERNAL_SECRET } : {}),
+      },
+      body: JSON.stringify(sanitizeForPythonJson(payload ?? {})),
+    })
+    if (!res.ok) throw new Error(`status ${res.status}`)
+    return sanitizeForPythonJson(await res.json()) as Record<string, unknown>
+  } catch (error) {
+    throw new Error(`${STATS_ENGINE_UNAVAILABLE}: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 function runPython(payload: unknown): Promise<Record<string, unknown>> {
-  // Prefer the standalone Python service when configured; otherwise spawn locally.
+  // When the standalone Python service is configured, use it exclusively — do
+  // NOT silently fall back to a degraded result if it is unreachable.
   if (PYTHON_STATS_URL) {
-    return runPythonRemote(payload).catch(() => runPythonLocal(payload))
+    return runPythonRemote(payload)
   }
   return runPythonLocal(payload)
 }
@@ -3213,7 +3223,14 @@ router.post('/analyze', async (req, res) => {
     const enriched = await enrichQuantResult(result, req.body ?? {})
     res.json(normalizeResultLabels(await interpretAnalysisResult(enriched, req.body ?? {})))
   } catch (error) {
-    console.warn('[research:analyze] Python analysis unavailable, using Node fallback:', error instanceof Error ? error.message : String(error))
+    const message = error instanceof Error ? error.message : String(error)
+    // Real stats engine configured but unreachable: ask the user to retry rather
+    // than silently returning degraded statistics they might trust as accurate.
+    if (message.includes(STATS_ENGINE_UNAVAILABLE)) {
+      res.status(503).json({ error: '统计分析服务正在唤醒或暂时不可用，请约 30 秒后重试（不会影响已保存的内容）。' })
+      return
+    }
+    console.warn('[research:analyze] Python analysis unavailable, using Node fallback:', message)
     try {
       const result = await analyzeDatasetInNode(req.body ?? {})
       const enriched = await enrichQuantResult(result, req.body ?? {})
