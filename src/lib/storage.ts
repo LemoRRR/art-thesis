@@ -57,10 +57,35 @@ function read<T>(key: string): T | null {
   }
 }
 
+// Best-effort eviction: trim a stored JSON array to a bounded size so a single
+// runaway key (chat history, version snapshots) can't exhaust the ~5MB
+// localStorage quota and freeze the app. Cloud sync holds the authoritative copy.
+function trimStoredArray(key: string, keep: number, fromStart: boolean): void {
+  try {
+    const raw = read<unknown[]>(key)
+    if (Array.isArray(raw) && raw.length > keep) {
+      localStorage.setItem(key, JSON.stringify(fromStart ? raw.slice(0, keep) : raw.slice(-keep)))
+    }
+  } catch {
+    // ignore — this is a recovery path
+  }
+}
+
 function write<T>(key: string, value: T): void {
   try {
     localStorage.setItem(key, JSON.stringify(value))
   } catch (e) {
+    // On quota errors, free space from the largest expendable caches and retry once.
+    if (e instanceof DOMException && (e.name === 'QuotaExceededError' || /quota/i.test(e.name))) {
+      trimStoredArray(KEYS.CHAT, 200, false)
+      trimStoredArray(KEYS.VERSIONS, 20, true)
+      try {
+        localStorage.setItem(key, JSON.stringify(value))
+        return
+      } catch {
+        // still over quota — drop silently rather than loop
+      }
+    }
     console.warn('[Storage] 写入失败', key, e)
   }
 }
@@ -1132,7 +1157,7 @@ export function createDefaultProject(): Project {
 // ── 对话记录 ──────────────────────────────────────────────────
 export const chatStore = {
   getAll: (): ChatMessage[] => read<ChatMessage[]>(KEYS.CHAT) ?? [],
-  save:   (msgs: ChatMessage[]) => write(KEYS.CHAT, msgs),
+  save:   (msgs: ChatMessage[]) => write(KEYS.CHAT, msgs.length > 300 ? msgs.slice(-300) : msgs),
   getByProject: (projectId: string, stage?: WorkflowStage): ChatMessage[] => {
     return chatStore.getAll().filter(msg =>
       msg.projectId === projectId && (!stage || msg.stage === stage)

@@ -22,6 +22,7 @@
 - `npm run smoke:prod-stage3-generation-e2e` 通过：正式站 Stage3 点击生成全文后显示进度并完成生成，最新部署验证持久化 3 个章节、3345 字。
 - `npm run smoke:prod-cloud-restore` 通过：正式站新浏览器登录后可恢复项目、大纲、正文和研究包，且不再出现本地占位项目重复上传导致的 duplicate key。
 - `npm run seed:prod-demo` 通过：可在生产环境创建/刷新含大纲、正文和研究包的客户演示项目。
+- `npm run check:prod-delivery -- --skip-build --skip-seed` 通过：一键串联生产登录/项目、云端恢复、Stage3 全文生成三条核心交付检查。
 - `npm run smoke:prod-stage3-research-e2e` 通过：正式站从 Stage3 打开研究计算、上传 Excel、生成分析、写入论文并导出 Word；导出文件含 5 个表题、4 个图题、4 张有效 PNG。
 - `npm run smoke:citation-docx` 通过：正文脚注引用、footnotes relationship/content type 正常。
 - `npm run smoke:footnote-persistence` 通过：脚注可恢复并可导出到 docx。
@@ -36,6 +37,7 @@
 - 生产环境 `/api/auth/demo-login` 返回 403，符合“正式环境禁用演示登录”的安全预期。
 - 生产 E2E 验收脚本已迁移到正式注册/登录路径，不再依赖生产禁用的演示登录。
 - 生产演示项目种子脚本已加入 `npm run seed:prod-demo`，支持固定账号/项目重复刷新，避免客户演示现场从零生成。
+- 生产交付验收脚本已加入 `npm run check:prod-delivery`；默认覆盖 build、生产登录/项目、云端恢复、Stage3 全文生成和演示项目刷新，`--full` 可追加引用增强、KANO 研究计算和 Stage3 研究计算到 Word 导出。
 
 ## 本轮新增验证输出
 
@@ -56,6 +58,7 @@
 - 修复新浏览器打开远端项目时 `projectStore.ensure` 创建本地占位项目并重复上传到云端的问题，避免 `/api/projects` duplicate key 同步失败。
 - 前后端 Sentry 错误观测已接入，未配置 `SENTRY_DSN` / `VITE_SENTRY_DSN` 时保持 inert，不影响本地和未配置环境。
 - Stage3 已有正文时会清理过期的“等待大纲”生命周期提示，避免恢复云端正文后仍误导用户回到阶段二。
+- localStorage 写入增加 quota 兜底：聊天记录和版本快照会保留最近关键记录，降低长时间使用后因本地缓存过大导致页面卡住的风险。
 
 - Stage3 全文生成写入长任务状态：准备、检索文献、生成计划、逐章生成、保存云端、完成、失败。
 - Stage3 刷新后如发现上次任务处于 pending/running，会显示可恢复提示，不再静默消失。
