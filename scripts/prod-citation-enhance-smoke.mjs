@@ -1,4 +1,6 @@
 const baseUrl = (process.argv[2] || process.env.PROD_CITATION_BASE_URL || 'https://paper-ai-tool.vercel.app').replace(/\/$/, '')
+const smokePassword = process.env.PROD_CITATION_SMOKE_PASSWORD || `CitationSmoke-${Date.now()}!Aa1`
+const smokeEmail = process.env.PROD_CITATION_SMOKE_EMAIL || `citation-smoke-${Date.now()}@example.com`
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -19,6 +21,25 @@ async function requestJson(method, route, body, token = '') {
     throw new Error(`${method} ${route} ${response.status}: ${text.slice(0, 1200)}`)
   }
   return json
+}
+
+async function getAuthToken() {
+  if (process.env.PROD_CITATION_SMOKE_EMAIL && process.env.PROD_CITATION_SMOKE_PASSWORD) {
+    const login = await requestJson('POST', '/api/auth/login', {
+      email: smokeEmail,
+      password: smokePassword,
+    })
+    assert(login.session?.access_token, 'Configured smoke account login did not return access token')
+    return login.session.access_token
+  }
+
+  const registered = await requestJson('POST', '/api/auth/register', {
+    email: smokeEmail,
+    password: smokePassword,
+    displayName: 'Citation Smoke',
+  })
+  assert(registered.session?.access_token, 'Register did not return access token')
+  return registered.session.access_token
 }
 
 function assertPatchQuality(patches, expectedMin) {
@@ -61,9 +82,7 @@ async function main() {
   const health = await requestJson('GET', '/api/health')
   assert(health?.ok === true, `Health check failed: ${JSON.stringify(health)}`)
 
-  const login = await requestJson('POST', '/api/auth/demo-login', {})
-  const token = login.session?.access_token
-  assert(token, 'Demo login did not return access token')
+  const token = await getAuthToken()
 
   const sections = [
     {

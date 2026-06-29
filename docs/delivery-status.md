@@ -15,6 +15,8 @@
 - `npm run build` 通过。
 - `npm run smoke:research-ui-contract` 通过。
 - `npm run smoke:bundle-size` 通过。
+- `npm run smoke:prod-auth-project` 通过：生产环境正式注册、登录、`/me`、项目创建/列表/读取/更新/删除均正常。
+- `npm run smoke:prod-citation-enhance` 通过：生产环境使用正式临时账号生成 4 条引用增强补丁，覆盖 2 个章节、多个来源。
 - `npm run smoke:citation-docx` 通过：正文脚注引用、footnotes relationship/content type 正常。
 - `npm run smoke:footnote-persistence` 通过：脚注可恢复并可导出到 docx。
 - `npm run smoke:citation-enhance` 通过：生成 3 条引用增强补丁，docx 脚注结构正常。

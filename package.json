@@ -19,6 +19,7 @@
     "smoke:local-stage3-research-e2e": "node scripts/local-stage3-research-e2e.mjs",
     "smoke:prod-stage3-generation-e2e": "node scripts/prod-stage3-generation-e2e.mjs",
     "smoke:prod-citation-enhance": "node scripts/prod-citation-enhance-smoke.mjs",
+    "smoke:prod-auth-project": "node scripts/prod-auth-project-smoke.mjs",
     "smoke:research-ui-contract": "node scripts/research-ui-contract-smoke.mjs",
     "smoke:word-render": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/word-render-smoke.ps1",
     "smoke:research-word-render": "npm run smoke:research-chain && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/word-render-smoke.ps1 -DocxPath ../outputs/ich_kano_entropy/research-chain-smoke.docx -OutputDir ../outputs/ich_kano_entropy/word-render-research-chain-smoke -MinPages 4 -MinPageVariance 500",
