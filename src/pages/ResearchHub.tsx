@@ -269,26 +269,16 @@ export default function ResearchHub() {
                 {filteredFolders.length === 0 ? (
                   <div style={emptyStyle}>没有符合当前筛选条件的论文资产。</div>
                 ) : (
-                  <>
-                    <div style={folderGridStyle}>
-                      {visibleFolders.map(folder => (
-                        <FolderCard
-                          key={folder.project.id}
-                          folder={folder}
-                          onOpenAssets={() => navigate(`/projects/${folder.project.id}/research/assets`)}
-                          onOpenWorkflow={() => navigate(`/projects/${folder.project.id}/research`)}
-                        />
-                      ))}
-                    </div>
-                    <Pagination
-                      page={currentPage}
-                      pageCount={pageCount}
-                      total={filteredFolders.length}
-                      onPrev={() => setPage(value => Math.max(1, value - 1))}
-                      onNext={() => setPage(value => Math.min(pageCount, value + 1))}
-                      onPage={setPage}
-                    />
-                  </>
+                  <div style={folderGridStyle}>
+                    {visibleFolders.map(folder => (
+                      <FolderCard
+                        key={folder.project.id}
+                        folder={folder}
+                        onOpenAssets={() => navigate(`/projects/${folder.project.id}/research/assets`)}
+                        onOpenWorkflow={() => navigate(`/projects/${folder.project.id}/research`)}
+                      />
+                    ))}
+                  </div>
                 )}
               </section>
 
@@ -313,6 +303,16 @@ export default function ResearchHub() {
                   </button>
                 ))}
               </aside>
+              {filteredFolders.length > 0 && (
+                <Pagination
+                  page={currentPage}
+                  pageCount={pageCount}
+                  total={filteredFolders.length}
+                  onPrev={() => setPage(value => Math.max(1, value - 1))}
+                  onNext={() => setPage(value => Math.min(pageCount, value + 1))}
+                  onPage={setPage}
+                />
+              )}
             </div>
           )}
         </div>
@@ -700,11 +700,12 @@ const emptyStyle: React.CSSProperties = {
 }
 
 const paginationStyle: React.CSSProperties = {
+  gridColumn: '1 / -1',
   background: 'var(--color-surface)',
   border: '1px solid var(--color-border)',
   borderRadius: 8,
-  padding: '12px 14px',
-  minHeight: 54,
+  padding: '13px 16px',
+  minHeight: 62,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
@@ -716,8 +717,8 @@ const paginationStyle: React.CSSProperties = {
 }
 
 const pageButtonStyle: React.CSSProperties = {
-  width: 30,
-  height: 30,
+  width: 34,
+  height: 34,
   border: '1px solid var(--color-border)',
   borderRadius: 6,
   background: 'var(--color-surface)',
