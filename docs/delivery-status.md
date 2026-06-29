@@ -5,8 +5,8 @@
 ## 当前线上版本
 
 - 正式站点：https://paper-ai-tool.vercel.app
-- 当前线上代码提交：`9b0d3ad Seed production demo project and clean Stage3 prompts`
-- 当前部署：`paper-ai-tool-gvu2n25lx-lemorrrs-projects.vercel.app`
+- 当前线上代码提交：`fbdab47 Add production delivery check and storage quota guard`
+- 当前部署：`paper-ai-tool-6w6dbm98l-lemorrrs-projects.vercel.app`
 - 正式域名 alias：已指向最新部署。
 
 ## 已验证
@@ -23,6 +23,7 @@
 - `npm run smoke:prod-cloud-restore` 通过：正式站新浏览器登录后可恢复项目、大纲、正文和研究包，且不再出现本地占位项目重复上传导致的 duplicate key。
 - `npm run seed:prod-demo` 通过：可在生产环境创建/刷新含大纲、正文和研究包的客户演示项目。
 - `npm run check:prod-delivery -- --skip-build --skip-seed` 通过：一键串联生产登录/项目、云端恢复、Stage3 全文生成三条核心交付检查。
+- 最新部署后复查 `npm run smoke:prod-auth-project`、`npm run smoke:prod-cloud-restore` 通过。
 - `npm run smoke:prod-stage3-research-e2e` 通过：正式站从 Stage3 打开研究计算、上传 Excel、生成分析、写入论文并导出 Word；导出文件含 5 个表题、4 个图题、4 张有效 PNG。
 - `npm run smoke:citation-docx` 通过：正文脚注引用、footnotes relationship/content type 正常。
 - `npm run smoke:footnote-persistence` 通过：脚注可恢复并可导出到 docx。
