@@ -16,6 +16,8 @@ import {
   type ResearchTask,
   type ResearchTaskStatus,
 } from '../lib/storage'
+import VariableMappingEditor from './VariableMappingEditor'
+import { CAPABILITY_TIER_LABELS, methodLabel, parseCsvPreview } from '../lib/researchLabels'
 
 interface ResearchDrawerProps {
   projectId: string
@@ -43,8 +45,8 @@ const taskStatusLabels: Record<ResearchTaskStatus, { label: string; tone: 'idle'
   scale_confirmed: { label: '量表已确认', tone: 'ready', hint: '可以写研究方法、变量测量和问卷设计。' },
   survey_ready: { label: '问卷可发放', tone: 'ready', hint: '可以导出问卷或数据模板，之后等待回收数据。' },
   collecting_data: { label: '等待数据回收', tone: 'wait', hint: '可以写研究方法，但不能生成统计结果。' },
-  data_uploaded: { label: '数据已上传', tone: 'ready', hint: '下一步应确认变量映射并运行分析。' },
-  data_validated: { label: '数据已校验', tone: 'ready', hint: '可以运行 Python 统计分析。' },
+  data_uploaded: { label: '数据已上传', tone: 'ready', hint: '下一步应确认变量对应关系并运行分析。' },
+  data_validated: { label: '数据已校验', tone: 'ready', hint: '可以运行统计分析。' },
   analysis_done: { label: '分析已完成', tone: 'done', hint: '可以作为内容包插入当前章节。' },
   chapter_text_ready: { label: '结果文字已生成', tone: 'done', hint: '可以插入当前章节或进入详情继续编辑。' },
   inserted_into_paper: { label: '已写入论文', tone: 'done', hint: '可以继续润色，或在研究历史里恢复旧版本。' },
@@ -93,8 +95,8 @@ function isInsertable(asset: ResearchAsset) {
 
 function getChapterAction(sectionTitle?: string) {
   const title = sectionTitle ?? ''
-  if (/方法|设计|问卷|变量|测量|研究对象|资料收集/.test(title)) return '当前章节适合插入研究方法、变量映射、问卷设计或访谈方案。'
-  if (/数据|分析|结果|第四章|KANO|AHP|编码|信度|效度|回归|相关/.test(title)) return '当前章节适合插入样本统计、Python 分析结果、图表和论文结果表述。'
+  if (/方法|设计|问卷|变量|测量|研究对象|资料收集/.test(title)) return '当前章节适合插入研究方法、变量对应关系、问卷设计或访谈方案。'
+  if (/数据|分析|结果|第四章|KANO|AHP|编码|信度|效度|回归|相关/.test(title)) return '当前章节适合插入样本统计、数据分析结果、图表和论文结果表述。'
   if (/讨论|结论|建议|优化/.test(title)) return '当前章节适合引用已有研究发现，生成讨论、建议和研究限制。'
   return '当前章节可以按需生成研究结果；如果涉及数据结论，请先上传数据并确认分析方案。'
 }
@@ -135,9 +137,6 @@ function formatPlan(plan: ResearchAnalysisPlan) {
     `目的：${plan.purpose}`,
     `方法：${formatAnalysisMethodList(plan) || '待确认'}`,
     `原因：${plan.reason}`,
-    `公式/模型：${plan.formula}`,
-    `需要列：${plan.requiredColumns.join('、') || '待确认'}`,
-    plan.needsVariableConfirmation ? '变量映射需要确认。' : '变量映射置信度较高。',
   ].join('\n')
 }
 
@@ -168,6 +167,7 @@ export default function ResearchDrawer({
   const [dataset, setDataset] = useState<UploadedDataset | null>(null)
   const [intent, setIntent] = useState<ResearchIntent | null>(null)
   const [plan, setPlan] = useState<ResearchAnalysisPlan | null>(null)
+  const [planColumns, setPlanColumns] = useState<{ columns: string[]; numericColumns: string[] }>({ columns: [], numericColumns: [] })
   const [selectedTypes, setSelectedTypes] = useState(['method', 'figure', 'statistics', 'analysis'])
   const [latestAnalysisAssetId, setLatestAnalysisAssetId] = useState('')
   const [notice, setNotice] = useState('')
@@ -221,7 +221,7 @@ export default function ResearchDrawer({
         taskId: task.id,
         type: 'quant_dataset',
         title: file.name,
-        summary: isExcel ? '已上传 Excel 数据文件，等待 Python 读取。' : `已上传 CSV/TXT 数据，约 ${text?.split(/\r?\n/).filter(Boolean).length ?? 0} 行。`,
+        summary: isExcel ? '已上传 Excel 数据文件，等待分析读取。' : `已上传 CSV/TXT 数据，约 ${text?.split(/\r?\n/).filter(Boolean).length ?? 0} 行。`,
         source: 'uploaded_by_user',
         structuredData: { fileName: file.name, base64, preview: text?.slice(0, 3000) },
         plainText: text?.slice(0, 20000) ?? '',
@@ -235,7 +235,7 @@ export default function ResearchDrawer({
       setDataset({ fileName: file.name, text, base64, rowCount: text?.split(/\r?\n/).filter(Boolean).length, assetId: asset.id })
       setPlan(null)
       setIntent(null)
-      setNotice('数据已上传。下一步先让 AI 生成分析方案，确认后再运行 Python。')
+      setNotice('数据已上传。下一步先让 AI 生成分析方案，确认后再运行分析。')
     } catch (error) {
       setNotice(`读取数据失败：${error instanceof Error ? error.message : String(error)}`)
     } finally {
@@ -275,7 +275,7 @@ export default function ResearchDrawer({
         return
       }
       setLoadingStep('plan')
-      setNotice('AI 正在读取数据预览并生成变量映射表…')
+      setNotice('AI 正在读取数据预览并生成变量对应关系…')
       const planResult = await researchAPI.analysisPlan({
         intent: intentResult.intent,
         fileName: dataset.fileName,
@@ -283,7 +283,8 @@ export default function ResearchDrawer({
         base64: dataset.base64,
       })
       setPlan(planResult.plan)
-      setNotice(planResult.plan.needsVariableConfirmation ? '方案已生成：请先核对变量映射，再确认运行 Python。' : '方案已生成：确认后即可运行 Python。')
+      setPlanColumns({ columns: planResult.columns ?? [], numericColumns: planResult.numericColumns ?? [] })
+      setNotice(planResult.plan.needsVariableConfirmation ? '方案已生成：请先核对每个变量对应的数据列，再确认运行分析。' : '方案已生成：确认后即可运行分析。')
     } catch (error) {
       setNotice(`生成方案失败：${error instanceof Error ? error.message : String(error)}`)
     } finally {
@@ -294,7 +295,7 @@ export default function ResearchDrawer({
   const runConfirmedPlan = async () => {
     if (!dataset || !plan) return
     setLoadingStep('run')
-    setNotice('Python 正在按确认方案执行真实计算并生成 PNG 图表…')
+    setNotice('正在按确认方案执行统计计算并生成图表…')
     try {
       const result = await researchAPI.analyze({
         fileName: dataset.fileName,
@@ -348,7 +349,7 @@ export default function ResearchDrawer({
       setHistoryTick(value => value + 1)
       setNotice('分析完成，已保存为研究内容包来源。可以直接插入当前章节。')
     } catch (error) {
-      setNotice(`Python 分析失败：${error instanceof Error ? error.message : String(error)}`)
+      setNotice(`分析失败：${error instanceof Error ? error.message : String(error)}`)
     } finally {
       setLoadingStep('')
     }
@@ -397,7 +398,7 @@ export default function ResearchDrawer({
         </section>
 
         <section style={panelStyle}>
-          <SectionTitle icon={<FlaskConical size={13} />} label="AI 编排 Python 分析" />
+          <SectionTitle icon={<FlaskConical size={13} />} label="AI 数据分析" />
           <textarea
             data-testid="research-analysis-request"
             value={requestText}
@@ -413,7 +414,7 @@ export default function ResearchDrawer({
           </label>
           {dataset && (
             <div style={{ fontSize: 11, color: 'var(--color-ink-3)', marginTop: 6 }}>
-              {dataset.rowCount ? `已读取约 ${dataset.rowCount} 行；` : 'Excel 将由 Python 读取；'}运行前会先确认变量映射。
+              {dataset.rowCount ? `已读取约 ${dataset.rowCount} 行；` : 'Excel 将在分析时读取；'}运行前会先确认变量对应关系。
             </div>
           )}
           <button data-testid="research-generate-plan" onClick={createIntentAndPlan} disabled={Boolean(loadingStep) || isUploadingDataset || !dataset} style={primaryActionStyle(Boolean(loadingStep) || isUploadingDataset || !dataset)}>
@@ -424,11 +425,11 @@ export default function ResearchDrawer({
 
         {intent && (
           <section style={panelStyle}>
-            <SectionTitle icon={<CheckCircle2 size={13} />} label="意图识别" />
+            <SectionTitle icon={<CheckCircle2 size={13} />} label="AI 理解" />
             <div style={smallTextStyle}>
               <b>目的：</b>{intent.purpose}<br />
-              <b>能力层级：</b>{intent.capabilityTier}<br />
-              <b>推荐方法：</b>{intent.recommendedMethods.join('、') || '待确认'}
+              <b>可行性：</b>{CAPABILITY_TIER_LABELS[intent.capabilityTier] ?? intent.capabilityTier}<br />
+              <b>推荐方法：</b>{intent.recommendedMethods.map(methodLabel).join('、') || '待确认'}
             </div>
           </section>
         )}
@@ -437,16 +438,38 @@ export default function ResearchDrawer({
           <section style={panelStyle}>
             <SectionTitle icon={<ClipboardList size={13} />} label="待确认分析方案" />
             <pre style={planStyle}>{formatPlan(plan)}</pre>
-            <div style={{ display: 'grid', gap: 6 }}>
-              {plan.variables.map((variable, index) => (
-                <div key={`${variable.role}-${variable.column}-${index}`} style={variableRowStyle}>
-                  <span>{variable.role}</span>
-                  <strong>{variable.name}</strong>
-                  <em>{variable.column || '未映射'}</em>
-                  <small>{Math.round((variable.confidence ?? 0) * 100)}%</small>
+            {(() => {
+              const preview = parseCsvPreview(dataset?.text, 5)
+              if (!preview.columns.length) {
+                return dataset?.base64
+                  ? <div style={smallTextStyle}>Excel 表格将在分析时读取，请确认下方每个变量对应的数据列。</div>
+                  : null
+              }
+              return (
+                <div style={previewWrapStyle}>
+                  <table style={previewTableStyle}>
+                    <thead>
+                      <tr>{preview.columns.map(column => <th key={column} style={previewCellStyle}>{column}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {preview.rows.map((row, rowIndex) => (
+                        <tr key={rowIndex}>
+                          {preview.columns.map((_, cellIndex) => (
+                            <td key={cellIndex} style={previewCellStyle}>{row[cellIndex] ?? ''}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              ))}
-            </div>
+              )
+            })()}
+            <VariableMappingEditor
+              plan={plan}
+              columns={planColumns.columns}
+              numericColumns={planColumns.numericColumns}
+              onChange={setPlan}
+            />
             <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {componentOptions.map(option => (
                 <label key={option.value} style={checkStyle}>
@@ -463,7 +486,7 @@ export default function ResearchDrawer({
             </div>
             <button data-testid="research-run-plan" onClick={runConfirmedPlan} disabled={Boolean(loadingStep)} style={primaryActionStyle(Boolean(loadingStep))}>
               <Play size={13} />
-              {loadingStep === 'run' ? 'Python 计算中…' : '确认方案并运行 Python'}
+              {loadingStep === 'run' ? '统计计算中…' : '确认方案并运行分析'}
             </button>
           </section>
         )}
@@ -757,17 +780,25 @@ const planStyle = {
   background: 'var(--color-surface)',
 }
 
-const variableRowStyle = {
-  display: 'grid',
-  gridTemplateColumns: '70px 1fr 1fr 38px',
-  gap: 6,
-  alignItems: 'center',
+const previewWrapStyle = {
+  marginBottom: 8,
+  maxHeight: 140,
+  overflow: 'auto' as const,
   border: '1px solid var(--color-border)',
   borderRadius: 6,
-  padding: '5px 6px',
-  fontSize: 11,
+}
+
+const previewTableStyle = {
+  borderCollapse: 'collapse' as const,
+  width: '100%',
+  fontSize: 10,
+}
+
+const previewCellStyle = {
+  border: '1px solid var(--color-border)',
+  padding: '3px 6px',
   color: 'var(--color-ink-2)',
-  background: 'var(--color-surface)',
+  whiteSpace: 'nowrap' as const,
 }
 
 const checkStyle = {
