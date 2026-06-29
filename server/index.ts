@@ -1,3 +1,5 @@
+import './instrument.js'
+import * as Sentry from '@sentry/node'
 import cors from 'cors'
 import express from 'express'
 import helmet from 'helmet'
@@ -62,6 +64,11 @@ app.use('/api/research-packages', researchPackagesRouter)
 app.use('/api/research', researchRouter)
 app.use('/api/ai', aiRouter)
 app.use('/api/files', filesRouter)
+
+// Capture unhandled route errors in Sentry (no-op unless SENTRY_DSN is set).
+if (process.env.SENTRY_DSN) {
+  Sentry.setupExpressErrorHandler(app)
+}
 
 if (!process.env.VERCEL) {
   app.listen(PORT, () => {

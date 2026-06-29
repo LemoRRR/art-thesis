@@ -35,6 +35,8 @@
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",
+    "@sentry/node": "^10.62.0",
+    "@sentry/react": "^10.62.0",
     "@supabase/supabase-js": "^2.108.0",
     "@tailwindcss/vite": "^4.3.0",
     "@tiptap/core": "^3.26.0",

@@ -5,6 +5,8 @@ import { authAPI } from '../lib/api'
 import { auth } from '../lib/auth'
 import { createNewConversationProject } from '../lib/conversation'
 
+const CAN_USE_DEMO_LOGIN = !import.meta.env.PROD
+
 export default function Login() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -192,7 +194,7 @@ export default function Login() {
           >
             {loading ? (tab === 'login' ? '正在登录…' : '正在注册…') : tab === 'login' ? '登录' : '注册'}
           </button>
-          {tab === 'login' && (
+          {tab === 'login' && CAN_USE_DEMO_LOGIN && (
             <button
               type="button"
               disabled={loading}
@@ -227,7 +229,7 @@ function normalizeRedirect(value: string | null) {
 function formatAuthError(error: unknown) {
   const message = error instanceof Error ? error.message : '登录失败'
   if (message.includes('401') || message.includes('incorrect')) return '邮箱或密码不正确，请检查后重试。'
-  if (message.includes('timed out') || message.includes('504')) return '登录服务响应较慢，请稍后重试；本地测试可点击“使用演示账号进入”。'
+  if (message.includes('timed out') || message.includes('504')) return CAN_USE_DEMO_LOGIN ? '登录服务响应较慢，请稍后重试；本地测试可点击“使用演示账号进入”。' : '登录服务响应较慢，请稍后重试。'
   if (message.includes('Cannot connect')) return '暂时无法连接后端服务，请确认本地服务已启动。'
   return message
 }
