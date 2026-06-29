@@ -7,6 +7,8 @@ import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 const baseUrl = (process.argv[2] || process.env.PROD_STAGE3_GENERATION_BASE_URL || 'https://paper-ai-tool.vercel.app').replace(/\/$/, '')
 const keepProject = process.env.PROD_STAGE3_GENERATION_KEEP === '1'
+const smokePassword = process.env.PROD_STAGE3_GENERATION_SMOKE_PASSWORD || `Stage3GenerationSmoke-${Date.now()}!Aa1`
+const smokeEmail = process.env.PROD_STAGE3_GENERATION_SMOKE_EMAIL || `stage3-generation-smoke-${Date.now()}@example.com`
 const outputDir = path.resolve(
   process.argv[3] || process.env.PROD_STAGE3_GENERATION_OUTPUT_DIR || path.join(os.tmpdir(), `stage3-generation-e2e-${Date.now()}`)
 )
@@ -47,6 +49,25 @@ async function requestJson(method, route, body, token = '') {
     throw new Error(`${method} ${route} ${response.status}: ${text.slice(0, 1200)}`)
   }
   return json
+}
+
+async function getAuthContext() {
+  if (process.env.PROD_STAGE3_GENERATION_SMOKE_EMAIL && process.env.PROD_STAGE3_GENERATION_SMOKE_PASSWORD) {
+    const login = await requestJson('POST', '/api/auth/login', {
+      email: smokeEmail,
+      password: smokePassword,
+    })
+    assert(login.session?.access_token, 'Configured smoke account login did not return access token')
+    return { token: login.session.access_token, user: login.user }
+  }
+
+  const registered = await requestJson('POST', '/api/auth/register', {
+    email: smokeEmail,
+    password: smokePassword,
+    displayName: 'Stage3 Generation Smoke',
+  })
+  assert(registered.session?.access_token, 'Register did not return access token')
+  return { token: registered.session.access_token, user: registered.user }
 }
 
 async function clickByTestId(page, testId, timeout = 30000) {
@@ -116,9 +137,7 @@ async function main() {
   const { chromium } = loadPlaywright()
   const health = await requestJson('GET', '/api/health')
   assert(health?.ok === true, `Health check failed: ${JSON.stringify(health)}`)
-  const login = await requestJson('POST', '/api/auth/demo-login', {})
-  const token = login.session?.access_token
-  assert(token, 'Demo login did not return access token')
+  const { token, user } = await getAuthContext()
 
   const projectId = randomUUID()
   let browser
@@ -150,7 +169,7 @@ async function main() {
     await context.addInitScript(({ accessToken, user }) => {
       window.localStorage.setItem('access_token', accessToken)
       window.localStorage.setItem('auth_user', JSON.stringify(user))
-    }, { accessToken: token, user: login.user })
+    }, { accessToken: token, user })
 
     page = await context.newPage()
     page.on('console', message => {

@@ -17,6 +17,7 @@
 - `npm run smoke:bundle-size` 通过。
 - `npm run smoke:prod-auth-project` 通过：生产环境正式注册、登录、`/me`、项目创建/列表/读取/更新/删除均正常。
 - `npm run smoke:prod-citation-enhance` 通过：生产环境使用正式临时账号生成 4 条引用增强补丁，覆盖 2 个章节、多个来源。
+- `npm run smoke:prod-research-ahp` 通过：生产环境使用正式临时账号完成 AHP 分析，生成 2 张表、2 张图、15 个研究组件，并导出可检查的 Word。
 - `npm run smoke:citation-docx` 通过：正文脚注引用、footnotes relationship/content type 正常。
 - `npm run smoke:footnote-persistence` 通过：脚注可恢复并可导出到 docx。
 - `npm run smoke:citation-enhance` 通过：生成 3 条引用增强补丁，docx 脚注结构正常。
@@ -27,6 +28,7 @@
 - 正式站首页返回 200。
 - 正式站登录页返回 200。
 - 生产环境 `/api/auth/demo-login` 返回 403，符合“正式环境禁用演示登录”的安全预期。
+- 生产 E2E 验收脚本已迁移到正式注册/登录路径，不再依赖生产禁用的演示登录。
 
 ## 本轮新增验证输出
 
@@ -34,6 +36,7 @@
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\citation-patch-docx-smoke.docx`
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\citation-enhance-docx-smoke.docx`
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\research-chain-smoke.docx`
+- `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\prod-ahp-research-smoke.docx`
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\word-render-research-chain-smoke\word-render-smoke.pdf`
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\word-render-research-chain-smoke\contact-sheet.png`
 

@@ -17,6 +17,8 @@ const defaultKanoWorkbookPath = path.resolve(
 )
 const scenarioName = String(process.env.PROD_RESEARCH_SMOKE_SCENARIO ?? process.argv[4] ?? 'ahp').toLowerCase()
 const keepProject = process.env.PROD_RESEARCH_SMOKE_KEEP === '1'
+const smokePassword = process.env.PROD_RESEARCH_SMOKE_PASSWORD || `ResearchSmoke-${Date.now()}!Aa1`
+const smokeEmail = process.env.PROD_RESEARCH_SMOKE_EMAIL || `research-smoke-${Date.now()}@example.com`
 const hasCustomKanoWorkbook = Boolean(process.env.PROD_RESEARCH_SMOKE_XLSX)
 
 function assert(condition, message) {
@@ -55,6 +57,25 @@ async function requestJson(method, route, body, token = '') {
     throw new Error(`${route} ${res.status}: ${JSON.stringify(json).slice(0, 1200)}`)
   }
   return json
+}
+
+async function getAuthToken() {
+  if (process.env.PROD_RESEARCH_SMOKE_EMAIL && process.env.PROD_RESEARCH_SMOKE_PASSWORD) {
+    const login = await requestJson('POST', '/api/auth/login', {
+      email: smokeEmail,
+      password: smokePassword,
+    })
+    assert(login.session?.access_token, 'Configured smoke account login did not return access token')
+    return login.session.access_token
+  }
+
+  const registered = await requestJson('POST', '/api/auth/register', {
+    email: smokeEmail,
+    password: smokePassword,
+    displayName: 'Research Smoke',
+  })
+  assert(registered.session?.access_token, 'Register did not return access token')
+  return registered.session.access_token
 }
 
 async function getText(route, token = '') {
@@ -534,9 +555,7 @@ async function main() {
   const health = await getText('/api/health')
   assert(health.includes('"ok":true'), `health check failed: ${health}`)
 
-  const login = await post('/api/auth/demo-login', {})
-  const token = login.session?.access_token
-  assert(token, 'demo login did not return an access token')
+  const token = await getAuthToken()
   const projectId = randomUUID()
   const packageId = randomUUID()
   const savedSectionIds = ['s3', 's4', 's5'].map(() => randomUUID())
