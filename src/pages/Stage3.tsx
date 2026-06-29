@@ -1906,9 +1906,13 @@ export default function Stage3() {
     const preferredActiveSectionId = routeState?.insertedSectionId
     const preserveExistingDraft = shouldPreserveExistingDraft(project.context)
 
-    if (savedMessages.length > 0) queueMicrotask(() => setMessages(savedMessages))
-
     if (savedSections.length > 0) {
+      const visibleSavedMessages = savedMessages.filter(message => stage3LifecycleKey(message) !== 'wait-outline')
+      if (visibleSavedMessages.length !== savedMessages.length) {
+        saveStageMessages(visibleSavedMessages)
+      }
+      queueMicrotask(() => setMessages(visibleSavedMessages))
+
       let formattedSections = formatSectionsForPaper(savedSections)
       const tableRepair = repairMissingResearchTables(formattedSections)
       formattedSections = tableRepair.sections
@@ -1997,7 +2001,11 @@ export default function Stage3() {
         })
       }
       hasStartedGenerationRef.current = true
-    } else if (savedMessages.some(message => {
+    } else {
+      if (savedMessages.length > 0) queueMicrotask(() => setMessages(savedMessages))
+    }
+
+    if (savedSections.length === 0 && savedMessages.some(message => {
       const key = stage3LifecycleKey(message)
       return key !== 'ready' && key !== 'wait-outline'
     })) {
@@ -2021,7 +2029,7 @@ export default function Stage3() {
       })
       sectionStore.saveForProject(project.id, [blankSection], { syncRemote: false })
       hasStartedGenerationRef.current = true
-    } else if (outline?.sections?.length && !preserveExistingDraft && !hasStartedGenerationRef.current) {
+    } else if (savedSections.length === 0 && outline?.sections?.length && !preserveExistingDraft && !hasStartedGenerationRef.current) {
       const readyMsg: ChatMessage = {
         id: 's3_ready_to_generate',
         role: 'ai',
@@ -2036,7 +2044,7 @@ export default function Stage3() {
         setMessages([readyMsg])
       })
       saveStageMessages([readyMsg])
-    } else if (outline?.sections?.length) {
+    } else if (savedSections.length === 0 && outline?.sections?.length) {
       const waitMsg: ChatMessage = {
         id: 's3_wait_outline',
         role: 'ai',
@@ -2051,7 +2059,7 @@ export default function Stage3() {
         setMessages([waitMsg])
       })
       saveStageMessages([waitMsg])
-    } else {
+    } else if (savedSections.length === 0) {
       const waitMsg: ChatMessage = {
         id: 's3_wait_outline',
         role: 'ai',
