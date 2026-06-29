@@ -5,15 +5,15 @@
 ## 当前线上版本
 
 - 正式站点：https://paper-ai-tool.vercel.app
-- 当前线上代码提交：`fbdab47 Add production delivery check and storage quota guard`
-- 当前部署：`paper-ai-tool-6w6dbm98l-lemorrrs-projects.vercel.app`
+- 当前线上代码提交：`9a64845 Expose production health status`
+- 当前部署：`paper-ai-tool-azig2nhmg-lemorrrs-projects.vercel.app`
 - 正式域名 alias：已指向最新部署。
 
 ## 已验证
 
 - `npx tsc --noEmit --pretty false` 通过。
 - `npm run build` 通过。
-- `npm run smoke:prod-health` 已加入：检查正式站 `/api/health`、部署版本和 Supabase/AI/Sentry/Python 配置状态。
+- `npm run smoke:prod-health` 通过：正式站 `/api/health` 可返回部署版本和配置状态；Supabase、Supabase service role、OpenAI、豆包、Python 统计服务已配置，Sentry 尚未配置。
 - `npm run smoke:research-ui-contract` 通过。
 - `npm run smoke:bundle-size` 通过。
 - `npm run smoke:prod-auth-project` 通过：生产环境正式注册、登录、`/me`、项目创建/列表/读取/更新/删除均正常。
@@ -96,7 +96,7 @@
 - 长任务状态目前是前端持久化，不是完整后端任务队列；刷新可提示恢复，但不能在后台继续执行已断开的生成。
 - 引用增强生产冒烟已通过；仍需要真实客户项目人工验收观点与来源匹配度，尤其是模型识别和方法引用是否完全贴合。
 - Word-like 分页编辑仍采用连续编辑器 + 视觉层方向，不是完整 Word 排版引擎。
-- 线上错误观测已有 Sentry 接入点；仍需要在 Vercel 环境变量中配置 `SENTRY_DSN` / `VITE_SENTRY_DSN` 才会真正上报。
+- 线上错误观测已有 Sentry 接入点；`/api/health` 显示当前生产环境 `sentry:false`，仍需要在 Vercel 环境变量中配置 `SENTRY_DSN` / `VITE_SENTRY_DSN` 才会真正上报。
 
 ## 下一步建议
 
