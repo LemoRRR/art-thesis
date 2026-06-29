@@ -13,6 +13,7 @@
 
 - `npx tsc --noEmit --pretty false` 通过。
 - `npm run build` 通过。
+- `npm run smoke:prod-health` 已加入：检查正式站 `/api/health`、部署版本和 Supabase/AI/Sentry/Python 配置状态。
 - `npm run smoke:research-ui-contract` 通过。
 - `npm run smoke:bundle-size` 通过。
 - `npm run smoke:prod-auth-project` 通过：生产环境正式注册、登录、`/me`、项目创建/列表/读取/更新/删除均正常。
@@ -39,6 +40,7 @@
 - 生产 E2E 验收脚本已迁移到正式注册/登录路径，不再依赖生产禁用的演示登录。
 - 生产演示项目种子脚本已加入 `npm run seed:prod-demo`，支持固定账号/项目重复刷新，避免客户演示现场从零生成。
 - 生产交付验收脚本已加入 `npm run check:prod-delivery`；默认覆盖 build、生产登录/项目、云端恢复、Stage3 全文生成和演示项目刷新，`--full` 可追加引用增强、KANO 研究计算和 Stage3 研究计算到 Word 导出。
+- `/api/health` 已扩展为非敏感运行时健康检查：返回部署 commit、Vercel 环境、区域，以及 Supabase、AI provider、Sentry、Python 统计服务是否配置。
 
 ## 本轮新增验证输出
 

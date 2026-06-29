@@ -13,13 +13,21 @@
 1. 确认正式站点可访问：
    - https://paper-ai-tool.vercel.app
 
-2. 运行快速生产验收：
+2. 先看生产健康检查：
+
+```bash
+npm run smoke:prod-health
+```
+
+它会确认 `/api/health` 可访问，并检查 Supabase 与 AI provider 是否已配置。输出只包含布尔状态和部署版本，不包含密钥。
+
+3. 运行快速生产验收：
 
 ```bash
 npm run check:prod-delivery -- --skip-seed
 ```
 
-3. 如果要重新刷新演示项目，使用固定账号运行：
+4. 如果要重新刷新演示项目，使用固定账号运行：
 
 ```bash
 # PowerShell 示例
@@ -31,13 +39,13 @@ npm run seed:prod-demo
 
 不要把真实邮箱和密码写入仓库。演示账号密码只放在本机临时环境变量、密码管理器或 Vercel/运维记录中。
 
-4. 人工打开一次演示项目：
+5. 人工打开一次演示项目：
    - 登录固定演示账号。
    - 打开 seed 命令输出的 Stage3 项目链接。
    - 确认页面能看到论文标题、正文、导出按钮。
    - 打开“研究计算”，确认能看到研究资产或可进入上传数据流程。
 
-5. 导出一次 Word：
+6. 导出一次 Word：
    - 在 Stage3 点击导出 Word。
    - 本地打开 docx。
    - 检查标题、正文、脚注/参考文献、图题、表题是否可读。
@@ -149,6 +157,7 @@ npm run smoke:prod-stage3-research-e2e
 npm run build
 npm run check:prod-delivery
 npm run check:prod-delivery -- --full
+npm run smoke:prod-health
 npm run seed:prod-demo
 npm run smoke:prod-auth-project
 npm run smoke:prod-cloud-restore

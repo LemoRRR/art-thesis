@@ -47,7 +47,34 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }))
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'paper-ai-tool-api' })
+  const openaiConfigured = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_MODEL)
+  const doubaoConfigured = Boolean(process.env.DOUBAO_API_KEY && process.env.DOUBAO_MODEL)
+
+  res.json({
+    ok: true,
+    service: 'paper-ai-tool-api',
+    timestamp: new Date().toISOString(),
+    runtime: {
+      nodeEnv: process.env.NODE_ENV || 'development',
+      vercel: Boolean(process.env.VERCEL),
+      vercelEnv: process.env.VERCEL_ENV || null,
+      region: process.env.VERCEL_REGION || null,
+    },
+    version: {
+      commit: process.env.VERCEL_GIT_COMMIT_SHA || null,
+      branch: process.env.VERCEL_GIT_COMMIT_REF || null,
+      deploymentId: process.env.VERCEL_DEPLOYMENT_ID || null,
+    },
+    configured: {
+      supabase: Boolean(process.env.SUPABASE_URL && (process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY)),
+      supabaseServiceRole: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
+      ai: openaiConfigured || doubaoConfigured,
+      openai: openaiConfigured,
+      doubao: doubaoConfigured,
+      sentry: Boolean(process.env.SENTRY_DSN),
+      pythonStats: Boolean(process.env.PYTHON_STATS_URL),
+    },
+  })
 })
 
 app.use('/api/scholar', scholarRouter)

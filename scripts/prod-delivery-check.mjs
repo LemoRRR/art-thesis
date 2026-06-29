@@ -8,6 +8,7 @@ const skipSeed = args.has('--skip-seed')
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 
 const quickChecks = [
+  ['smoke:prod-health', 'Production health and configuration'],
   ['smoke:prod-auth-project', 'Production auth, project CRUD, and /me'],
   ['smoke:prod-cloud-restore', 'Cross-browser cloud restore for outline, paper, and research package'],
   ['smoke:prod-stage3-generation-e2e', 'Stage3 full paper generation with progress and cloud persistence'],

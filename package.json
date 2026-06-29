@@ -19,6 +19,7 @@
     "smoke:local-stage3-research-e2e": "node scripts/local-stage3-research-e2e.mjs",
     "smoke:prod-stage3-generation-e2e": "node scripts/prod-stage3-generation-e2e.mjs",
     "smoke:prod-cloud-restore": "node scripts/prod-cloud-restore-smoke.mjs",
+    "smoke:prod-health": "node scripts/prod-health-smoke.mjs",
     "seed:prod-demo": "node scripts/prod-demo-seed.mjs",
     "check:prod-delivery": "node scripts/prod-delivery-check.mjs",
     "smoke:prod-citation-enhance": "node scripts/prod-citation-enhance-smoke.mjs",
