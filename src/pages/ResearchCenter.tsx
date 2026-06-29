@@ -38,16 +38,19 @@ import {
   type ResearchMethodType,
   type ResearchPackageComponent,
   type ResearchPackageComponentType,
+  type ResearchAnalysisPlan,
   type ResearchPlan,
   type ResearchTask,
   type ScaleAssetData,
   type ScaleVariable,
 } from '../lib/storage'
+import VariableMappingEditor from '../components/VariableMappingEditor'
+import { methodListText, parseCsvPreview } from '../lib/researchLabels'
 
 type ToolMode = 'survey' | 'interview' | 'kano' | 'ahp' | 'coding'
 type WorkspacePurpose = 'generate' | 'analyze' | 'optimize'
 type SourceKind = 'outline' | 'full_text' | 'stage1'
-type AnalysisPhase = 'idle' | 'uploaded' | 'planning' | 'running' | 'interpreting' | 'ready' | 'error'
+type AnalysisPhase = 'idle' | 'uploaded' | 'planning' | 'confirm' | 'running' | 'interpreting' | 'ready' | 'error'
 
 interface ToolOption {
   value: ToolMode
@@ -1598,6 +1601,8 @@ export default function ResearchCenter() {
   const [uploadedName, setUploadedName] = useState('')
   const [notice, setNotice] = useState('')
   const [analysisPhase, setAnalysisPhase] = useState<AnalysisPhase>('idle')
+  const [pendingPlan, setPendingPlan] = useState<ResearchAnalysisPlan | null>(null)
+  const [planColumns, setPlanColumns] = useState<{ columns: string[]; numericColumns: string[] }>({ columns: [], numericColumns: [] })
   const [analysisError, setAnalysisError] = useState('')
   const [resultView, setResultView] = useState<ResultView>('questionnaire')
   const [showDatasetPreview, setShowDatasetPreview] = useState(true)
@@ -1894,43 +1899,54 @@ export default function ResearchCenter() {
     setNotice('已生成问卷优化报告，并保存到研究资产。')
   }
 
-  const runAnalysis = async () => {
+  const runAnalysis = async (presetPlan?: ResearchAnalysisPlan) => {
     if (!latestDataset) {
       setNotice('请先上传 CSV/Excel/TXT 数据文件。研究计算是全文初稿后的补强步骤，也可以先回到文章生成继续完善正文。')
       return
     }
     const task = latestDataset.taskId ? researchTaskStore.get(latestDataset.taskId) : tasks[0]
     const isQualitative = mode === 'interview' || mode === 'coding' || /\.txt$/i.test(latestDataset.title)
-    setAnalysisPhase('planning')
     setAnalysisError('')
-    setNotice('AI 正在识别数据结构和适合的研究方法…')
     let analysisText: string
     let structuredResult: unknown
-    let confirmedPlan: Awaited<ReturnType<typeof researchAPI.analysisPlan>>['plan'] | null = null
+    let confirmedPlan: Awaited<ReturnType<typeof researchAPI.analysisPlan>>['plan'] | null = presetPlan ?? null
     let usedBrowserFallback = false
     let usedInterpretFallback = false
     try {
       const data = latestDataset.structuredData as { base64?: string } | null
-      const intent = {
-        projectId: project.id,
-        userRequest: isQualitative
-          ? '对上传的访谈、开放题或文本材料进行开放编码、主轴编码、主题归纳和证据摘录。'
-          : '对上传的问卷或统计数据生成论文可用的数据分析方案、图表和结果解释。',
-        purpose: isQualitative ? '质性编码分析' : '论文数据分析',
-        capabilityTier: 'partial_loop',
-        recommendedMethods: isQualitative ? ['descriptive'] : ['descriptive', 'cronbach_alpha', 'correlation', 'regression_analysis', 'mediation_model_4', 'anova', 'efa'],
-        expectedPackage: ['method', 'statistics', 'figure', 'analysis'],
-        notes: [],
-      } satisfies Parameters<typeof researchAPI.analysisPlan>[0]['intent']
-      const planResult = await researchAPI.analysisPlan({
-        intent,
-        fileName: latestDataset.title,
-        text: latestDataset.plainText,
-        base64: data?.base64,
-        method: isQualitative ? 'qualitative_coding' : undefined,
-        userRequest: intent.userRequest,
-      })
-      confirmedPlan = planResult.plan
+      if (!confirmedPlan) {
+        setAnalysisPhase('planning')
+        setNotice('AI 正在识别数据结构和适合的研究方法…')
+        const intent = {
+          projectId: project.id,
+          userRequest: isQualitative
+            ? '对上传的访谈、开放题或文本材料进行开放编码、主轴编码、主题归纳和证据摘录。'
+            : '对上传的问卷或统计数据生成论文可用的数据分析方案、图表和结果解释。',
+          purpose: isQualitative ? '质性编码分析' : '论文数据分析',
+          capabilityTier: 'partial_loop',
+          recommendedMethods: isQualitative ? ['descriptive'] : ['descriptive', 'cronbach_alpha', 'correlation', 'regression_analysis', 'mediation_model_4', 'anova', 'efa'],
+          expectedPackage: ['method', 'statistics', 'figure', 'analysis'],
+          notes: [],
+        } satisfies Parameters<typeof researchAPI.analysisPlan>[0]['intent']
+        const planResult = await researchAPI.analysisPlan({
+          intent,
+          fileName: latestDataset.title,
+          text: latestDataset.plainText,
+          base64: data?.base64,
+          method: isQualitative ? 'qualitative_coding' : undefined,
+          userRequest: intent.userRequest,
+        })
+        confirmedPlan = planResult.plan
+        // Quantitative analysis pauses for the user to review/correct the
+        // variable-to-column mapping before any real computation runs.
+        if (!isQualitative) {
+          setPendingPlan(planResult.plan)
+          setPlanColumns({ columns: planResult.columns ?? [], numericColumns: planResult.numericColumns ?? [] })
+          setAnalysisPhase('confirm')
+          setNotice('方案已生成：请核对每个变量对应的数据列，确认后运行分析。')
+          return
+        }
+      }
       setAnalysisPhase('running')
       setNotice(isQualitative ? '正在执行质性编码并生成主题图表…' : '正在执行统计计算并生成论文图表…')
       const result = await researchAPI.analyze({
@@ -1990,6 +2006,10 @@ export default function ResearchCenter() {
       : usedInterpretFallback
         ? '计算已完成，AI 解释使用兜底表述；可稍后重新生成或直接插入正文。'
         : '已生成统计分析结果，并保存为研究资产。')
+  }
+
+  const runConfirmedAnalysis = () => {
+    if (pendingPlan) void runAnalysis(pendingPlan)
   }
 
   const reinterpretActiveAnalysis = async () => {
@@ -2739,7 +2759,7 @@ export default function ResearchCenter() {
                         <input type="file" accept=".csv,.txt,.xlsx,.xls" onChange={uploadData} style={{ display: 'none' }} />
                       </label>
                       <button
-                        onClick={runAnalysis}
+                        onClick={() => void runAnalysis()}
                         disabled={!latestDataset || isAnalyzing}
                         title={latestDataset ? '基于最新上传数据生成分析结果' : '请先上传 CSV/TXT 数据文件'}
                         style={{
@@ -2775,6 +2795,42 @@ export default function ResearchCenter() {
                   )}
                   {notice && <div style={{ fontSize: 12, color: 'var(--color-accent)' }}>{notice}</div>}
                   {purpose === 'analyze' && <AnalysisProgress phase={analysisPhase} error={analysisError} />}
+                  {purpose === 'analyze' && analysisPhase === 'confirm' && pendingPlan && (
+                    <div style={{ display: 'grid', gap: 8, marginTop: 8, padding: 12, border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-surface)' }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-ink)' }}>请确认分析方案</div>
+                      <div style={{ fontSize: 12, color: 'var(--color-ink-3)', lineHeight: 1.7 }}>
+                        <div><b>目的：</b>{pendingPlan.purpose}</div>
+                        <div><b>方法：</b>{methodListText(pendingPlan) || '待确认'}</div>
+                      </div>
+                      {(() => {
+                        const preview = parseCsvPreview(latestDataset?.plainText, 5)
+                        if (!preview.columns.length) return null
+                        const cell = { border: '1px solid var(--color-border)', padding: '3px 6px', color: 'var(--color-ink-2)', whiteSpace: 'nowrap' as const }
+                        return (
+                          <div style={{ maxHeight: 140, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 6 }}>
+                            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 11 }}>
+                              <thead><tr>{preview.columns.map(column => <th key={column} style={cell}>{column}</th>)}</tr></thead>
+                              <tbody>
+                                {preview.rows.map((row, rowIndex) => (
+                                  <tr key={rowIndex}>{preview.columns.map((_, cellIndex) => <td key={cellIndex} style={cell}>{row[cellIndex] ?? ''}</td>)}</tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )
+                      })()}
+                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-ink-2)' }}>变量对应关系（可修改）</div>
+                      <VariableMappingEditor
+                        plan={pendingPlan}
+                        columns={planColumns.columns}
+                        numericColumns={planColumns.numericColumns}
+                        onChange={setPendingPlan}
+                      />
+                      <button onClick={runConfirmedAnalysis} style={{ ...primaryButtonStyle, justifyContent: 'center' }}>
+                        确认方案并运行分析
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div style={resultPreviewStyle}>
@@ -3086,6 +3142,7 @@ function AnalysisProgress({ phase, error }: { phase: AnalysisPhase; error: strin
   const steps: Array<{ key: AnalysisPhase; label: string }> = [
     { key: 'uploaded', label: '已上传数据' },
     { key: 'planning', label: 'AI 已识别方法' },
+    { key: 'confirm', label: '待确认方案' },
     { key: 'running', label: '正在运行计算' },
     { key: 'interpreting', label: '正在生成论文表述' },
     { key: 'ready', label: '已生成论文结果' },
