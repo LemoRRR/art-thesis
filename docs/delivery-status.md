@@ -16,8 +16,9 @@
 - `npm run smoke:research-ui-contract` 通过。
 - `npm run smoke:bundle-size` 通过。
 - `npm run smoke:prod-auth-project` 通过：生产环境正式注册、登录、`/me`、项目创建/列表/读取/更新/删除均正常。
-- `npm run smoke:prod-citation-enhance` 通过：生产环境使用正式临时账号生成 4 条引用增强补丁，覆盖 2 个章节、多个来源。
+- `npm run smoke:prod-citation-enhance` 通过：生产环境使用正式临时账号生成 4 条引用增强补丁，覆盖 2 个章节、3 个来源；无无来源补丁、无不相关补丁。
 - `npm run smoke:prod-research-ahp` 通过：生产环境使用正式临时账号完成 AHP 分析，生成 2 张表、2 张图、15 个研究组件，并导出可检查的 Word。
+- `npm run smoke:prod-research-kano` 通过：生产环境使用真实 KANO/熵权 Excel 样本生成 3 张表、4 张图、24 个研究组件，并导出可检查的 Word。
 - `npm run smoke:prod-stage3-generation-e2e` 通过：正式站 Stage3 点击生成全文后显示进度并完成生成，持久化 3 个章节、3511 字。
 - `npm run smoke:prod-stage3-research-e2e` 通过：正式站从 Stage3 打开研究计算、上传 Excel、生成分析、写入论文并导出 Word；导出文件含 5 个表题、4 个图题、4 张有效 PNG。
 - `npm run smoke:citation-docx` 通过：正文脚注引用、footnotes relationship/content type 正常。
@@ -40,6 +41,7 @@
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\citation-enhance-docx-smoke.docx`
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\research-chain-smoke.docx`
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\prod-ahp-research-smoke.docx`
+- `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\prod-kano-research-smoke.docx`
 - `C:\Users\jingyan.ren\AppData\Local\Temp\stage3-research-e2e-1782736559367\Stage3 研究计算生产 E2E.docx`
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\word-render-research-chain-smoke\word-render-smoke.pdf`
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\word-render-research-chain-smoke\contact-sheet.png`
@@ -76,12 +78,12 @@
 - 固定客户演示账号与演示项目。
 - 换浏览器登录后，项目、大纲、正文、研究资产是否完整恢复。
 - 用客户真实题目人工验收全文质量、引用贴合度和研究结论表述。
-- 用客户真实 Excel 再跑一遍研究计算，确认字段识别、图表样式和 Word 格式。
+- 用客户真实 Excel 再跑一遍研究计算，确认字段识别、图表样式和 Word 格式；系统已通过内置真实 KANO/熵权样本，但客户文件仍需人工验收。
 
 ### 仍未完全产品化
 
 - 长任务状态目前是前端持久化，不是完整后端任务队列；刷新可提示恢复，但不能在后台继续执行已断开的生成。
-- 引用增强本地冒烟已通过；仍需要真实客户项目验收观点与来源匹配度。
+- 引用增强生产冒烟已通过；仍需要真实客户项目人工验收观点与来源匹配度，尤其是模型识别和方法引用是否完全贴合。
 - Word-like 分页编辑仍采用连续编辑器 + 视觉层方向，不是完整 Word 排版引擎。
 - 线上错误观测已有 Sentry 接入点；仍需要在 Vercel 环境变量中配置 `SENTRY_DSN` / `VITE_SENTRY_DSN` 才会真正上报。
 
