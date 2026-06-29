@@ -58,7 +58,32 @@ function sanitizeForPythonJson(value: unknown): unknown {
   return value
 }
 
+const PYTHON_STATS_URL = process.env.PYTHON_STATS_URL
+const INTERNAL_SECRET = process.env.INTERNAL_SECRET
+
+async function runPythonRemote(payload: unknown): Promise<Record<string, unknown>> {
+  const base = PYTHON_STATS_URL!.replace(/\/$/, '')
+  const res = await fetch(`${base}/analyze`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(INTERNAL_SECRET ? { 'X-Internal-Secret': INTERNAL_SECRET } : {}),
+    },
+    body: JSON.stringify(sanitizeForPythonJson(payload ?? {})),
+  })
+  if (!res.ok) throw new Error(`Remote python stats failed: ${res.status}`)
+  return sanitizeForPythonJson(await res.json()) as Record<string, unknown>
+}
+
 function runPython(payload: unknown): Promise<Record<string, unknown>> {
+  // Prefer the standalone Python service when configured; otherwise spawn locally.
+  if (PYTHON_STATS_URL) {
+    return runPythonRemote(payload).catch(() => runPythonLocal(payload))
+  }
+  return runPythonLocal(payload)
+}
+
+function runPythonLocal(payload: unknown): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const child = spawn(pythonCommand(), [scriptPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
