@@ -13,6 +13,7 @@ const Stage2 = lazy(() => import('./pages/Stage2'))
 const Stage3 = lazy(() => import('./pages/Stage3'))
 const StyleProfiles = lazy(() => import('./pages/StyleProfiles'))
 const ResearchCenter = lazy(() => import('./pages/ResearchCenter'))
+const ResearchHub = lazy(() => import('./pages/ResearchHub'))
 
 const AUTH_EXPIRED_EVENT = 'paper-ai-auth-expired'
 const AUTH_ENTRY_ROUTES = new Set(['/login', '/demo'])
@@ -143,6 +144,7 @@ export default function App() {
               <Route path="/" element={<DefaultConversationRedirect />} />
               <Route path="/library" element={<Library />} />
               <Route path="/style-profiles" element={<StyleProfiles />} />
+              <Route path="/research" element={<ResearchHub />} />
               <Route path="/projects" element={<Projects />} />
               <Route path="/projects/:projectId" element={<ProjectHome />} />
               <Route path="/projects/:projectId/stage1" element={<Stage1 />} />

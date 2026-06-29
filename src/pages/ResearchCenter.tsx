@@ -37,6 +37,7 @@ import {
   type ResearchContentPackage,
   type ResearchMethodType,
   type ResearchPackageComponent,
+  type ResearchPackageComponentType,
   type ResearchPlan,
   type ResearchTask,
   type ScaleAssetData,
@@ -1399,6 +1400,18 @@ function assetTypeLabel(type: ResearchAssetType): string {
   return labels[type]
 }
 
+function researchComponentTypeLabel(type: ResearchPackageComponentType): string {
+  const labels: Record<ResearchPackageComponentType, string> = {
+    figure: '图',
+    statistics: '统计表',
+    analysis: '分析段',
+    method: '方法段',
+    table: '表',
+    raw_text: '原文',
+  }
+  return labels[type]
+}
+
 function researchAssetSectionTitle(asset: ResearchAsset) {
   if (asset.type === 'quant_analysis_result') return '第四章 数据分析结果'
   if (asset.type === 'survey_questionnaire' || asset.type === 'scale_schema') return '问卷设计与变量测量'
@@ -1460,6 +1473,25 @@ export default function ResearchCenter() {
   const [resultView, setResultView] = useState<ResultView>('questionnaire')
 
   useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const assetId = params.get('asset')
+    if (assetId && assets.some(asset => asset.id === assetId)) {
+      setActiveAssetId(assetId)
+      setDraftText('')
+      return
+    }
+    const packageId = params.get('package')
+    if (packageId) {
+      const pkg = researchPackageStore.get(packageId)
+      const sourceAssetId = pkg?.sourceAssetIds?.find(id => assets.some(asset => asset.id === id))
+      if (sourceAssetId) {
+        setActiveAssetId(sourceAssetId)
+        setDraftText('')
+      }
+    }
+  }, [assets, location.search])
+
+  useEffect(() => {
     queueMicrotask(() => setMode(route.preferredMode))
   }, [route.preferredMode])
 
@@ -1470,6 +1502,13 @@ export default function ResearchCenter() {
   }, [isEditingMethod, route, stage1ResearchPlan])
 
   const activeAsset = assets.find(asset => asset.id === activeAssetId) ?? assets[0] ?? null
+  const projectPackages = useMemo(() => researchPackageStore.getByProject(project.id), [assets, project.id])
+  const activeAssetPackages = useMemo(
+    () => activeAsset
+      ? projectPackages.filter(pkg => (pkg.sourceAssetIds ?? []).includes(activeAsset.id))
+      : [],
+    [activeAsset, projectPackages],
+  )
   const activeText = draftText || activeAsset?.plainText || ''
   const isKanoAsset = activeAsset?.type === 'kano_result'
   const activeDisplayText = isKanoAsset && !draftText ? splitKanoText(activeText, resultView) : activeText
@@ -2196,6 +2235,44 @@ export default function ResearchCenter() {
                         </div>
                         <span style={assetChipStyle}>{assetTypeLabel(activeAsset.type)}</span>
                       </div>
+                      {activeAssetPackages.length > 0 && (
+                        <div style={{ marginBottom: 12, border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-bg)', padding: 10 }}>
+                          <div style={{ fontSize: 12, fontWeight: 850, color: 'var(--color-ink)', marginBottom: 8 }}>
+                            相关结果包与图表状态
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                            {activeAssetPackages.map(pkg => (
+                              <div key={pkg.id} style={{ border: '1px solid var(--color-border)', borderRadius: 7, background: 'var(--color-surface)', padding: 9 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+                                  <strong style={{ fontSize: 12, color: 'var(--color-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pkg.title}</strong>
+                                  <span style={badgeStyle}>{pkg.insertedComponentIds.length > 0 ? `已写入 ${pkg.insertedComponentIds.length}` : '未写入'}</span>
+                                </div>
+                                <div style={{ marginTop: 7, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                  {pkg.components.map(component => {
+                                    const inserted = pkg.insertedComponentIds.includes(component.id)
+                                    return (
+                                      <span
+                                        key={component.id}
+                                        style={{
+                                          border: '1px solid var(--color-border)',
+                                          borderRadius: 999,
+                                          background: inserted ? 'var(--color-accent-light)' : '#fff',
+                                          color: inserted ? 'var(--color-accent)' : 'var(--color-ink-3)',
+                                          padding: '4px 8px',
+                                          fontSize: 11,
+                                          fontWeight: 750,
+                                        }}
+                                      >
+                                        {researchComponentTypeLabel(component.type)} · {component.title || component.label || '未命名'} · {inserted ? '已写入' : '待写入'}
+                                      </span>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       <textarea
                         value={activeDisplayText}
                         readOnly={isKanoAsset && resultView !== 'full' && !draftText}

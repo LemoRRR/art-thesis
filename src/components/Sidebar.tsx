@@ -236,13 +236,13 @@ function Sidebar() {
         {NAV_ITEMS.map(item => {
           const Icon = item.icon
           const itemPath = item.path === 'active-project-research'
-            ? `/projects/${activeProjectId}/research`
+            ? '/research'
             : item.path
           const active =
             (item.label === '资料库' && location.pathname.startsWith('/library')) ||
             (item.label === '风格档案' && location.pathname.startsWith('/style-profiles')) ||
             (item.label === '研究计算' && location.pathname.includes('/research')) ||
-            (item.label === '项目' && location.pathname.startsWith('/projects'))
+            (item.label === '项目' && location.pathname.startsWith('/projects') && !location.pathname.includes('/research'))
 
           return (
             <button
