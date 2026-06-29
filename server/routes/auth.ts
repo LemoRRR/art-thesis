@@ -112,6 +112,12 @@ router.post('/login', async (req, res) => {
 })
 
 router.post('/demo-login', async (_req, res) => {
+  // The demo account uses a shared, well-known credential — never expose it in
+  // production. Demo login is only available in non-production environments.
+  if (process.env.NODE_ENV === 'production') {
+    res.status(403).json({ error: '演示登录已停用，请使用账号登录。' })
+    return
+  }
   try {
     const { data, error } = await withAuthRetry(
       () => supabase.auth.signInWithPassword({ email: DEMO_EMAIL, password: DEMO_PASSWORD }),

@@ -50,6 +50,7 @@ import {
   styleProfileStore,
   syncRemoteData,
   versionStore,
+  workflowOperationStore,
   type CitationEvidenceSource,
   type CitationEvidencePack,
   type ChatMessage,
@@ -1097,8 +1098,26 @@ export default function Stage3() {
     () => sections.filter(section => section.status !== 'done').length,
     [sections]
   )
-  const showGenerationRecovery = !isGeneratingFull && sections.length > 0 && (!allGenerated || incompleteSectionCount > 0)
+  const showGenerationRecovery = !isGeneratingFull && Boolean(generationErrorMessage || (sections.length > 0 && (!allGenerated || incompleteSectionCount > 0)))
   const generationPercent = generationProgressPercent(generatingProgress.current, generatingProgress.total)
+  const generationOperationId = `stage3_generation_${project.id}`
+
+  const saveGenerationOperation = useCallback((
+    status: 'pending' | 'running' | 'waiting' | 'done' | 'failed' | 'cancelled',
+    label: string,
+    detail?: string,
+    progress?: { current: number; total: number },
+  ) => {
+    workflowOperationStore.upsert({
+      id: generationOperationId,
+      projectId: project.id,
+      kind: 'stage3_generation',
+      status,
+      label,
+      detail,
+      progress,
+    })
+  }, [generationOperationId, project.id])
 
   const pushGenerationStep = useCallback((label: string, status: GenerationStepStatus = 'active') => {
     setGenerationSteps(prev => {
@@ -1108,6 +1127,25 @@ export default function Stage3() {
       return [...closedPrev, { id: uid(), label, status, timestamp: Date.now() }].slice(-8)
     })
   }, [])
+
+  useEffect(() => {
+    const operation = workflowOperationStore.getActive(project.id, 'stage3_generation')
+    if (!operation || operation.status === 'waiting') return
+    if (operation.status === 'running' || operation.status === 'pending') {
+      setGenerationErrorMessage(`上次全文生成可能在“${operation.label}”时中断。可以保留现有内容继续编辑，或点击重新生成全文恢复。`)
+      setGeneratingProgress(operation.progress ?? { current: 0, total: 0 })
+      setGenerationSteps([{
+        id: `restored_${operation.id}`,
+        label: `已恢复上次任务状态：${operation.label}`,
+        status: 'error',
+        timestamp: operation.updatedAt,
+      }])
+      workflowOperationStore.fail(operation.id, `页面刷新或任务中断：${operation.label}`, '全文生成中断')
+    } else if (operation.status === 'failed') {
+      setGenerationErrorMessage(operation.error || operation.label)
+      setGeneratingProgress(operation.progress ?? { current: 0, total: 0 })
+    }
+  }, [project.id])
 
   useEffect(() => {
     if (!showOutlineTransition) return
@@ -1391,6 +1429,7 @@ export default function Stage3() {
     setGenerationSteps([])
     setGeneratingProgress({ current: 0, total: outlineSections.length })
     setGenerationStatusLabel('正在分析大纲并准备文献检索…')
+    saveGenerationOperation('running', '正在分析大纲并准备文献检索', undefined, { current: 0, total: outlineSections.length })
     pushGenerationStep('分析大纲结构、研究对象和写作边界')
     await waitForNextPaint()
     if (!isActiveGenerationRun()) return
@@ -1404,6 +1443,7 @@ export default function Stage3() {
     let evidencePack: CitationEvidencePack | undefined
     try {
       pushGenerationStep('联网检索学术来源并筛选证据包')
+      saveGenerationOperation('running', '正在联网检索学术来源并筛选证据包', undefined, { current: 0, total: outlineSections.length })
       const preparedCitationContext = await withTimeout(
         prepareAutoCitationContext(
           outlineSections,
@@ -1449,6 +1489,7 @@ export default function Stage3() {
     try {
       pushGenerationStep('生成全文写作计划和引用策略')
       setGenerationStatusLabel('正在生成全文写作计划与引用策略…')
+      saveGenerationOperation('running', '正在生成全文写作计划与引用策略', undefined, { current: 0, total: outlineSections.length })
       planAbort = new AbortController()
       paperPlan = await withTimeout(
         streamGPTText(
@@ -1479,6 +1520,7 @@ export default function Stage3() {
       const chapterOutline = chapterChildrenToText(chapter)
       setGeneratingProgress({ current: index + 1, total: outlineSections.length })
       setGenerationStatusLabel(`正在生成第 ${index + 1} / ${outlineSections.length} 章，并按检索来源插入引用…`)
+      saveGenerationOperation('running', `正在生成第 ${index + 1} / ${outlineSections.length} 章`, chapterTitle, { current: index + 1, total: outlineSections.length })
       pushGenerationStep(`生成第 ${index + 1} / ${outlineSections.length} 章：${chapterTitle}`)
 
       const section: DocSection = {
@@ -1623,6 +1665,7 @@ export default function Stage3() {
     setIsPreparingDraft(false)
     setAllGenerated(generatedSections.length > 0 && generatedSections.every(section => section.status === 'done'))
     sectionStore.saveForProject(project.id, generatedSections, { syncRemote: false })
+    saveGenerationOperation('running', '正在保存全文到云端', undefined, { current: generatedSections.length, total: outlineSections.length })
     try {
       pushGenerationStep('正在保存全文到云端', 'active')
       await sectionStore.syncProject(project.id)
@@ -1641,9 +1684,11 @@ export default function Stage3() {
     if (generationErrors.length > 0) {
       const message = `AI 生成部分失败，已写入可编辑保底初稿：${generationErrors.slice(0, 5).join('；')}`
       setGenerationErrorMessage(message)
+      saveGenerationOperation('failed', '全文生成部分失败，已写入保底初稿', message, { current: generatedSections.length, total: outlineSections.length })
       pushGenerationStep('已写入可编辑保底初稿，可继续编辑或重新生成', 'done')
     } else {
       setGenerationErrorMessage('')
+      saveGenerationOperation('done', '全文生成完成', undefined, { current: generatedSections.length, total: outlineSections.length })
       pushGenerationStep('全文生成完成，已保存为可编辑正文', 'done')
     }
 
@@ -1669,6 +1714,7 @@ export default function Stage3() {
       setAwaitingDraftStart(false)
       setGenerationStatusLabel('')
       setGenerationErrorMessage(`生成全文中断：${message}`)
+      saveGenerationOperation('failed', '全文生成中断', message, generatingProgress.total ? generatingProgress : undefined)
       setAllGenerated(false)
       pushGenerationStep(`生成全文中断：${message}`, 'error')
       setMessages(prev => saveStageMessages([
@@ -1683,7 +1729,7 @@ export default function Stage3() {
         },
       ]))
     }
-  }, [academicLevel, activeStyleGuide, buildChapterCitationContext, prepareAutoCitationContext, project.id, projectTitle, pushGenerationStep, saveStageMessages])
+  }, [academicLevel, activeStyleGuide, buildChapterCitationContext, prepareAutoCitationContext, project.id, projectTitle, pushGenerationStep, saveGenerationOperation, saveStageMessages])
 
   const generateAdditionalSections = useCallback(async (
     newOutlineSections: OutlineSection[],
@@ -2272,6 +2318,7 @@ export default function Stage3() {
     setIsPreparingDraft(true)
     setGenerationStatusLabel(localOutline?.sections?.length ? '正在重置正文并准备重新生成…' : '正在读取线上大纲…')
     setGeneratingProgress({ current: 0, total: localOutline?.sections?.length || 1 })
+    saveGenerationOperation('pending', localOutline?.sections?.length ? '正在重置正文并准备重新生成' : '正在读取线上大纲', undefined, { current: 0, total: localOutline?.sections?.length || 1 })
     setGenerationSteps([
       {
         id: `reset_${uid()}`,
@@ -2295,6 +2342,7 @@ export default function Stage3() {
         setIsPreparingDraft(false)
         setGenerationStatusLabel('')
         setGenerationErrorMessage('未读取到可用大纲。请回到阶段二重新确认大纲后，再生成全文。')
+        saveGenerationOperation('failed', '未读取到可用大纲', '请回到阶段二重新确认大纲后，再生成全文。')
         setGenerationSteps(prev => prev.map(step =>
           step.status === 'active'
             ? { ...step, status: 'error', label: '未读取到可用大纲，请回到阶段二确认' }

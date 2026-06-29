@@ -31,6 +31,7 @@ import {
   researchPackageStore,
   researchTaskStore,
   sectionStore,
+  workflowOperationStore,
   type OutlineSection,
   type ResearchAsset,
   type ResearchAssetType,
@@ -1651,6 +1652,23 @@ export default function ResearchCenter() {
   const activePurpose = purposeOptions.find(option => option.value === purpose) ?? purposeOptions[0]
   const latestDataset = assets.find(asset => asset.type === 'quant_dataset')
   const latestAnalysis = assets.find(asset => asset.type === 'quant_analysis_result' || asset.type === 'qualitative_coding')
+  const analysisOperationId = `research_analysis_${project.id}`
+  const saveAnalysisOperation = (
+    status: 'pending' | 'running' | 'waiting' | 'done' | 'failed' | 'cancelled',
+    label: string,
+    detail?: string,
+    targetId?: string,
+  ) => {
+    workflowOperationStore.upsert({
+      id: analysisOperationId,
+      projectId: project.id,
+      kind: 'research_analysis',
+      status,
+      label,
+      detail,
+      targetId,
+    })
+  }
   const activeDatasetAnalysis = activeAsset?.type === 'quant_dataset'
     ? assets.find(asset => (
       (asset.type === 'quant_analysis_result' || asset.type === 'qualitative_coding')
@@ -1659,6 +1677,27 @@ export default function ResearchCenter() {
     )) ?? null
     : null
   const isAnalyzing = analysisPhase === 'planning' || analysisPhase === 'running' || analysisPhase === 'interpreting'
+
+  useEffect(() => {
+    const operation = workflowOperationStore.getActive(project.id, 'research_analysis')
+    if (!operation) return
+    if (operation.status === 'waiting') {
+      setAnalysisPhase('uploaded')
+      setNotice('上次分析方案正在等待确认；刷新后请重新点击“生成分析结果”，系统会重新读取数据并生成可确认方案。')
+      workflowOperationStore.fail(operation.id, '刷新后需重新生成分析方案', '分析方案待确认')
+      return
+    }
+    if (operation.status === 'running' || operation.status === 'pending') {
+      setAnalysisPhase('error')
+      setAnalysisError(`上次研究分析可能在“${operation.label}”时中断。`)
+      setNotice('上次研究分析没有正常结束。可以检查数据集卡片后重新生成分析结果。')
+      workflowOperationStore.fail(operation.id, `页面刷新或任务中断：${operation.label}`, '研究分析中断')
+    } else if (operation.status === 'failed') {
+      setAnalysisPhase('error')
+      setAnalysisError(operation.error || operation.label)
+      setNotice('上次研究分析失败，可以检查数据后重新生成。')
+    }
+  }, [project.id])
   const outlineSource = sourceOptions.find(option => option.kind === 'outline')
   const fullTextSource = sourceOptions.find(option => option.kind === 'full_text')
   const generatedResearchTools = assets.filter(asset => (
@@ -1904,6 +1943,7 @@ export default function ResearchCenter() {
       setNotice('请先上传 CSV/Excel/TXT 数据文件。研究计算是全文初稿后的补强步骤，也可以先回到文章生成继续完善正文。')
       return
     }
+    saveAnalysisOperation('pending', '正在准备研究分析', latestDataset.title, latestDataset.id)
     const task = latestDataset.taskId ? researchTaskStore.get(latestDataset.taskId) : tasks[0]
     const isQualitative = mode === 'interview' || mode === 'coding' || /\.txt$/i.test(latestDataset.title)
     setAnalysisError('')
@@ -1917,6 +1957,7 @@ export default function ResearchCenter() {
       if (!confirmedPlan) {
         setAnalysisPhase('planning')
         setNotice('AI 正在识别数据结构和适合的研究方法…')
+        saveAnalysisOperation('running', '正在识别数据结构和研究方法', latestDataset.title, latestDataset.id)
         const intent = {
           projectId: project.id,
           userRequest: isQualitative
@@ -1944,11 +1985,13 @@ export default function ResearchCenter() {
           setPlanColumns({ columns: planResult.columns ?? [], numericColumns: planResult.numericColumns ?? [] })
           setAnalysisPhase('confirm')
           setNotice('方案已生成：请核对每个变量对应的数据列，确认后运行分析。')
+          saveAnalysisOperation('waiting', '等待用户确认分析方案', '请核对变量和数据列后运行分析。', latestDataset.id)
           return
         }
       }
       setAnalysisPhase('running')
       setNotice(isQualitative ? '正在执行质性编码并生成主题图表…' : '正在执行统计计算并生成论文图表…')
+      saveAnalysisOperation('running', isQualitative ? '正在执行质性编码并生成主题图表' : '正在执行统计计算并生成论文图表', latestDataset.title, latestDataset.id)
       const result = await researchAPI.analyze({
         fileName: latestDataset.title,
         text: latestDataset.plainText,
@@ -1957,6 +2000,7 @@ export default function ResearchCenter() {
         confirmedPlan,
       })
       setAnalysisPhase('interpreting')
+      saveAnalysisOperation('running', '正在生成论文方法和结果表述', latestDataset.title, latestDataset.id)
       structuredResult = result
       usedInterpretFallback = result.interpretationProvider === 'fallback'
       analysisText = [
@@ -1968,7 +2012,18 @@ export default function ResearchCenter() {
         result.cautions.length ? `\n【环境提示】\n${result.cautions.join('\n')}` : '',
       ].filter(Boolean).join('\n')
       setAnalysisPhase('ready')
+      saveAnalysisOperation('done', '研究分析已完成', latestDataset.title, latestDataset.id)
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      // Stats service temporarily unavailable (e.g. cold start): ask the user to
+      // retry instead of saving a degraded browser-side result they might trust.
+      if (message.includes('503') || message.includes('统计分析服务')) {
+        setAnalysisPhase('error')
+        setAnalysisError('统计分析服务正在唤醒，请约 30 秒后重试。')
+        setNotice('统计分析服务正在唤醒，请约 30 秒后重试（不会影响已保存内容）。')
+        saveAnalysisOperation('failed', '统计分析服务正在唤醒', message, latestDataset.id)
+        return
+      }
       console.warn('[ResearchCenter] Python analysis failed, fallback to browser analysis', error)
       usedBrowserFallback = true
       analysisText = [
@@ -1981,6 +2036,7 @@ export default function ResearchCenter() {
       structuredResult = { fallback: true, error: error instanceof Error ? error.message : String(error) }
       setAnalysisPhase('error')
       setAnalysisError(error instanceof Error ? error.message : String(error))
+      saveAnalysisOperation('failed', '研究分析失败，已生成兜底结果', error instanceof Error ? error.message : String(error), latestDataset.id)
     }
     const asset = researchAssetStore.add({
       projectId: project.id,

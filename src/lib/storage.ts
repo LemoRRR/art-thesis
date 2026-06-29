@@ -44,6 +44,7 @@ const KEYS = {
   RESEARCH_TASKS:'pai_research_tasks',
   RESEARCH_ASSETS:'pai_research_assets',
   RESEARCH_PACKAGES:'pai_research_content_packages',
+  OPERATIONS:     'pai_workflow_operations',
 } as const
 
 // ── 通用读写 ──────────────────────────────────────────────────
@@ -127,6 +128,8 @@ export type ResearchAnalysisMethod =
   | 'mediation_model_4'
   | 'efa'
   | 'out_of_scope'
+export type WorkflowOperationKind = 'stage3_generation' | 'research_analysis'
+export type WorkflowOperationStatus = 'pending' | 'running' | 'waiting' | 'done' | 'failed' | 'cancelled'
 
 export interface SectionFootnote {
   id: string
@@ -416,6 +419,23 @@ export interface ResearchTask {
   analysisAssetId?: string
   chapterTextAssetId?: string
   nextActionLabel: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface WorkflowOperation {
+  id: string
+  projectId: string
+  kind: WorkflowOperationKind
+  status: WorkflowOperationStatus
+  label: string
+  detail?: string
+  error?: string
+  targetId?: string
+  progress?: {
+    current: number
+    total: number
+  }
   createdAt: number
   updatedAt: number
 }
@@ -1555,6 +1575,51 @@ export const researchPackageStore = {
   clear: () => localStorage.removeItem(KEYS.RESEARCH_PACKAGES),
 }
 
+export const workflowOperationStore = {
+  getAll: (): WorkflowOperation[] => read<WorkflowOperation[]>(KEYS.OPERATIONS) ?? [],
+  save: (operations: WorkflowOperation[]) => write(KEYS.OPERATIONS, operations),
+  getByProject: (projectId: string): WorkflowOperation[] =>
+    workflowOperationStore.getAll()
+      .filter(operation => operation.projectId === projectId)
+      .sort((a, b) => b.updatedAt - a.updatedAt),
+  getActive: (projectId: string, kind: WorkflowOperationKind): WorkflowOperation | null =>
+    workflowOperationStore.getByProject(projectId).find(operation =>
+      operation.kind === kind && operation.status !== 'done' && operation.status !== 'cancelled'
+    ) ?? null,
+  upsert: (operation: Omit<WorkflowOperation, 'createdAt' | 'updatedAt'> & { createdAt?: number; updatedAt?: number }) => {
+    const now = Date.now()
+    const next: WorkflowOperation = {
+      ...operation,
+      createdAt: operation.createdAt ?? now,
+      updatedAt: now,
+    }
+    const exists = workflowOperationStore.getAll().some(item => item.id === next.id)
+    workflowOperationStore.save(exists
+      ? workflowOperationStore.getAll().map(item => item.id === next.id ? { ...item, ...next, createdAt: item.createdAt, updatedAt: now } : item)
+      : [next, ...workflowOperationStore.getAll()]
+    )
+    return next
+  },
+  update: (id: string, patch: Partial<WorkflowOperation>) => {
+    const now = Date.now()
+    let updated: WorkflowOperation | null = null
+    workflowOperationStore.save(workflowOperationStore.getAll().map(operation => {
+      if (operation.id !== id) return operation
+      updated = { ...operation, ...patch, id: operation.id, createdAt: operation.createdAt, updatedAt: now }
+      return updated
+    }))
+    return updated
+  },
+  finish: (id: string, label = '已完成') =>
+    workflowOperationStore.update(id, { status: 'done', label, error: undefined }),
+  fail: (id: string, error: string, label = '任务失败') =>
+    workflowOperationStore.update(id, { status: 'failed', label, error }),
+  clearProject: (projectId: string) => {
+    workflowOperationStore.save(workflowOperationStore.getAll().filter(operation => operation.projectId !== projectId))
+  },
+  clear: () => localStorage.removeItem(KEYS.OPERATIONS),
+}
+
 // ── 文档标题 ──────────────────────────────────────────────────
 export const docTitleStore = {
   get:   () => read<string>(KEYS.DOC_TITLE) ?? '未命名论文',
@@ -1729,6 +1794,7 @@ export const projectStore = {
     write(KEYS.RESEARCH_TASKS, researchTaskStore.getAll().filter(task => task.projectId !== projectId))
     write(KEYS.RESEARCH_ASSETS, researchAssetStore.getAll().filter(asset => asset.projectId !== projectId))
     write(KEYS.RESEARCH_PACKAGES, researchPackageStore.getAll().filter(pkg => pkg.projectId !== projectId))
+    workflowOperationStore.clearProject(projectId)
     projectStore.update(projectId, { context: createEmptyProjectContext(), currentStage: 'stage1' })
   },
   update: (id: string, patch: Partial<Project>) => {
@@ -1756,6 +1822,7 @@ export const projectStore = {
     write(KEYS.RESEARCH_TASKS, researchTaskStore.getAll().filter(task => task.projectId !== id))
     write(KEYS.RESEARCH_ASSETS, researchAssetStore.getAll().filter(asset => asset.projectId !== id))
     write(KEYS.RESEARCH_PACKAGES, researchPackageStore.getAll().filter(pkg => pkg.projectId !== id))
+    workflowOperationStore.clearProject(id)
     const activeId = read<string>(KEYS.ACTIVE_PROJECT)
     if (activeId === id && nextProjects[0]) {
       projectStore.setActiveId(nextProjects[0].id)
