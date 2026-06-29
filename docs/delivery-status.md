@@ -18,6 +18,8 @@
 - `npm run smoke:prod-auth-project` 通过：生产环境正式注册、登录、`/me`、项目创建/列表/读取/更新/删除均正常。
 - `npm run smoke:prod-citation-enhance` 通过：生产环境使用正式临时账号生成 4 条引用增强补丁，覆盖 2 个章节、多个来源。
 - `npm run smoke:prod-research-ahp` 通过：生产环境使用正式临时账号完成 AHP 分析，生成 2 张表、2 张图、15 个研究组件，并导出可检查的 Word。
+- `npm run smoke:prod-stage3-generation-e2e` 通过：正式站 Stage3 点击生成全文后显示进度并完成生成，持久化 3 个章节、3511 字。
+- `npm run smoke:prod-stage3-research-e2e` 通过：正式站从 Stage3 打开研究计算、上传 Excel、生成分析、写入论文并导出 Word；导出文件含 5 个表题、4 个图题、4 张有效 PNG。
 - `npm run smoke:citation-docx` 通过：正文脚注引用、footnotes relationship/content type 正常。
 - `npm run smoke:footnote-persistence` 通过：脚注可恢复并可导出到 docx。
 - `npm run smoke:citation-enhance` 通过：生成 3 条引用增强补丁，docx 脚注结构正常。
@@ -38,6 +40,7 @@
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\citation-enhance-docx-smoke.docx`
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\research-chain-smoke.docx`
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\prod-ahp-research-smoke.docx`
+- `C:\Users\jingyan.ren\AppData\Local\Temp\stage3-research-e2e-1782736559367\Stage3 研究计算生产 E2E.docx`
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\word-render-research-chain-smoke\word-render-smoke.pdf`
 - `D:\Art Thesis Agent Writer\outputs\ich_kano_entropy\word-render-research-chain-smoke\contact-sheet.png`
 
@@ -70,10 +73,10 @@
 
 ### 必须人工或真实账号验证
 
-- 正式账号登录。
+- 固定客户演示账号与演示项目。
 - 换浏览器登录后，项目、大纲、正文、研究资产是否完整恢复。
-- Stage1 → Stage2 → Stage3 → 导出 Word 的完整线上流程。
-- 上传真实 Excel → 确认分析方案 → 生成图表/表格 → 写入论文 → 导出 Word。
+- 用客户真实题目人工验收全文质量、引用贴合度和研究结论表述。
+- 用客户真实 Excel 再跑一遍研究计算，确认字段识别、图表样式和 Word 格式。
 
 ### 仍未完全产品化
 
