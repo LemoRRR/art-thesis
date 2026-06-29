@@ -24,6 +24,7 @@ export default function ProjectHome() {
   const [editing, setEditing] = useState(false)
   const libraryItems = libraryStore.getAll()
   const sections = sectionStore.getByProject(project.id)
+  const hasDraftContent = sections.some(section => section.status === 'done' && section.content.replace(/\s/g, '').length > 80)
 
   const updateProject = (patch: Partial<Project>) => {
     projectStore.update(project.id, patch)
@@ -142,7 +143,7 @@ export default function ProjectHome() {
               ))}
               <button
                 data-testid="project-research-entry"
-                onClick={() => navigate(`/projects/${project.id}/research`)}
+                onClick={() => navigate(`/projects/${project.id}/${hasDraftContent ? 'research' : 'stage3'}`)}
                 style={{
                   border: '1.5px solid var(--color-border)',
                   borderRadius: 'var(--radius-lg)',
@@ -163,11 +164,13 @@ export default function ProjectHome() {
                     4 研究计算
                   </span>
                   <span style={{ display: 'block', fontSize: 12, lineHeight: 1.65, color: 'var(--color-ink-3)' }}>
-                    生成研究工具、上传数据、运行分析，并在有正文后把结果写入论文对应章节
+                    {hasDraftContent
+                      ? '生成研究工具、上传数据、运行分析，并把结果写入论文对应章节'
+                      : '请先进入文章生成，生成或确认全文初稿后再做研究计算'}
                   </span>
                 </span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--color-accent)' }}>
-                  进入模块
+                  {hasDraftContent ? '进入模块' : '先生成全文'}
                   <ArrowRight size={12} />
                 </span>
               </button>
