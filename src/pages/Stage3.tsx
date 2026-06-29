@@ -1019,6 +1019,11 @@ export default function Stage3() {
   const hasStartedGenerationRef = useRef(false)
   const generationRunIdRef = useRef(0)
   const remoteHydrationAttemptedRef = useRef(false)
+  // Guards the Stage3 init effect so its body runs at most once per
+  // (project, navigation). projectStore.ensure() returns a fresh object every
+  // render, which would otherwise re-fire the effect on every render and loop
+  // (setSections/setMessages → re-render → effect → ...), freezing the page.
+  const stage3InitKeyRef = useRef('')
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [sections, setSections] = useState<DocSection[]>([])
@@ -1895,6 +1900,11 @@ export default function Stage3() {
   }, [academicLevel, activeStyleGuide, buildChapterCitationContext, prepareAutoCitationContext, project.id, saveStageMessages])
 
   useEffect(() => {
+    // Run init once per project + navigation; ignore re-fires caused by the
+    // unstable project reference (see stage3InitKeyRef above).
+    const stage3InitKey = `${project.id}::${location.key}`
+    if (stage3InitKeyRef.current === stage3InitKey) return
+    stage3InitKeyRef.current = stage3InitKey
     const rawSavedMessages = chatStore.getByProject(project.id, 'stage3')
     const savedMessages = normalizeStage3Messages(rawSavedMessages)
     if (savedMessages.length !== rawSavedMessages.length) {
