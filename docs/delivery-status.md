@@ -5,7 +5,7 @@
 ## 当前线上版本
 
 - 正式站点：https://paper-ai-tool.vercel.app
-- 当前 main：`d0f56ec Update delivery verification evidence`
+- 当前线上代码提交：`ca15a10 Enforce research workflow ordering`
 - 当前部署：`paper-ai-tool-miv6zynim-lemorrrs-projects.vercel.app`
 - 正式域名 alias：已指向最新部署。
 
