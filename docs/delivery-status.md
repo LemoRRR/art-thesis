@@ -8,6 +8,8 @@
 - 当前线上代码提交：`9a64845 Expose production health status`
 - 当前部署：`paper-ai-tool-azig2nhmg-lemorrrs-projects.vercel.app`
 - 正式域名 alias：已指向最新部署。
+- 交付总文档：`docs/production-handover.md`
+- 客户演示 Runbook：`docs/customer-demo-runbook.md`
 
 ## 已验证
 
