@@ -9,6 +9,7 @@ import type { CitationPatchDraft, EvidenceCardAction } from '../components/Refer
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import { callDoubao, callGPT, type Message } from '../lib/ai'
+import { toast } from '../lib/toast'
 import { outlinesAPI, researchAPI, scholarAPI, type ScholarPaper } from '../lib/api'
 import { formatAcademicOutlineText, formatAcademicOutlineTitle, formatAcademicSectionContentWithOutline, isFrontMatterTitle } from '../lib/academicFormat'
 import { applyCitationPatchesToSections } from '../lib/citationPatches'
@@ -2241,7 +2242,10 @@ export default function Stage3() {
           setFinishResult(result)
         },
         onDone: () => setFinishLoading(false),
-        onError: () => setFinishLoading(false),
+        onError: () => {
+          setFinishLoading(false)
+          toast('收尾生成失败，请稍后重试。', 'error')
+        },
       },
       abort.signal
     )
@@ -2265,7 +2269,10 @@ export default function Stage3() {
           setIsAdjusting(false)
           setAdjustInput('')
         },
-        onError: () => setIsAdjusting(false),
+        onError: () => {
+          setIsAdjusting(false)
+          toast('调整失败，请稍后重试。', 'error')
+        },
       },
       abort.signal
     )

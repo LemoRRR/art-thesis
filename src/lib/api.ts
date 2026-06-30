@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Message, StreamCallbacks } from './ai'
+import { toast } from './toast'
 
 const META_ENV = import.meta.env ?? {}
 const BASE_URL = META_ENV.PROD ? '' : (META_ENV.VITE_API_BASE_URL || '')
@@ -29,6 +30,7 @@ export function getToken(): string | null {
 function clearExpiredAuth() {
   localStorage.removeItem('access_token')
   localStorage.removeItem('auth_user')
+  toast('登录已过期，请重新登录后继续（你的内容已保存在本机）。', 'warning')
   window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT))
 }
 
