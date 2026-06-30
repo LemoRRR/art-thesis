@@ -5,6 +5,26 @@ import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 const router = Router()
 router.use(requireAuth)
 
+// Keep version history bounded so the table cannot grow without limit.
+const MAX_VERSIONS_PER_PROJECT = 20
+
+async function pruneOldVersions(
+  db: ReturnType<typeof createUserClient>,
+  projectId: string,
+): Promise<void> {
+  // Delete everything older than the most recent MAX_VERSIONS_PER_PROJECT.
+  const { data: stale } = await db
+    .from('versions')
+    .select('id')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+    .range(MAX_VERSIONS_PER_PROJECT, 9999)
+  const ids = (stale ?? []).map(row => (row as { id: string }).id)
+  if (ids.length) {
+    await db.from('versions').delete().in('id', ids)
+  }
+}
+
 router.get('/project/:projectId', async (req: AuthRequest, res) => {
   const db = createUserClient(req.accessToken!)
   const { data, error } = await db
@@ -39,6 +59,10 @@ router.post('/project/:projectId', async (req: AuthRequest, res) => {
     res.status(500).json({ error: error.message })
     return
   }
+
+  // Best-effort retention: never let the request fail because of pruning.
+  pruneOldVersions(db, req.params.projectId).catch(() => {})
+
   res.json(data)
 })
 
