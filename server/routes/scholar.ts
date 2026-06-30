@@ -658,6 +658,7 @@ router.post('/prepare', requireAuth, async (req, res) => {
     return
   }
 
+  try {
   const queries = await generateSearchQueries(title, outline, researchObject, academicLevel)
   const batches = await Promise.all(queries.map(async query => {
     try {
@@ -711,6 +712,19 @@ router.post('/prepare', requireAuth, async (req, res) => {
     evidencePack,
     auditNote,
   })
+  } catch (error) {
+    // Never 500 the whole prepare step: fall back to an empty evidence pack so
+    // outline/draft generation continues;引用增强会在 Stage3 再补检索。
+    console.warn('[scholar:prepare] 检索失败，返回空证据包:', error instanceof Error ? error.message : String(error))
+    res.json({
+      provider: 'OpenAlex/Crossref',
+      queries: [],
+      candidates: [],
+      autoSources: [],
+      evidencePack: fallbackEvidencePack([], outline, goal),
+      auditNote: '文献检索暂时不可用，本次不自动插入引用；可在 Stage3 重试引用增强。',
+    })
+  }
 })
 
 export default router
