@@ -8,6 +8,7 @@ import TopBar from '../components/TopBar'
 import ChatBubble from '../components/ChatBubble'
 import MentionInput, { type MentionRef } from '../components/MentionInput'
 import { callGPT } from '../lib/ai'
+import { friendlyMessage } from '../lib/errorMessage'
 import { filesAPI, libraryAPI, scholarAPI, type ScholarPaper } from '../lib/api'
 import { buildAIContext, buildMentionContext } from '../lib/context'
 import { promptChatFollowup, type AcademicLevel } from '../lib/prompts'
@@ -693,7 +694,7 @@ export default function Stage1() {
           setMessages(prev =>
             prev.map(m =>
               m.id === aiMsgId
-                ? { ...m, content: `出错了：${err.message}\n\n请检查网络连接或 API Key 配置。` }
+                ? { ...m, content: `生成失败：${friendlyMessage(err)}` }
                 : m
             )
           )

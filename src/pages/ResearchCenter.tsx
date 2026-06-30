@@ -47,6 +47,7 @@ import {
 } from '../lib/storage'
 import VariableMappingEditor from '../components/VariableMappingEditor'
 import { methodListText, parseCsvPreview } from '../lib/researchLabels'
+import { friendlyMessage } from '../lib/errorMessage'
 
 type ToolMode = 'survey' | 'interview' | 'kano' | 'ahp' | 'coding'
 type WorkspacePurpose = 'generate' | 'analyze' | 'optimize'
@@ -1823,7 +1824,7 @@ export default function ResearchCenter() {
       researchTaskStore.update(task.id, {
         nextActionLabel: 'AI生成失败，请重试',
       })
-      setNotice(`AI 研究工具生成失败，未保存模板结果。请稍后重试或补充更多论文材料：${error instanceof Error ? error.message : String(error)}`)
+      setNotice(`AI 研究工具生成失败，未保存模板结果。请稍后重试或补充更多论文材料：${friendlyMessage(error)}`)
       refresh()
       setIsGeneratingTool(false)
       return
@@ -2034,7 +2035,7 @@ export default function ResearchCenter() {
       ].join('\n')
       structuredResult = { fallback: true, error: error instanceof Error ? error.message : String(error) }
       setAnalysisPhase('error')
-      setAnalysisError(error instanceof Error ? error.message : String(error))
+      setAnalysisError(friendlyMessage(error))
       saveAnalysisOperation('failed', '研究分析失败，已生成兜底结果', error instanceof Error ? error.message : String(error), latestDataset.id)
     }
     const asset = researchAssetStore.add({

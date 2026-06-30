@@ -8,6 +8,7 @@ import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import VersionPanel from '../components/VersionPanel'
 import { callGPT } from '../lib/ai'
+import { friendlyMessage } from '../lib/errorMessage'
 import { formatAcademicOutlineMarker, formatAcademicOutlineText, isFrontMatterTitle } from '../lib/academicFormat'
 import { auth } from '../lib/auth'
 import { buildMentionContext } from '../lib/context'
@@ -864,7 +865,7 @@ export default function Stage2() {
           const errMsg: ChatMessage = {
             id: `s2_${uid()}`,
             role: 'ai',
-            content: `大纲生成出错：${err.message}`,
+            content: `大纲生成出错：${friendlyMessage(err)}`,
             timestamp: Date.now(),
             projectId: project.id,
             stage: 'stage2',
@@ -1022,7 +1023,7 @@ export default function Stage2() {
         },
         onError: (err) => {
           setIsLoading(false)
-          const errMessages = [...newMessages, { ...aiMsg, content: `出错了：${err.message}` }]
+          const errMessages = [...newMessages, { ...aiMsg, content: `出错了：${friendlyMessage(err)}` }]
           setMessages(errMessages)
           saveStageMessages(errMessages)
         },
