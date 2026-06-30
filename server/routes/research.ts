@@ -16,8 +16,10 @@ type ResearchAnalysisMethod =
   | 'correlation'
   | 'regression_analysis'
   | 'anova'
+  | 't_test'
   | 'mediation_model_4'
   | 'efa'
+  | 'validity_tests'
   | 'out_of_scope'
 
 const ANALYSIS_METHODS: ResearchAnalysisMethod[] = [
@@ -26,8 +28,10 @@ const ANALYSIS_METHODS: ResearchAnalysisMethod[] = [
   'correlation',
   'regression_analysis',
   'anova',
+  't_test',
   'mediation_model_4',
   'efa',
+  'validity_tests',
   'out_of_scope',
 ]
 
@@ -39,6 +43,12 @@ function normalizeAnalysisMethod(value: unknown): ResearchAnalysisMethod | '' {
     regression: 'regression_analysis',
     linear_regression: 'regression_analysis',
     ols: 'regression_analysis',
+    ttest: 't_test',
+    't-test': 't_test',
+    independent_t_test: 't_test',
+    kmo: 'validity_tests',
+    bartlett: 'validity_tests',
+    validity: 'validity_tests',
     mediation: 'mediation_model_4',
     process_model_4: 'mediation_model_4',
   }
@@ -395,6 +405,118 @@ function nodeAnova(rows: Record<string, unknown>[], columns: string[], groupColu
   })
 }
 
+function nodeTTest(rows: Record<string, unknown>[], columns: string[], groupColumn?: string) {
+  if (!groupColumn) return []
+  const levels = Array.from(new Set(rows.map(row => String(row[groupColumn] ?? '').trim()).filter(Boolean))).slice(0, 3)
+  if (levels.length !== 2) return []
+  return columns.flatMap(column => {
+    const left = rows
+      .filter(row => String(row[groupColumn] ?? '').trim() === levels[0])
+      .map(row => numericValue(row[column]))
+      .filter((value): value is number => value !== null)
+    const right = rows
+      .filter(row => String(row[groupColumn] ?? '').trim() === levels[1])
+      .map(row => numericValue(row[column]))
+      .filter((value): value is number => value !== null)
+    if (left.length < 2 || right.length < 2) return []
+    const meanA = mean(left)
+    const meanB = mean(right)
+    const varianceA = (sampleSd(left) ?? 0) ** 2
+    const varianceB = (sampleSd(right) ?? 0) ** 2
+    const se = Math.sqrt(varianceA / left.length + varianceB / right.length)
+    const t = se ? (meanA - meanB) / se : null
+    return [{
+      group: groupColumn,
+      variable: column,
+      groupA: levels[0],
+      groupB: levels[1],
+      meanA: round(meanA),
+      meanB: round(meanB),
+      meanDiff: round(meanA - meanB),
+      t: round(t),
+      p: null,
+    }]
+  })
+}
+
+function determinant(matrix: number[][]) {
+  const size = matrix.length
+  const working = matrix.map(row => [...row])
+  let sign = 1
+  let det = 1
+  for (let pivotIndex = 0; pivotIndex < size; pivotIndex += 1) {
+    let maxRow = pivotIndex
+    for (let rowIndex = pivotIndex + 1; rowIndex < size; rowIndex += 1) {
+      if (Math.abs(working[rowIndex][pivotIndex]) > Math.abs(working[maxRow][pivotIndex])) maxRow = rowIndex
+    }
+    if (Math.abs(working[maxRow][pivotIndex]) < 1e-10) return 0
+    if (maxRow !== pivotIndex) {
+      ;[working[pivotIndex], working[maxRow]] = [working[maxRow], working[pivotIndex]]
+      sign *= -1
+    }
+    const pivot = working[pivotIndex][pivotIndex]
+    det *= pivot
+    for (let rowIndex = pivotIndex + 1; rowIndex < size; rowIndex += 1) {
+      const factor = working[rowIndex][pivotIndex] / pivot
+      for (let colIndex = pivotIndex; colIndex < size; colIndex += 1) {
+        working[rowIndex][colIndex] -= factor * working[pivotIndex][colIndex]
+      }
+    }
+  }
+  return det * sign
+}
+
+function nodeValidityTests(rows: Record<string, unknown>[], columns: string[]) {
+  if (columns.length < 3) return []
+  const completeRows = rows
+    .map(row => columns.map(column => numericValue(row[column])))
+    .filter(row => row.every(value => value !== null)) as number[][]
+  if (completeRows.length < 10) return []
+  const corrMatrix = columns.map((_rowColumn, rowIndex) => columns.map((_colColumn, colIndex) => {
+    if (rowIndex === colIndex) return 1
+    return pearson(completeRows.map(row => row[rowIndex]), completeRows.map(row => row[colIndex])) ?? 0
+  }))
+  const inverse = invertMatrix(corrMatrix)
+  const result: Array<Record<string, unknown>> = []
+  if (inverse) {
+    const partial = inverse.map((row, rowIndex) => row.map((value, colIndex) => {
+      if (rowIndex === colIndex) return 0
+      const denom = Math.sqrt(Math.max(1e-12, inverse[rowIndex][rowIndex] * inverse[colIndex][colIndex]))
+      return -value / denom
+    }))
+    let corrSq = 0
+    let partialSq = 0
+    corrMatrix.forEach((row, rowIndex) => row.forEach((value, colIndex) => {
+      if (rowIndex === colIndex) return
+      corrSq += value ** 2
+      partialSq += (partial[rowIndex]?.[colIndex] ?? 0) ** 2
+    }))
+    const kmo = corrSq + partialSq ? corrSq / (corrSq + partialSq) : null
+    if (kmo !== null) {
+      result.push({
+        test: 'KMO',
+        value: round(kmo),
+        df: null,
+        p: null,
+        interpretation: kmo >= 0.6 ? '适合因子分析' : '偏低，需谨慎开展因子分析',
+      })
+    }
+  }
+  const det = determinant(corrMatrix)
+  if (det > 0) {
+    const p = columns.length
+    const chiSquare = -(completeRows.length - 1 - (2 * p + 5) / 6) * Math.log(det)
+    result.push({
+      test: 'Bartlett',
+      value: round(chiSquare),
+      df: Math.round(p * (p - 1) / 2),
+      p: null,
+      interpretation: '变量相关矩阵已完成球形检验，显著性需由 Python/统计软件复核',
+    })
+  }
+  return result
+}
+
 function transpose(matrix: number[][]) {
   return matrix[0]?.map((_value, colIndex) => matrix.map(row => row[colIndex])) ?? []
 }
@@ -689,8 +811,10 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
   const cronbachAlpha = methods.includes('cronbach_alpha') ? nodeCronbach(rows, selectedColumns) : null
   const regression = methods.includes('regression_analysis') ? nodeRegression(rows, selectedColumns.slice(0, 8), payload) : null
   const anova = methods.includes('anova') ? nodeAnova(rows, selectedColumns.slice(0, 6), groupColumn) : []
+  const tTest = methods.includes('t_test') ? nodeTTest(rows, selectedColumns.slice(0, 6), groupColumn) : []
   const mediation = methods.includes('mediation_model_4') ? nodeMediation(rows, selectedColumns.slice(0, 8)) : null
   const efa = methods.includes('efa') ? nodeEfa(rows, selectedColumns.slice(0, 10)) : null
+  const validityTests = (methods.includes('validity_tests') || methods.includes('efa')) ? nodeValidityTests(rows, selectedColumns.slice(0, 10)) : []
   const qualityReport = profile.qualityReport && typeof profile.qualityReport === 'object'
     ? profile.qualityReport as Record<string, unknown>
     : null
@@ -699,7 +823,9 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
     cronbachAlpha ? { id: 'table_reliability', title: '信度分析表', rows: [{ alpha: cronbachAlpha.alpha, items: cronbachAlpha.items.length, n: cronbachAlpha.n, itemColumns: cronbachAlpha.items.join('、') }], columns: ['alpha', 'items', 'n', 'itemColumns'] } : null,
     correlations.length ? { id: 'table_correlation', title: '相关分析表', rows: correlations.slice(0, 24), columns: ['x', 'y', 'n', 'r', 'p'] } : null,
     regression ? { id: 'table_regression', title: '回归分析表', rows: regression.rows, columns: ['predictor', 'coefficient', 'se', 't', 'p'] } : null,
+    tTest.length ? { id: 'table_t_test', title: '独立样本T检验表', rows: tTest, columns: ['group', 'variable', 'groupA', 'groupB', 'meanA', 'meanB', 'meanDiff', 't', 'p'] } : null,
     anova.length ? { id: 'table_anova', title: '单因素方差分析表', rows: anova, columns: ['group', 'variable', 'f', 'p'] } : null,
+    validityTests.length ? { id: 'table_validity_tests', title: 'KMO与Bartlett检验表', rows: validityTests, columns: ['test', 'value', 'df', 'p', 'interpretation'] } : null,
     mediation ? { id: 'table_mediation', title: 'Bootstrap中介效应检验表', rows: [mediation], columns: ['x', 'm', 'y', 'a', 'b', 'c_prime', 'indirect', 'ci95'] } : null,
     efa ? { id: 'table_efa', title: '探索性因子载荷表', rows: arrayRecords(efa.loadings), columns: ['variable', ...Array.from({ length: Number(efa.factors) || 0 }, (_item, index) => `factor_${index + 1}`)] } : null,
     qualityReport ? {
@@ -731,6 +857,8 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
     cronbachAlpha ? `\n【信度分析】\nCronbach's alpha=${cronbachAlpha.alpha}，题项数=${cronbachAlpha.items.length}，有效样本=${cronbachAlpha.n}。` : '',
     correlations.length ? '\n【相关分析】' : '',
     ...correlations.slice(0, 12).map(row => `${displayVariableName(row.x, '变量X')}与${displayVariableName(row.y, '变量Y')}: r=${row.r}${pValueText(row.p)}`),
+    tTest.length ? '\n【独立样本T检验】' : '',
+    ...tTest.map(row => `${displayVariableName(row.group, '分组变量')}分组下${displayVariableName(row.variable, '目标变量')}: t=${row.t}${pValueText(row.p)}`),
     regression ? '\n【回归分析】' : '',
     ...(regression ? [
       `因变量：${regression.dependent}；自变量：${regression.predictors.join('、')}；R²=${regression.r2}，调整R²=${regression.adjR2}。`,
@@ -738,6 +866,8 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
     ] : []),
     anova.length ? '\n【方差分析】' : '',
     ...anova.map(row => `${displayVariableName(row.group, '分组变量')}分组下${displayVariableName(row.variable, '目标变量')}: F=${row.f}${pValueText(row.p)}`),
+    validityTests.length ? '\n【KMO与Bartlett检验】' : '',
+    ...validityTests.map(row => `${row.test}: value=${row.value}${row.df ? `, df=${row.df}` : ''}${pValueText(row.p)}`),
     mediation ? '\n【中介效应】' : '',
     ...(mediation ? [`${mediation.x}通过${mediation.m}影响${mediation.y}的间接效应为 ${mediation.indirect}，95% CI=${Array.isArray(mediation.ci95) ? mediation.ci95.join('~') : '未计算'}。`] : []),
     efa ? '\n【探索性因子分析】' : '',
@@ -755,6 +885,8 @@ async function analyzeDatasetInNode(payload: Record<string, unknown>): Promise<R
     correlations,
     regression,
     anova,
+    tTest,
+    validityTests,
     qualityReport,
     mediation,
     efa,
@@ -1901,6 +2033,8 @@ function textIncludesAny(text: string, words: string[]) {
 function inferMethods(userRequest = '', columns: string[] = [], numericColumns: string[] = [], categoricalColumns: string[] = []): ResearchAnalysisMethod[] {
   const methods = new Set<ResearchAnalysisMethod>()
   methods.add('descriptive')
+  if (textIncludesAny(userRequest, ['t 检验', 'T 检验', 't-test', 'ttest', '两组', '独立样本'])) methods.add('t_test')
+  if (textIncludesAny(userRequest, ['KMO', 'kmo', 'Bartlett', 'bartlett'])) methods.add('validity_tests')
   if (textIncludesAny(userRequest, ['信度', 'cronbach', 'alpha', '量表'])) methods.add('cronbach_alpha')
   if (textIncludesAny(userRequest, ['相关', 'correlation', '关系', '影响'])) methods.add('correlation')
   if (textIncludesAny(userRequest, ['回归', 'regression', '预测', '影响因素', '作用路径'])) methods.add('regression_analysis')
@@ -3045,7 +3179,7 @@ router.post('/intent', async (req, res) => {
 {
   "purpose": "研究目的",
   "capabilityTier": "closed_loop | partial_loop | out_of_scope",
-  "recommendedMethods": ["descriptive" | "cronbach_alpha" | "correlation" | "anova" | "mediation_model_4" | "efa" | "out_of_scope"],
+  "recommendedMethods": ["descriptive" | "cronbach_alpha" | "correlation" | "regression_analysis" | "anova" | "t_test" | "mediation_model_4" | "efa" | "validity_tests" | "out_of_scope"],
   "expectedPackage": ["figure" | "statistics" | "analysis" | "method"],
   "notes": ["边界、风险或确认事项"]
 }
@@ -3148,7 +3282,7 @@ router.post('/analysis-plan', async (req, res) => {
       content: `你是严谨的数据分析方法顾问。只返回 JSON，不要 Markdown。字段：
 {
   "purpose": "本次分析目的",
-  "method": "descriptive | cronbach_alpha | correlation | regression_analysis | anova | mediation_model_4 | efa | out_of_scope",
+  "method": "descriptive | cronbach_alpha | correlation | regression_analysis | anova | t_test | mediation_model_4 | efa | validity_tests | out_of_scope",
   "methods": ["可执行方法列表"],
   "reason": "为什么选择这些方法",
   "variables": [{"role":"independent|dependent|mediator|moderator|control|group|item|unknown","name":"变量名","column":"数据列","confidence":0.0,"note":"说明"}],

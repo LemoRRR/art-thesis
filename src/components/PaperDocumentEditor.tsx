@@ -676,6 +676,7 @@ function keepEditorSelectionOnMenuMouseDown(event: MouseEvent<HTMLElement>) {
   const target = event.target instanceof HTMLElement ? event.target : null
   if (target?.closest('input, textarea')) return
   event.preventDefault()
+  event.stopPropagation()
 }
 
 function selectionToolbarState(editor: Editor): { toolbar: SelectionToolbarState | null; range: SelectionRange | null } {
@@ -691,7 +692,7 @@ function selectionToolbarState(editor: Editor): { toolbar: SelectionToolbarState
       window.innerWidth - 280,
       Math.max(280, (start.left + end.right) / 2)
     )
-    const top = Math.max(12, Math.min(start.top, end.top) - 10)
+    const top = Math.max(92, Math.min(start.top, end.top) - 10)
     return {
       toolbar: { top, left, selectedLength: selectedTextForDisplay(editor).length || text.length },
       range: { from, to },
@@ -2755,6 +2756,7 @@ function PaperDocumentEditorCore({
             zIndex: 2147483647,
           }}
           onMouseDown={keepEditorSelectionOnMenuMouseDown}
+          onClick={event => event.stopPropagation()}
         >
           <div className="paper-bubble-row">
             <span className="paper-bubble-count">已选中 {selectionToolbar.selectedLength} 字</span>

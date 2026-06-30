@@ -35,6 +35,8 @@ const METHOD_LABELS: Record<string, string> = {
 }
 
 export function methodLabel(method: string): string {
+  if (method.trim().toLowerCase() === 't_test') return 'T 检验'
+  if (method.trim().toLowerCase() === 'validity_tests') return 'KMO/Bartlett 检验'
   return METHOD_LABELS[method.trim().toLowerCase()] ?? method
 }
 
