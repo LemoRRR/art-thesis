@@ -5,14 +5,20 @@ import { requireAuth, type AuthRequest } from '../middleware/auth.js'
 const router = Router()
 router.use(requireAuth)
 
-// Keep version history bounded so the table cannot grow without limit.
-const MAX_VERSIONS_PER_PROJECT = 20
+// Retention per contract: keep history for 90 days. A generous count cap is a
+// secondary safety net so a single hyperactive project can't bloat the table.
+const RETENTION_DAYS = 90
+const MAX_VERSIONS_PER_PROJECT = 50
 
 async function pruneOldVersions(
   db: ReturnType<typeof createUserClient>,
   projectId: string,
 ): Promise<void> {
-  // Delete everything older than the most recent MAX_VERSIONS_PER_PROJECT.
+  // 1) Delete anything older than the 90-day retention window.
+  const cutoff = new Date(Date.now() - RETENTION_DAYS * 86_400_000).toISOString()
+  await db.from('versions').delete().eq('project_id', projectId).lt('created_at', cutoff)
+
+  // 2) Safety cap: keep at most the most recent MAX_VERSIONS_PER_PROJECT.
   const { data: stale } = await db
     .from('versions')
     .select('id')

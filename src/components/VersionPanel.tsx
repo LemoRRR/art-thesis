@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useState } from 'react'
-import { X, RotateCcw, Eye, Clock } from 'lucide-react'
+import { X, RotateCcw, Eye, Clock, GitCompare } from 'lucide-react'
 import { versionStore, type OutlineSection, type VersionSnapshot } from '../lib/storage'
 
 interface VersionPanelProps {
@@ -12,7 +12,11 @@ interface VersionPanelProps {
 export default function VersionPanel({ projectId, onClose, onRestore }: VersionPanelProps) {
   const versions = versionStore.getByProject(projectId)
   const [previewId, setPreviewId] = useState<string | null>(null)
+  const [compareId, setCompareId] = useState<string | null>(null)
   const [now] = useState(() => Date.now())
+
+  // Normalize for change detection: drop tags/whitespace so cosmetic diffs don't count.
+  const normalize = (s?: string) => (s ?? '').replace(/<[^>]+>/g, '').replace(/\s+/g, '').trim()
 
   function formatTime(ts: number): string {
     const diff = now - ts
@@ -48,6 +52,63 @@ export default function VersionPanel({ projectId, onClose, onRestore }: VersionP
         )}
       </div>
     ))
+  }
+
+  // Compare a historical snapshot against the current version (versions[0]),
+  // section by section. Satisfies the contract's "当前版本与任意历史版本对比".
+  function renderCompare(historical: VersionSnapshot): ReactNode {
+    const current = versions[0]
+    const curSecs = current?.sections ?? []
+    const histSecs = historical.sections ?? []
+    const order: string[] = []
+    const seen = new Set<string>()
+    for (const s of [...curSecs, ...histSecs]) {
+      if (!seen.has(s.id)) { seen.add(s.id); order.push(s.id) }
+    }
+    const badge = (text: string, color: string) => (
+      <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: color, color: '#fff', fontWeight: 600 }}>{text}</span>
+    )
+    let changed = 0
+    const rows = order.map(id => {
+      const cur = curSecs.find(s => s.id === id)
+      const his = histSecs.find(s => s.id === id)
+      const title = (cur?.title || his?.title || '未命名').slice(0, 22)
+      let status: ReactNode
+      let body: ReactNode = null
+      if (cur && !his) { changed++; status = badge('新增', '#3B6D11') }
+      else if (!cur && his) { changed++; status = badge('删除', '#A8443F') }
+      else if (normalize(cur?.content) !== normalize(his?.content)) {
+        changed++
+        status = badge('已修改', '#EF9F27')
+        body = (
+          <div style={{ marginTop: 4, display: 'grid', gap: 4 }}>
+            <div style={{ background: '#FEF2F2', borderRadius: 4, padding: '4px 6px' }}>
+              <b style={{ color: '#A8443F' }}>历史：</b>{(his?.content ?? '').replace(/<[^>]+>/g, '').slice(0, 120) || '（空）'}…
+            </div>
+            <div style={{ background: '#EAF3DE', borderRadius: 4, padding: '4px 6px' }}>
+              <b style={{ color: '#3B6D11' }}>当前：</b>{(cur?.content ?? '').replace(/<[^>]+>/g, '').slice(0, 120) || '（空）'}…
+            </div>
+          </div>
+        )
+      } else { status = badge('未变', '#9CA3AF') }
+      return (
+        <div key={id} style={{ marginBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            {status}
+            <span style={{ fontWeight: 500, color: 'var(--color-ink-2)' }}>{title}</span>
+          </div>
+          {body}
+        </div>
+      )
+    })
+    return (
+      <div>
+        <div style={{ marginBottom: 6, color: 'var(--color-ink-3)' }}>
+          与当前版本相比，共 {changed} 处变化（{order.length} 节）
+        </div>
+        {rows}
+      </div>
+    )
   }
 
   const handleRestore = (snapshot: VersionSnapshot) => {
@@ -156,9 +217,9 @@ export default function VersionPanel({ projectId, onClose, onRestore }: VersionP
 
               {/* 操作按钮 */}
               {i > 0 && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
                   <button
-                    onClick={() => setPreviewId(previewId === v.id ? null : v.id)}
+                    onClick={() => { setPreviewId(previewId === v.id ? null : v.id); setCompareId(null) }}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 3,
                       justifyContent: 'center',
@@ -170,6 +231,20 @@ export default function VersionPanel({ projectId, onClose, onRestore }: VersionP
                   >
                     <Eye size={10} />
                     预览
+                  </button>
+                  <button
+                    onClick={() => { setCompareId(compareId === v.id ? null : v.id); setPreviewId(null) }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 3,
+                      justifyContent: 'center',
+                      padding: '4px 7px', border: '1px solid var(--color-border)',
+                      borderRadius: 'var(--radius-sm)', background: 'transparent',
+                      color: 'var(--color-ink-3)', fontSize: 10, cursor: 'pointer',
+                      fontFamily: 'var(--font-sans)',
+                    }}
+                  >
+                    <GitCompare size={10} />
+                    对比
                   </button>
                   <button
                     onClick={() => handleRestore(v)}
@@ -207,6 +282,26 @@ export default function VersionPanel({ projectId, onClose, onRestore }: VersionP
                   {renderSnapshotPreview(v)}
                 </div>
               )}
+
+              {/* 对比内容 */}
+              {compareId === v.id && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: '8px 10px',
+                    background: 'var(--color-bg)',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--color-border)',
+                    fontSize: 11,
+                    color: 'var(--color-ink-3)',
+                    lineHeight: 1.55,
+                    maxHeight: 200,
+                    overflowY: 'auto',
+                  }}
+                >
+                  {renderCompare(v)}
+                </div>
+              )}
             </div>
           ))
         )}
@@ -223,7 +318,7 @@ export default function VersionPanel({ projectId, onClose, onRestore }: VersionP
           flexShrink: 0,
         }}
       >
-        最多保留 30 个版本 · 存储在本地浏览器
+        保留近 90 天 · 本地缓存最近 30 个
       </div>
 
       <style>{`
