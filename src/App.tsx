@@ -2,6 +2,8 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'rea
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { auth } from './lib/auth'
 import { projectStore, syncRemoteData } from './lib/storage'
+import ToastHost from './components/Toast'
+import { toast } from './lib/toast'
 
 const Library = lazy(() => import('./pages/Library'))
 const Login = lazy(() => import('./pages/Login'))
@@ -93,7 +95,10 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
       })
       .catch(err => {
         console.warn('[App] Supabase 同步失败，继续使用本地缓存', err)
-        if (!cancelled) setError('云端同步失败，已切换为本地缓存模式。')
+        if (!cancelled) {
+          setError('云端同步失败，已切换为本地缓存模式。')
+          toast('云端同步失败，已切换为本地缓存模式；你的编辑仍保存在本机。', 'warning')
+        }
       })
       .finally(() => {
         if (!cancelled) {
@@ -135,6 +140,7 @@ function RemoteDataGate({ children }: { children: ReactNode }) {
 export default function App() {
   return (
     <BrowserRouter>
+      <ToastHost />
       <AuthGuard>
         <RemoteDataGate>
           <Suspense fallback={<PageLoading />}>

@@ -14,6 +14,7 @@ import {
 } from './api'
 import { auth } from './auth'
 import { editorDocToPlainText, isPaperEditorDoc, type PaperEditorDoc } from './editorDocument'
+import { toast } from './toast'
 
 function stableStringify(value: unknown): string {
   try {
@@ -624,6 +625,8 @@ function remoteTask(task: () => Promise<unknown>) {
       remoteFailureCount += 1
       if (remoteFailureCount >= 3) {
         remotePausedUntil = Date.now() + 30_000
+        // 401s already surface their own re-login toast via the API layer.
+        toast('云端同步暂时失败，内容已保存在本机，恢复网络后会自动重试。', 'warning')
       }
       console.warn('[Storage] 远端同步失败，已保留本地数据', error)
     })
@@ -886,10 +889,25 @@ function fromApiReference(row: any): ReferenceSelection | null {
   }
 }
 
+function itemModifiedTime(item: unknown): number {
+  if (!item || typeof item !== 'object') return 0
+  const record = item as Record<string, unknown>
+  const value = record.updatedAt ?? record.lastModified ?? record.timestamp
+  return typeof value === 'number' ? value : 0
+}
+
 function mergeById<T extends { id: string }>(localItems: T[], remoteItems: T[]): T[] {
   const merged = new Map<string, T>()
   localItems.forEach(item => merged.set(item.id, item))
-  remoteItems.forEach(item => merged.set(item.id, item))
+  remoteItems.forEach(remote => {
+    const local = merged.get(remote.id)
+    // Keep whichever was modified more recently so a newer local edit is not
+    // clobbered by a stale remote copy. Ties / missing timestamps prefer remote,
+    // which is authoritative for items the user has not edited locally.
+    if (!local || itemModifiedTime(remote) >= itemModifiedTime(local)) {
+      merged.set(remote.id, remote)
+    }
+  })
   return Array.from(merged.values())
 }
 
