@@ -610,7 +610,7 @@ def main():
     if efa_result:
         tables.append({"id": "table_efa", "title": "探索性因子分析", "rows": efa_result["loadings"], "columns": ["variable"] + [f"factor_{i + 1}" for i in range(efa_result["factors"])]})
 
-    method_text = "本次分析根据问卷数据的变量结构开展描述统计、信度检验、相关分析、回归分析、差异检验、中介效应检验和探索性因子分析，并结合图表结果对研究问题进行解释。"
+    method_text = "本研究在研究方法部分采用问卷数据统计分析路径，根据变量结构开展描述统计、信度检验、KMO与Bartlett效度检验、相关分析、回归分析、差异检验、中介效应检验和探索性因子分析等计算与检验，并结合图表结果对研究问题进行解释。"
     analysis_text = "Python 已完成真实计算。写作时应基于统计表中的系数、p 值和置信区间解释结果，不应加入表中不存在的结论。"
     if corr:
         strongest = max(corr, key=lambda row: abs(float(row.get("r") or 0)))
