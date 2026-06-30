@@ -10,7 +10,7 @@ import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import { callDoubao, callGPT, type Message } from '../lib/ai'
 import { toast } from '../lib/toast'
-import { outlinesAPI, researchAPI, scholarAPI, type ScholarPaper } from '../lib/api'
+import { outlinesAPI, researchAPI, scholarAPI, type ResearchWritePlanPlacement, type ScholarPaper } from '../lib/api'
 import { formatAcademicOutlineText, formatAcademicOutlineTitle, formatAcademicSectionContentWithOutline, isFrontMatterTitle } from '../lib/academicFormat'
 import { applyCitationPatchesToSections } from '../lib/citationPatches'
 import {
@@ -2669,6 +2669,7 @@ export default function Stage3() {
       markResearchAssetUsed(asset, section.id)
     } else {
       let insertedBySection = new Map<string, string[]>()
+      let createdSections: DocSection[] = []
       try {
         const writePlan = await researchAPI.writePlan({
           paperTitle: projectTitle,
@@ -2688,9 +2689,27 @@ export default function Stage3() {
         })
         const validSectionIds = new Set(sections.map(section => section.id))
         const validComponentIds = new Set(componentIds)
-        for (const placement of writePlan.plan?.placements ?? []) {
-          const sectionId = placement.targetSectionId
-          if (!sectionId || !validSectionIds.has(sectionId)) continue
+        for (const placement of (writePlan.plan?.placements ?? []) as ResearchWritePlanPlacement[]) {
+          let sectionId = placement.targetSectionId
+          if (!sectionId || !validSectionIds.has(sectionId)) {
+            const title = (placement.targetSectionTitle || '数据分析与研究结果').trim()
+            const existingCreated = createdSections.find(section => section.title === title)
+            sectionId = existingCreated?.id ?? `research-insert-${asset.id}-${uid()}`
+            if (!existingCreated) {
+              createdSections.push({
+                id: sectionId,
+                projectId: project.id,
+                title,
+                content: '',
+                editorDoc: paperTextToEditorDoc(''),
+                status: 'done',
+                lastModified: now,
+                order: sections.length + createdSections.length,
+                sourceRefs: [asset.id],
+              })
+              validSectionIds.add(sectionId)
+            }
+          }
           const ids = placement.componentIds.filter((id: string) => validComponentIds.has(id))
           if (!ids.length) continue
           insertedBySection.set(sectionId, Array.from(new Set([...(insertedBySection.get(sectionId) ?? []), ...ids])))
@@ -2704,7 +2723,7 @@ export default function Stage3() {
       }
       const insertedComponentIds = Array.from(new Set(Array.from(insertedBySection.values()).flat()))
       researchPackageStore.markInserted(pkg.id, insertedComponentIds)
-      setSections(prev => persistSections(prev.map(section => {
+      setSections(prev => persistSections([...prev, ...createdSections].map(section => {
         const ids = insertedBySection.get(section.id)
         if (!ids?.length) return section
         const sourceDoc = ensurePaperEditorDoc(section.content, section.editorDoc)

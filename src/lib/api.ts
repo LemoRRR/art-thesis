@@ -211,6 +211,8 @@ export interface ResearchAnalysisResult {
   cronbachAlpha?: unknown
   correlations: unknown[]
   anova: unknown[]
+  tTest?: unknown[]
+  validityTests?: unknown[]
   mediation?: unknown
   efa?: unknown
   qualityReport?: unknown

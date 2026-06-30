@@ -104,7 +104,7 @@ def plan_methods(payload: dict[str, Any], numeric: list[str], categorical: list[
             methods.append("regression_analysis")
         if categorical:
             methods.append("anova")
-    allowed = ["descriptive", "cronbach_alpha", "correlation", "regression_analysis", "anova", "mediation_model_4", "efa"]
+    allowed = ["descriptive", "cronbach_alpha", "correlation", "regression_analysis", "anova", "t_test", "mediation_model_4", "efa", "validity_tests"]
     unique = []
     for method in methods:
         normalized = {
@@ -113,6 +113,12 @@ def plan_methods(payload: dict[str, Any], numeric: list[str], categorical: list[
             "regression": "regression_analysis",
             "linear_regression": "regression_analysis",
             "ols": "regression_analysis",
+            "ttest": "t_test",
+            "t-test": "t_test",
+            "independent_t_test": "t_test",
+            "kmo": "validity_tests",
+            "bartlett": "validity_tests",
+            "validity": "validity_tests",
             "mediation": "mediation_model_4",
             "process_model_4": "mediation_model_4",
         }.get(method, method)
@@ -218,6 +224,101 @@ def anova(df: pd.DataFrame, cols: list[str], group_column: str | None = None) ->
             f_value = (ss_between / df_between) / (ss_within / df_within) if df_within > 0 and ss_within else None
             results.append({"group": group, "variable": col, "f": round(float(f_value), 4) if f_value else None, "p": None})
     return results
+
+
+def independent_t_tests(df: pd.DataFrame, cols: list[str], group_column: str | None = None) -> list[dict[str, Any]]:
+    non_numeric = [str(col) for col in df.columns if str(col) not in cols]
+    candidates = [group_column] if group_column in df.columns else non_numeric
+    group = None
+    for candidate in candidates:
+        if candidate and df[candidate].dropna().nunique() == 2:
+            group = candidate
+            break
+    if not group:
+        return []
+    results = []
+    group_values = list(df[group].dropna().unique())[:2]
+    for col in cols:
+        left = finite(df.loc[df[group] == group_values[0], col])
+        right = finite(df.loc[df[group] == group_values[1], col])
+        if left.size < 2 or right.size < 2:
+            continue
+        mean_diff = float(np.mean(left) - np.mean(right))
+        if scipy_stats is not None:
+            t_value, p_value = scipy_stats.ttest_ind(left, right, equal_var=False, nan_policy="omit")
+            results.append({
+                "group": group,
+                "variable": col,
+                "groupA": str(group_values[0]),
+                "groupB": str(group_values[1]),
+                "meanA": round(float(np.mean(left)), 4),
+                "meanB": round(float(np.mean(right)), 4),
+                "meanDiff": round(mean_diff, 4),
+                "t": round(float(t_value), 4),
+                "p": round(float(p_value), 6),
+            })
+        else:
+            pooled = np.sqrt(np.var(left, ddof=1) / left.size + np.var(right, ddof=1) / right.size)
+            t_value = mean_diff / pooled if pooled else None
+            results.append({
+                "group": group,
+                "variable": col,
+                "groupA": str(group_values[0]),
+                "groupB": str(group_values[1]),
+                "meanA": round(float(np.mean(left)), 4),
+                "meanB": round(float(np.mean(right)), 4),
+                "meanDiff": round(mean_diff, 4),
+                "t": round(float(t_value), 4) if t_value is not None else None,
+                "p": None,
+            })
+    return results
+
+
+def kmo_bartlett(df: pd.DataFrame, cols: list[str]) -> list[dict[str, Any]]:
+    if len(cols) < 3:
+        return []
+    data = df[cols].apply(pd.to_numeric, errors="coerce").dropna()
+    if data.shape[0] < 10:
+        return []
+    corr = data.corr().to_numpy(dtype=float)
+    corr = np.nan_to_num(corr, nan=0.0, posinf=0.0, neginf=0.0)
+    np.fill_diagonal(corr, 1.0)
+    det = float(np.linalg.det(corr))
+    rows: list[dict[str, Any]] = []
+    try:
+        inv_corr = np.linalg.pinv(corr)
+        diag = np.sqrt(np.maximum(np.diag(inv_corr), 1e-12))
+        partial = -inv_corr / np.outer(diag, diag)
+        np.fill_diagonal(partial, 0.0)
+        corr_sq = corr ** 2
+        partial_sq = partial ** 2
+        np.fill_diagonal(corr_sq, 0.0)
+        kmo_value = float(np.sum(corr_sq) / (np.sum(corr_sq) + np.sum(partial_sq)))
+        rows.append({
+            "test": "KMO",
+            "value": round(kmo_value, 4),
+            "df": None,
+            "p": None,
+            "interpretation": "适合因子分析" if kmo_value >= 0.6 else "偏低，需谨慎开展因子分析",
+        })
+    except Exception:
+        pass
+    if det > 0:
+        p = len(cols)
+        n = data.shape[0]
+        chi_square = -(n - 1 - (2 * p + 5) / 6) * np.log(det)
+        df_value = p * (p - 1) / 2
+        p_value = None
+        if scipy_stats is not None:
+            p_value = float(scipy_stats.chi2.sf(chi_square, df_value))
+        rows.append({
+            "test": "Bartlett",
+            "value": round(float(chi_square), 4),
+            "df": int(df_value),
+            "p": round(p_value, 6) if p_value is not None else None,
+            "interpretation": "变量相关矩阵适合进一步因子分析" if p_value is not None and p_value < 0.05 else "需结合样本量和相关矩阵谨慎判断",
+        })
+    return rows
 
 
 def ols_coef(x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -450,9 +551,10 @@ def main():
     alpha = cronbach_alpha(df, item_cols) if "cronbach_alpha" in methods else None
     regression = linear_regression(df, item_cols[:8]) if "regression_analysis" in methods else None
     anova_rows = anova(df, item_cols[:6], str(group_column) if group_column else None) if "anova" in methods else []
+    t_test_rows = independent_t_tests(df, item_cols[:6], str(group_column) if group_column else None) if "t_test" in methods else []
     mediation = bootstrap_mediation(df, item_cols) if "mediation_model_4" in methods else None
     efa_result = efa(df, item_cols) if "efa" in methods else None
-
+    validity_rows = kmo_bartlett(df, item_cols[:10]) if ("efa" in methods or "validity_tests" in methods) else []
     lines = [
         f"样本量：{len(df)}",
         f"识别数值变量：{', '.join(cols) if cols else '无'}",
@@ -473,6 +575,10 @@ def main():
         ]
     if anova_rows:
         lines += ["", "【单因素方差分析】", table_text(anova_rows, ["group", "variable", "f", "p"])]
+    if t_test_rows:
+        lines += ["", "【独立样本T检验】", table_text(t_test_rows, ["group", "variable", "groupA", "groupB", "meanA", "meanB", "meanDiff", "t", "p"])]
+    if validity_rows:
+        lines += ["", "【KMO与Bartlett检验】", table_text(validity_rows, ["test", "value", "df", "p", "interpretation"])]
     if mediation:
         lines += ["", "【Bootstrap 单一中介】", json.dumps(mediation, ensure_ascii=True)]
     if efa_result:
@@ -495,6 +601,10 @@ def main():
         tables.append({"id": "table_regression", "title": "回归分析", "rows": regression["rows"], "columns": ["predictor", "coefficient", "se", "t", "p"]})
     if anova_rows:
         tables.append({"id": "table_anova", "title": "单因素方差分析", "rows": anova_rows, "columns": ["group", "variable", "f", "p"]})
+    if t_test_rows:
+        tables.append({"id": "table_t_test", "title": "独立样本T检验", "rows": t_test_rows, "columns": ["group", "variable", "groupA", "groupB", "meanA", "meanB", "meanDiff", "t", "p"]})
+    if validity_rows:
+        tables.append({"id": "table_validity_tests", "title": "KMO与Bartlett检验", "rows": validity_rows, "columns": ["test", "value", "df", "p", "interpretation"]})
     if mediation:
         tables.append({"id": "table_mediation", "title": "Bootstrap中介效应检验", "rows": [mediation], "columns": ["x", "m", "y", "a", "b", "c_prime", "indirect", "ci95"]})
     if efa_result:
@@ -521,6 +631,8 @@ def main():
         "correlations": corr,
         "regression": regression,
         "anova": anova_rows,
+        "tTest": t_test_rows,
+        "validityTests": validity_rows,
         "mediation": mediation,
         "efa": efa_result,
         "tables": tables,
