@@ -63,6 +63,7 @@ import {
   type StyleProfile,
 } from '../lib/storage'
 import { createPackageFromAsset, mergeResearchNodesIntoDoc, repairResearchTablesInDoc, researchInsertionRoleForComponents, researchPackageToPaperNodes, splitResearchAssetIntoComponents } from '../lib/researchPackages'
+import { withPromptSetting } from '../lib/promptSettings'
 
 const PaperDocumentEditor = lazy(() => import('../components/PaperDocumentEditor'))
 const ReferencePanel = lazy(() => import('../components/ReferencePanel'))
@@ -351,7 +352,7 @@ function promptGenerateResearchAssetSection(
   academicLevel: AcademicLevel,
   styleGuide?: string
 ): Message[] {
-  return [
+  return withPromptSetting('promptGenerateResearchAssetSection', [
     {
       role: 'system',
       content: `你是论文表达中心。请把研究计算资产转写成论文正文小节，而不是原样粘贴材料。
@@ -382,7 +383,7 @@ ${clipResearchText(asset.plainText)}
 
 请生成可直接放入论文的正文小节。`,
     },
-  ]
+  ])
 }
 
 function promptPolishResearchAssetIntoSection(
@@ -393,7 +394,7 @@ function promptPolishResearchAssetIntoSection(
   academicLevel: AcademicLevel,
   styleGuide?: string
 ): Message[] {
-  return [
+  return withPromptSetting('promptPolishResearchAssetIntoSection', [
     {
       role: 'system',
       content: `你是论文表达中心。请把研究计算资产整合进当前论文小节。
@@ -422,7 +423,7 @@ ${clipResearchText(asset.plainText)}
 
 请输出整合后的完整小节正文。`,
     },
-  ]
+  ])
 }
 
 function OutlineToDraftTransition({
@@ -3338,7 +3339,8 @@ export default function Stage3() {
                     projectId={project.id}
                     onClose={() => setShowHistory(false)}
                     onRestore={(snapshot) => {
-                      const restoredSections = snapshot.sections.map(section => ({ ...section, projectId: project.id }))
+                      const restoredAt = Date.now()
+                      const restoredSections = snapshot.sections.map(section => ({ ...section, projectId: project.id, lastModified: restoredAt }))
                       setSections(restoredSections)
                       versionStore.restore(snapshot, project.id)
                     }}
