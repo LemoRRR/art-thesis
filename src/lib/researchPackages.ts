@@ -536,6 +536,13 @@ const RESEARCH_TABLE_COLUMN_LABELS: Record<string, string> = {
   axialCategory: '主轴范畴',
   evidenceExcerpt: '典型证据',
   memo: '备忘',
+  emotionObject: '情感对象',
+  polarity: '情感极性',
+  intensity: '情感强度',
+  emotionInterpretation: '情感解释',
+  ratio: '占比',
+  mainEmotionObjects: '主要情感对象',
+  representativeEvidence: '代表性证据',
   theme: '主题',
   count: '频次',
   evidence: '证据摘要',
@@ -615,6 +622,8 @@ function selectResearchTableColumns(columns: string[], title = '') {
   if (title.includes('开放编码')) preferred = ['id', 'evidenceExcerpt', 'openCode', 'axialCategory']
   else if (title.includes('主轴编码')) preferred = ['axialCategory', 'includedOpenCodes', 'evidenceCount', 'conceptualMeaning']
   else if (title.includes('主题归纳')) preferred = ['theme', 'axialCategory', 'count', 'evidence']
+  else if (title.includes('情感编码')) preferred = ['id', 'emotionObject', 'polarity', 'intensity', 'evidenceExcerpt']
+  else if (title.includes('情感倾向')) preferred = ['polarity', 'count', 'ratio', 'mainEmotionObjects', 'representativeEvidence']
   else if (title.includes('典型证据')) preferred = ['theme', 'evidenceExcerpt', 'writingUse']
   else if (title.includes('KANO') && (title.includes('\u8026\u5408') || title.includes('\u4f18\u5148\u7ea7'))) {
     preferred = [rank, finalRank, dimension, kanoType, better, worse, entropyScore, priorityScore]
