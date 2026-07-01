@@ -287,6 +287,8 @@ function scenarioConfig() {
       'table_open_coding',
       'table_axial_coding',
       'table_theme_summary',
+      'table_emotion_coding',
+      'table_emotion_summary',
       'table_evidence_excerpt',
     ]
     return {
@@ -308,14 +310,17 @@ function scenarioConfig() {
         assert(analysis.method === 'qualitative_coding', `production analysis method is not qualitative coding: ${analysis.method}`)
         assert(Number(analysis.sampleSize) >= 10, `production qualitative sample size is too low: ${analysis.sampleSize}`)
         for (const id of requiredTables) {
-          const table = (analysis.tables ?? []).find(item => item.id === id)
-          assert(table, `production qualitative table missing: ${id}`)
-          assert((table.rows ?? []).length > 0, `production qualitative table has no rows: ${id}`)
-        }
-        assert((analysis.figures ?? []).some(figure => figure.id === 'figure_theme_frequency'), 'production qualitative theme figure missing')
+        const table = (analysis.tables ?? []).find(item => item.id === id)
+        assert(table, `production qualitative table missing: ${id}`)
+        assert((table.rows ?? []).length > 0, `production qualitative table has no rows: ${id}`)
+      }
+      assert((analysis.figures ?? []).some(figure => figure.id === 'figure_theme_frequency'), 'production qualitative theme figure missing')
+      assert((analysis.figures ?? []).some(figure => figure.id === 'figure_emotion_distribution'), 'production qualitative emotion figure missing')
+      const emotionTable = (analysis.tables ?? []).find(item => item.id === 'table_emotion_coding')
+      assert((emotionTable?.rows ?? []).some(row => row.polarity && row.intensity && row.emotionObject), 'production qualitative emotion rows lack academic coding fields')
       },
       minTables: requiredTables.length,
-      minFigures: 1,
+      minFigures: 2,
       forbiddenDocxTerms: ['originalText', 'openCode', 'axialCategory', 'evidenceExcerpt', 'writingUse'],
       internalLeakPattern: /table_open_coding|table_axial_coding|table_theme_summary|table_evidence_excerpt|figure_theme_frequency|research_component/g,
     }

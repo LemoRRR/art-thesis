@@ -87,6 +87,8 @@ function assertQualitativeQuality(plan, analysis, components) {
     'table_open_coding',
     'table_axial_coding',
     'table_theme_summary',
+    'table_emotion_coding',
+    'table_emotion_summary',
     'table_evidence_excerpt',
   ]
   for (const id of requiredTables) {
@@ -99,6 +101,13 @@ function assertQualitativeQuality(plan, analysis, components) {
   const dimensions = pngDimensionsFromDataUrl(figure.dataUrl)
   assert(dimensions.width >= 900, `theme figure width is too low: ${dimensions.width}`)
   assert(dimensions.height >= 250, `theme figure height is too low: ${dimensions.height}`)
+  const emotionFigure = figures.find(item => item.id === 'figure_emotion_distribution')
+  assert(emotionFigure, 'emotion distribution figure is missing')
+  const emotionDimensions = pngDimensionsFromDataUrl(emotionFigure.dataUrl)
+  assert(emotionDimensions.width >= 900, `emotion figure width is too low: ${emotionDimensions.width}`)
+  assert(emotionDimensions.height >= 250, `emotion figure height is too low: ${emotionDimensions.height}`)
+  const emotionRows = tables.find(item => item.id === 'table_emotion_coding')?.rows ?? []
+  assert(emotionRows.some(row => row.polarity && row.intensity && row.emotionObject), 'emotion coding rows lack polarity/intensity/object')
 
   const methodCount = components.filter(component => component.type === 'method').length
   const tableCount = components.filter(component => component.type === 'statistics').length

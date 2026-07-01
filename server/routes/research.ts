@@ -2427,21 +2427,26 @@ function deterministicQualitativeAnalysisText(result: Record<string, unknown>, f
   const themeRows = sortedRankRows(tableRowsById(result, 'table_theme_summary'), 'count').reverse()
   const axialRows = sortedRankRows(tableRowsById(result, 'table_axial_coding'), 'evidenceCount').reverse()
   const evidenceRows = tableRowsById(result, 'table_evidence_excerpt')
+  const emotionSummaryRows = sortedRankRows(tableRowsById(result, 'table_emotion_summary'), 'count').reverse()
   if (!themeRows.length && !axialRows.length) return fallbackText
 
   const topThemes = themeRows.slice(0, 5)
   const topThemeNames = topThemes.map(row => rowValue(row, 'theme')).filter(Boolean)
   const topAxial = axialRows[0]
+  const emotionText = emotionSummaryRows.length
+    ? `从情感编码看，${emotionSummaryRows.map(row => `“${rowValue(row, 'polarity') || '-'}”态度 ${rowValue(row, 'count') || 0} 条，占比 ${rowValue(row, 'ratio') || '-'}`).join('，')}。该结果有助于区分受访者是单纯提及某一主题，还是对该主题形成了明确的肯定、否定或矛盾评价。`
+    : ''
 
   return [
-    `本次质性分析共纳入 ${result.sampleSize || evidenceRows.length || '若干'} 段可分析文本，采用开放编码、主轴归纳与典型证据摘录的方式识别材料中的核心主题。该过程主要用于呈现受访者或文本材料中的高频关注点，并为后续讨论提供经验性证据。`,
+    `本次质性分析共纳入 ${result.sampleSize || evidenceRows.length || '若干'} 段可分析文本，采用开放编码、主轴归纳、主题归纳、情感编码与典型证据摘录的方式识别材料中的核心主题和态度倾向。该过程主要用于呈现受访者或文本材料中的高频关注点、情感极性及其证据来源，并为后续讨论提供经验性证据。`,
     topThemes.length
       ? `主题归纳结果显示，出现频次较高的主题包括${topThemeNames.map(name => `“${name}”`).join('、')}。其中，“${rowValue(topThemes[0], 'theme') || '-'}”出现 ${rowValue(topThemes[0], 'count') || '-'} 次，说明该主题在材料中具有较高集中度，可作为论文结果解释的重点。`
       : '',
     topAxial
       ? `从主轴范畴看，“${rowValue(topAxial, 'axialCategory') || '-'}”包含的证据数量相对较多，反映材料中的相关问题并非孤立表达，而是围绕若干相近经验和评价形成了较稳定的范畴结构。`
       : '',
-    '正式论文写作中，应将主题频次、典型证据和研究问题对应起来：先说明该主题回答了什么问题，再结合原文摘录解释其形成原因，最后转化为设计、传播、产品或管理层面的启示。质性编码属于辅助初编结果，最终结论仍建议由研究者复核同义编码合并和典型证据选择。'
+    emotionText,
+    '正式论文写作中，应将主题频次、情感极性、典型证据和研究问题对应起来：先说明该主题回答了什么问题，再结合原文摘录解释其形成原因和态度倾向，最后转化为设计、传播、产品或管理层面的启示。质性编码和情感编码属于辅助初编结果，最终结论仍建议由研究者复核同义编码合并、情感极性判断和典型证据选择。'
   ].filter(Boolean).join('\n')
 }
 
@@ -2729,8 +2734,11 @@ function qualitativeComponentNarratives(result: Record<string, unknown>) {
   const openRows = tableRowsById(result, 'table_open_coding')
   const axialRows = sortedRankRows(tableRowsById(result, 'table_axial_coding'), 'evidenceCount').reverse()
   const evidenceRows = tableRowsById(result, 'table_evidence_excerpt')
+  const emotionRows = tableRowsById(result, 'table_emotion_coding')
+  const emotionSummaryRows = sortedRankRows(tableRowsById(result, 'table_emotion_summary'), 'count').reverse()
   const topTheme = themeRows[0]
   const topAxial = axialRows[0]
+  const topEmotion = emotionSummaryRows[0]
   const narratives: ResearchComponentNarrative[] = []
   if (openRows.length) {
     narratives.push({
@@ -2759,6 +2767,27 @@ function qualitativeComponentNarratives(result: Record<string, unknown>) {
       title: '主题频次分布图',
       beforeText: '为更直观呈现不同主题的集中程度，本文绘制主题频次分布图，用于辅助识别材料中的主要关注方向。',
       afterText: `图示结果进一步说明，“${rowValue(topTheme, 'theme') || '高频主题'}”在材料中具有更高出现频次。该结果可为后续讨论和策略建议提供经验依据。`,
+    })
+  }
+  if (emotionRows.length) {
+    narratives.push({
+      componentId: 'table_emotion_coding',
+      title: '情感编码表',
+      beforeText: '为进一步解释受访者或文本材料中的态度倾向，本文在主题编码基础上进行情感编码，识别情感对象、情感极性、情感强度及其原文证据。',
+      afterText: '情感编码结果为主题分析补充了态度维度。正式写作中应结合原文语境说明正向、负向、中性或矛盾态度产生的原因，避免把单一词语机械等同于情感结论。',
+    })
+  }
+  if (emotionSummaryRows.length) {
+    narratives.push({
+      componentId: 'table_emotion_summary',
+      title: '情感倾向汇总表',
+      beforeText: '为概括不同情感极性的总体分布，本文进一步汇总正向、中性、负向与矛盾态度的频次和占比，以判断材料中的主要态度方向。',
+      afterText: `情感倾向汇总结果显示，“${rowValue(topEmotion, 'polarity') || '主要情感'}”出现频次最高，说明该类态度在材料中相对集中。该结果需要与主题归纳和典型证据共同解释，才能形成稳定的论文结论。`,
+    }, {
+      componentId: 'figure_emotion_distribution',
+      title: '情感倾向分布图',
+      beforeText: '为更直观呈现不同情感极性的分布差异，本文绘制情感倾向分布图，用于辅助判断材料中的态度结构。',
+      afterText: `图示结果表明，“${rowValue(topEmotion, 'polarity') || '主要情感'}”态度相对突出。后续讨论应进一步分析该情感倾向与具体主题、体验问题或传播行为之间的关系。`,
     })
   }
   if (evidenceRows.length) {
@@ -3055,6 +3084,60 @@ function classifyQualitativeTheme(segment: string) {
   return best.score > 0 ? best : { theme: '综合评价', category: '综合态度与总体判断', words: [], score: 0 }
 }
 
+function classifyEmotionCoding(segment: string) {
+  const rules = [
+    {
+      polarity: '正向',
+      intensity: '强',
+      words: ['非常喜欢', '很喜欢', '特别', '打动', '惊喜', '愿意购买', '愿意分享', '有意义', '有吸引力', '增强认同', '更有价值'],
+      interpretation: '材料呈现出明确的肯定态度，说明相关体验能够形成较强的情感认同或行为意愿。',
+    },
+    {
+      polarity: '正向',
+      intensity: '中',
+      words: ['喜欢', '认可', '信任', '推荐', '分享', '有用', '好看', '清晰', '方便', ' meaningful', 'trust', 'recommend', 'share', 'distinctive'],
+      interpretation: '材料呈现出较稳定的积极评价，可作为解释用户接受、信任或传播意愿的依据。',
+    },
+    {
+      polarity: '负向',
+      intensity: '强',
+      words: ['非常不喜欢', '失望', '反感', '不愿意', '不会购买', '不会分享', '看不懂', '降低意愿', '削弱', 'lose interest', 'reduce'],
+      interpretation: '材料呈现出明确的否定态度，说明相关问题可能直接削弱接受度、购买意愿或传播意愿。',
+    },
+    {
+      polarity: '负向',
+      intensity: '中',
+      words: ['不足', '问题', '同质', '重复', '复杂', '模糊', '拥挤', '不清楚', '抽象', ' disconnected', 'repetitive', 'crowded', 'unclear'],
+      interpretation: '材料呈现出问题反馈或不满倾向，可作为后续优化建议的直接证据。',
+    },
+    {
+      polarity: '矛盾',
+      intensity: '中',
+      words: ['但是', '但', '不过', '虽然', '一方面', '另一方面', '既', '又', 'but', 'however', 'although'],
+      interpretation: '材料同时包含认可与保留意见，说明受访者态度具有条件性，需要结合具体情境解释。',
+    },
+  ]
+  const scored = rules
+    .map(rule => ({ ...rule, score: keywordScore(segment, rule.words) }))
+    .sort((a, b) => b.score - a.score)
+  const best = scored[0]
+  const object = classifyQualitativeTheme(segment)
+  if (!best || best.score <= 0) {
+    return {
+      emotionObject: object.theme,
+      polarity: '中性',
+      intensity: '弱',
+      interpretation: '材料以事实陈述或一般评价为主，情感倾向不明显，适合作为背景性或补充性证据。',
+    }
+  }
+  return {
+    emotionObject: object.theme,
+    polarity: best.polarity,
+    intensity: best.intensity,
+    interpretation: best.interpretation,
+  }
+}
+
 async function makeThemeFrequencyFigure(rows: Record<string, unknown>[]) {
   if (!rows.length) return ''
   const width = 920
@@ -3075,6 +3158,39 @@ ${bars}
 <text x="42" y="${height - 22}" class="small">注：频次表示该主题在可分析文本片段中的出现次数，可辅助判断访谈材料的关注重点。</text>`))
 }
 
+async function makeEmotionDistributionFigure(rows: Record<string, unknown>[]) {
+  if (!rows.length) return ''
+  const width = 920
+  const height = 340
+  const order = ['正向', '中性', '负向', '矛盾']
+  const counts = new Map(order.map(item => [item, 0]))
+  rows.forEach(row => {
+    const key = String(row.polarity ?? '中性')
+    counts.set(order.includes(key) ? key : '中性', (counts.get(order.includes(key) ? key : '中性') ?? 0) + 1)
+  })
+  const max = Math.max(...Array.from(counts.values()), 1)
+  const colors: Record<string, string> = {
+    正向: '#3B6D11',
+    中性: '#7A7F86',
+    负向: '#A8443F',
+    矛盾: '#A66A00',
+  }
+  const bars = order.map((polarity, index) => {
+    const count = counts.get(polarity) ?? 0
+    const x = 110 + index * 190
+    const barHeight = Math.max(10, Math.round((count / max) * 150))
+    const y = 238 - barHeight
+    return `<rect x="${x}" y="${y}" width="86" height="${barHeight}" fill="${colors[polarity]}"/>
+<text x="${x + 43}" y="${y - 10}" font-size="15" text-anchor="middle">${count} 条</text>
+<text x="${x + 43}" y="270" font-size="15" font-weight="700" text-anchor="middle">${polarity}</text>`
+  }).join('')
+  return svgDataUrlToPngDataUrl(svgDataUrl(width, height, `<text x="34" y="46" class="title">情感倾向编码分布</text>
+<text x="34" y="76" class="sub">基于原文片段对情感极性进行初步编码，呈现正向、中性、负向与矛盾态度的分布。</text>
+<line x1="84" y1="238" x2="832" y2="238" stroke="${CHART_THEME.axis}" stroke-width="1"/>
+${bars}
+<text x="42" y="318" class="small">注：情感编码为辅助初编，正式论文应结合原文语境和研究者复核进行解释。</text>`))
+}
+
 async function buildQualitativeResult(payload: Record<string, unknown>) {
   if (!shouldRunQualitativeAnalysis(payload)) return null
   const text = qualitativeSourceText(payload)
@@ -3087,12 +3203,17 @@ async function buildQualitativeResult(payload: Record<string, unknown>) {
   }
   const codedRows = segments.slice(0, 40).map((segment, index) => {
     const theme = classifyQualitativeTheme(segment)
+    const emotion = classifyEmotionCoding(segment)
     return {
       id: `Q${index + 1}`,
       originalText: segment,
       openCode: theme.theme,
       axialCategory: theme.category,
+      emotionObject: emotion.emotionObject,
+      polarity: emotion.polarity,
+      intensity: emotion.intensity,
       evidenceExcerpt: segment.slice(0, 80),
+      emotionInterpretation: emotion.interpretation,
       memo: `该材料可用于说明“${theme.theme}”相关体验或态度。`,
     }
   })
@@ -3129,10 +3250,34 @@ async function buildQualitativeResult(payload: Record<string, unknown>) {
     writingUse: `可作为“${row.theme}”主题的代表性访谈/文本证据${index + 1}。`,
   }))).slice(0, 16)
   const figure = await makeThemeFrequencyFigure(themeRows)
+  const emotionRows = codedRows.map(row => ({
+    id: row.id,
+    emotionObject: row.emotionObject,
+    polarity: row.polarity,
+    intensity: row.intensity,
+    evidenceExcerpt: row.evidenceExcerpt,
+    emotionInterpretation: row.emotionInterpretation,
+  }))
+  const emotionSummaryRows = ['正向', '中性', '负向', '矛盾']
+    .map(polarity => {
+      const matched = emotionRows.filter(row => row.polarity === polarity)
+      const objects = Array.from(new Set(matched.map(row => row.emotionObject).filter(Boolean))).slice(0, 4)
+      return {
+        polarity,
+        count: matched.length,
+        ratio: codedRows.length ? `${((matched.length / codedRows.length) * 100).toFixed(1)}%` : '0.0%',
+        mainEmotionObjects: objects.join('、') || '-',
+        representativeEvidence: matched[0]?.evidenceExcerpt ?? '',
+      }
+    })
+    .filter(row => row.count > 0)
+  const emotionFigure = await makeEmotionDistributionFigure(emotionRows)
   const tables = [
     { id: 'table_open_coding', title: '开放编码表', rows: codedRows, columns: ['id', 'originalText', 'openCode', 'axialCategory', 'evidenceExcerpt', 'memo'] },
     { id: 'table_axial_coding', title: '主轴编码表', rows: axialRows, columns: ['axialCategory', 'includedOpenCodes', 'evidenceCount', 'conceptualMeaning'] },
     { id: 'table_theme_summary', title: '主题归纳表', rows: themeRows, columns: ['theme', 'axialCategory', 'count', 'evidence'] },
+    { id: 'table_emotion_coding', title: '情感编码表', rows: emotionRows, columns: ['id', 'emotionObject', 'polarity', 'intensity', 'evidenceExcerpt', 'emotionInterpretation'] },
+    { id: 'table_emotion_summary', title: '情感倾向汇总表', rows: emotionSummaryRows, columns: ['polarity', 'count', 'ratio', 'mainEmotionObjects', 'representativeEvidence'] },
     { id: 'table_evidence_excerpt', title: '典型证据摘录表', rows: evidenceRows, columns: ['theme', 'axialCategory', 'evidenceExcerpt', 'writingUse'] },
   ]
   return normalizeResultLabels({
@@ -3140,7 +3285,7 @@ async function buildQualitativeResult(payload: Record<string, unknown>) {
     method: 'qualitative_coding',
     sampleSize: segments.length,
     numericColumns: [],
-    categoricalColumns: ['openCode', 'axialCategory'],
+    categoricalColumns: ['openCode', 'axialCategory', 'polarity', 'intensity'],
     descriptive: [],
     cronbachAlpha: null,
     correlations: [],
@@ -3148,10 +3293,13 @@ async function buildQualitativeResult(payload: Record<string, unknown>) {
     mediation: null,
     efa: null,
     tables,
-    figures: figure ? [{ id: 'figure_theme_frequency', title: '主题频次分布图', caption: '访谈/文本材料中主要编码主题的出现频次。', dataUrl: figure }] : [],
-    methodText: '本节采用质性编码方法对访谈记录、开放题回答或文本材料进行分析。分析过程包括文本分段、开放编码、主轴范畴归纳与典型证据摘录，以识别研究对象中的核心体验、问题反馈与优化方向。',
-    analysisText: `质性编码结果显示，材料中共识别出 ${themeRows.length} 类主题。其中，“${themeRows[0]?.theme ?? '综合评价'}”出现频次较高，说明该主题是受访者或文本材料中较为集中的关注点。后续论文写作可结合开放编码表中的原文证据，对各主题的形成原因、表现方式和设计启示进行进一步讨论。`,
-    cautions: ['当前质性编码为系统辅助初编码结果，正式论文中建议结合研究者复核、合并同义编码，并补充典型原文引语。'],
+    figures: [
+      ...(figure ? [{ id: 'figure_theme_frequency', title: '主题频次分布图', caption: '访谈/文本材料中主要编码主题的出现频次。', dataUrl: figure }] : []),
+      ...(emotionFigure ? [{ id: 'figure_emotion_distribution', title: '情感倾向分布图', caption: '访谈/文本材料中正向、中性、负向与矛盾态度的分布。', dataUrl: emotionFigure }] : []),
+    ],
+    methodText: '本节采用质性编码与情感编码相结合的方法对访谈记录、开放题回答或文本材料进行分析。分析过程包括文本分段、开放编码、主轴范畴归纳、主题频次统计、情感对象识别、情感极性与强度判断以及典型证据摘录，以识别研究对象中的核心体验、态度倾向、问题反馈与优化方向。',
+    analysisText: `质性编码结果显示，材料中共识别出 ${themeRows.length} 类主题。其中，“${themeRows[0]?.theme ?? '综合评价'}”出现频次较高，说明该主题是受访者或文本材料中较为集中的关注点。情感编码进一步显示，${emotionSummaryRows.map(row => `${row.polarity}态度 ${row.count} 条`).join('，')}。后续论文写作可结合开放编码表、情感编码表和典型证据摘录，对各主题的形成原因、态度倾向和设计启示进行进一步讨论。`,
+    cautions: ['当前质性编码与情感编码为系统辅助初编码结果，正式论文中建议结合研究者复核、合并同义编码，说明编码一致性，并补充典型原文引语。'],
     plainText: [
       '【开放编码表】',
       tableContent(codedRows, ['id', 'originalText', 'openCode', 'axialCategory', 'evidenceExcerpt', 'memo']),
@@ -3161,6 +3309,12 @@ async function buildQualitativeResult(payload: Record<string, unknown>) {
       '',
       '【主题归纳表】',
       tableContent(themeRows, ['theme', 'axialCategory', 'count', 'evidence']),
+      '',
+      '【情感编码表】',
+      tableContent(emotionRows, ['id', 'emotionObject', 'polarity', 'intensity', 'evidenceExcerpt', 'emotionInterpretation']),
+      '',
+      '【情感倾向汇总表】',
+      tableContent(emotionSummaryRows, ['polarity', 'count', 'ratio', 'mainEmotionObjects', 'representativeEvidence']),
       '',
       '【典型证据摘录表】',
       tableContent(evidenceRows, ['theme', 'axialCategory', 'evidenceExcerpt', 'writingUse']),
