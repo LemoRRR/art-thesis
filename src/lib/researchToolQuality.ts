@@ -1,4 +1,5 @@
 import type { Message } from './ai'
+import { withPromptSetting } from './promptSettings'
 
 export type ResearchToolMode = 'survey' | 'interview' | 'kano' | 'ahp' | 'coding'
 
@@ -192,7 +193,7 @@ export function buildResearchToolPrompt(
     ],
   }
 
-  return [
+  return withPromptSetting('buildResearchToolPrompt', [
     {
       role: 'system',
       content: [
@@ -227,7 +228,7 @@ export function buildResearchToolPrompt(
         templateText.slice(0, 9000),
       ].join('\n'),
     },
-  ]
+  ])
 }
 
 function countRegex(text: string, regex: RegExp): number {
@@ -293,7 +294,7 @@ export function buildResearchToolRepairPrompt(
   draft: string,
   issues: string[],
 ): Message[] {
-  return [
+  return withPromptSetting('buildResearchToolRepairPrompt', [
     {
       role: 'system',
       content: '你是严格的论文研究方法审稿人和问卷/研究工具设计专家。请根据质检问题补全并重写研究工具，输出完整最终版。',
@@ -323,5 +324,5 @@ export function buildResearchToolRepairPrompt(
           : '请输出正式研究工具最终版，必须补齐题量、变量/维度说明、编码规则、后续分析步骤和论文写入建议。',
       ].join('\n'),
     },
-  ]
+  ])
 }
