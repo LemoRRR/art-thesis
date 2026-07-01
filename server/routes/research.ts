@@ -2834,6 +2834,8 @@ function guardedRoleForWriteComponent(component: { type: string; title?: string;
   if (component.type === 'analysis' && (/[:：]\s*(before|after)$/i.test(title) || /^[图表]\s*\d|^表\s*\d/.test(title))) return 'result'
   if (component.type === 'analysis' && /(\u5efa\u8bae|\u7b56\u7565|\u4f18\u5316|\u8ba8\u8bba|\u542f\u793a|\u5bf9\u7b56|\u5c40\u9650|\u5c55\u671b|suggest|strategy|discussion|optimization|limitation)/i.test(text)) return 'discussion'
   if (/建议|策略|优化|讨论|启示|对策|局限|展望/.test(text)) return 'discussion'
+  // 信度/效度属于测量质量，归入研究方法/研究设计章，而非结果章。
+  if (/信度|效度|信效度|cronbach|kmo|bartlett|球形检验|测量质量/i.test(text)) return 'method'
   return 'result'
 }
 
@@ -3561,10 +3563,11 @@ router.post('/write-plan', async (req, res) => {
 规则：
 1. 不固定章节名，必须依据当前大纲和正文语义判断。
 2. method 组件优先写入研究方法、研究设计、数据来源、样本说明相关章节。
-3. statistics/figure/table 组件和直接结果解释优先写入结果分析、数据分析、实证分析相关章节。
-4. 与建议、策略、优化、讨论相关的 analysis 组件写入讨论、建议、策略章节。
-5. 不要丢弃任何组件；每个 componentId 必须出现且只出现一次。
-6. targetSectionId 只有确信匹配已有章节时才填写；否则给出 targetSectionTitle 让系统创建新章节。
+3. 信度分析（Cronbach α）、效度检验（KMO、Bartlett 球形检验）属于测量质量，应写入研究方法/研究设计/数据来源章节（role=method），不要放进结果章。
+4. 其余 statistics/figure/table（描述统计、相关、回归、方差/T检验、中介、探索性因子分析等）与直接结果解释写入数据分析/研究结果/实证分析章节（role=result）。
+5. 与建议、策略、优化、讨论相关的 analysis 组件写入讨论、建议、策略章节（role=discussion）。
+6. 不要丢弃任何组件；每个 componentId 必须出现且只出现一次。
+7. targetSectionId 只有确信匹配已有章节时才填写；否则给出 targetSectionTitle 让系统创建新章节。
 返回格式：
 {"placements":[{"targetSectionId":"...","targetSectionTitle":"...","role":"method|sample|result|discussion|conclusion","insertPosition":"append","reason":"...","componentIds":["..."]}],"summary":"..."}`,
     },
