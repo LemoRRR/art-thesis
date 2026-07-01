@@ -1384,7 +1384,11 @@ export const versionStore = {
       const other = sectionStore.getAll().filter(
         section => section.projectId !== projectId && section.projectId
       )
-      const restored = snapshot.sections.map(section => ({ ...section, projectId }))
+      // Bump lastModified so the restored version wins the lastModified-based
+      // merge — otherwise sync would treat the (older) restored content as stale
+      // and overwrite it with the newer remote copy, silently undoing the restore.
+      const restoredAt = Date.now()
+      const restored = snapshot.sections.map(section => ({ ...section, projectId, lastModified: restoredAt }))
       sectionStore.save([...other, ...restored])
       return
     }
