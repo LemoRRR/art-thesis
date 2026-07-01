@@ -584,7 +584,7 @@ export default function ReferencePanel({
   const [acceptedPatchIds, setAcceptedPatchIds] = useState<Set<string>>(() => new Set())
   const [rejectedPatchIds, setRejectedPatchIds] = useState<Set<string>>(() => new Set())
   const [aiPatches, setAiPatches] = useState<CitationPatchDraft[]>([])
-  const [citationFormat, setCitationFormat] = useState<CitationFormat>('footnote')
+  const [citationFormat, setCitationFormat] = useState<CitationFormat>('gbt7714')
   const [enhancementStatus, setEnhancementStatus] = useState<EnhancementStatus>('idle')
   const [enhancementStep, setEnhancementStep] = useState(0)
   const lastAutoStartKeyRef = useRef(0)
@@ -1085,7 +1085,7 @@ function SuggestionsTab({
           style={heroSelectStyle}
           title="引用格式"
         >
-          {(Object.keys(citationFormatLabels) as CitationFormat[]).map(format => (
+          {(Object.keys(citationFormatLabels) as CitationFormat[]).filter(format => format !== 'footnote').map(format => (
             <option key={format} value={format}>{citationFormatLabels[format]}</option>
           ))}
         </select>
