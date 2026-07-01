@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent, KeyboardEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowRight, BookOpen, ChevronDown, ChevronRight, Edit2, GripVertical, History, Plus, RefreshCw, Send, Trash2 } from 'lucide-react'
+import { ArrowRight, BookOpen, ChevronDown, ChevronRight, Copy, Download, Edit2, GripVertical, History, Plus, RefreshCw, Send, Trash2 } from 'lucide-react'
 import ChatBubble from '../components/ChatBubble'
 import MentionInput, { type MentionRef } from '../components/MentionInput'
 import Sidebar from '../components/Sidebar'
@@ -13,6 +13,7 @@ import { formatAcademicOutlineMarker, formatAcademicOutlineText, isFrontMatterTi
 import { auth } from '../lib/auth'
 import { buildMentionContext } from '../lib/context'
 import { promptGenerateOutline, promptReviseOutline, type AcademicLevel } from '../lib/prompts'
+import { toast } from '../lib/toast'
 import {
   chatStore,
   outlineStore,
@@ -1260,7 +1261,34 @@ export default function Stage2() {
                     .outline-row:hover .outline-actions,
                     .outline-row:focus-within .outline-actions { opacity: 1 !important; }
                   `}</style>
-                  <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+                  <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(outlineToText(outline.sections))
+                          .then(() => toast('大纲已复制到剪贴板', 'success'))
+                          .catch(() => toast('复制失败，请手动选择复制', 'error'))
+                      }}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 10px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-surface)', color: 'var(--color-ink-2)', fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-sans)' }}
+                    >
+                      <Copy size={12} />
+                      复制大纲
+                    </button>
+                    <button
+                      onClick={() => {
+                        const blob = new Blob([outlineToText(outline.sections)], { type: 'text/plain;charset=utf-8' })
+                        const url = URL.createObjectURL(blob)
+                        const link = document.createElement('a')
+                        link.href = url
+                        link.download = `${projectTitle || '论文大纲'}.txt`
+                        link.click()
+                        URL.revokeObjectURL(url)
+                        toast('大纲已导出为 txt', 'success')
+                      }}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 10px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-surface)', color: 'var(--color-ink-2)', fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-sans)' }}
+                    >
+                      <Download size={12} />
+                      导出 txt
+                    </button>
                     <button
                       onClick={handleAddRootSection}
                       style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 10px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-surface)', color: 'var(--color-ink-2)', fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-sans)' }}
