@@ -11,7 +11,6 @@ import {
   MessageSquare,
   MoreHorizontal,
   Plus,
-  Settings,
   Shapes,
   Trash2,
   Type,
@@ -24,7 +23,6 @@ const NAV_ITEMS = [
   { label: '风格档案', icon: Type, path: '/style-profiles' },
   { label: '项目', icon: Folder, path: '/projects' },
   { label: '研究计算', icon: FlaskConical, path: 'active-project-research' },
-  { label: 'Prompt 设置', icon: Settings, path: '/settings/prompts' },
   { label: '应用', icon: Shapes, path: '/projects' },
   { label: '更多', icon: MoreHorizontal, path: '/projects' },
 ]
@@ -244,7 +242,6 @@ function Sidebar() {
             (item.label === '资料库' && location.pathname.startsWith('/library')) ||
             (item.label === '风格档案' && location.pathname.startsWith('/style-profiles')) ||
             (item.label === '研究计算' && location.pathname.includes('/research')) ||
-            (item.label === 'Prompt 设置' && location.pathname.startsWith('/settings/prompts')) ||
             (item.label === '项目' && location.pathname.startsWith('/projects') && !location.pathname.includes('/research'))
 
           return (
